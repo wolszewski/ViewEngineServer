@@ -94,7 +94,8 @@ public sealed class ColumnarCollection
             {
                 if (_nextHandle >= _capacity)
                     throw new InvalidOperationException(
-                        $"Collection '{Schema.CollectionId}' is at capacity ({_capacity}).");
+                        $"Collection '{Schema.CollectionId}' is at capacity ({_capacity}). " +
+                        "Consider deleting stale rows or increasing the capacity when creating the collection.");
                 handle = _nextHandle++;
                 isNew = true;
                 _liveCount++;

@@ -131,7 +131,7 @@ public sealed class SharedView
 
     public int SortFieldIndex => _sortFieldIndex;
 
-    public IReadOnlyCollection<string> Subscribers => (IReadOnlyCollection<string>)_subscribers.Keys;
+    public IEnumerable<string> Subscribers => _subscribers.Keys;
     public bool IsEmpty => _subscribers.IsEmpty;
 
     public void AddSubscriber(string connectionId) => _subscribers[connectionId] = true;

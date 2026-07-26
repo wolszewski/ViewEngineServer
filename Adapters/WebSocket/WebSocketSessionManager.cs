@@ -44,6 +44,11 @@ public sealed class WsFilterDto
 /// Converts a raw JSON element to its best-fit .NET primitive.
 /// Used for filter values that arrive as JSON.
 /// </summary>
+/// <summary>
+/// Reads a raw JSON token and returns its best-fit .NET primitive (bool, string,
+/// int, long, or double). Used for filter values that arrive as untyped JSON within
+/// <see cref="WsFilterDto.Value"/>.
+/// </summary>
 file sealed class JsonObjectConverter : JsonConverter<object?>
 {
     public override object? Read(ref Utf8JsonReader reader, Type typeToConvert,

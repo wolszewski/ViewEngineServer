@@ -162,7 +162,7 @@ public static class HttpIngestAdapter
         JsonValueKind.Null    => null,
         JsonValueKind.String  => element.GetString(),
         JsonValueKind.Number  => UnboxNumber(element),
-        _                     => element.ToString()
+        _                     => element.GetRawText() // Array, Object, Undefined — store as raw JSON text
     };
 
     private static object? UnboxNumber(JsonElement element)

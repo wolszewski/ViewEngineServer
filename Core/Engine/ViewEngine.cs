@@ -184,9 +184,11 @@ public sealed class ViewEngine : IViewEngine
         var newRowIds = newHandles.Select(h => collection.GetRowId(h) ?? string.Empty).ToArray();
         var oldRowIds = viewport.CurrentRowIds;
 
-        if (newRowIds.SequenceEqual(oldRowIds) && !isDelete)
+        if (newRowIds.SequenceEqual(oldRowIds))
         {
-            // Same rows in same order — check for in-place field changes
+            // Viewport composition unchanged — check for in-place field changes on upserts only.
+            // A delete that lands outside the visible window produces no events.
+            if (isDelete) return [];
             return BuildFieldUpdateEvents(view.Key.Id, newHandles, newRowIds, mutation, collection);
         }
 
