@@ -47,6 +47,7 @@ app.Run();
 
 sealed class WebSocketBroadcaster
 {
+    private const int WebSocketReceiveBufferSize = 1024;
     private readonly ConcurrentDictionary<Guid, WebSocket> _clients = new();
     private readonly ILogger<WebSocketBroadcaster> _logger;
 
@@ -78,7 +79,7 @@ sealed class WebSocketBroadcaster
 
     public async Task WaitForDisconnectAsync(Guid clientId, WebSocket socket, CancellationToken cancellationToken)
     {
-        var buffer = new byte[1024];
+        var buffer = new byte[WebSocketReceiveBufferSize];
 
         try
         {
