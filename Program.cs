@@ -48,6 +48,12 @@ app.Run();
 sealed class WebSocketBroadcaster
 {
     private readonly ConcurrentDictionary<Guid, WebSocket> _clients = new();
+    private readonly ILogger<WebSocketBroadcaster> _logger;
+
+    public WebSocketBroadcaster(ILogger<WebSocketBroadcaster> logger)
+    {
+        _logger = logger;
+    }
 
     public Guid AddClient(WebSocket socket)
     {
@@ -64,7 +70,8 @@ sealed class WebSocketBroadcaster
         }
 
         var message = Encoding.UTF8.GetBytes(payload);
-        var deliveries = _clients.Select(client => SendToClientAsync(client.Key, client.Value, message, cancellationToken));
+        var clientsSnapshot = _clients.ToArray();
+        var deliveries = clientsSnapshot.Select(client => SendToClientAsync(client.Key, client.Value, message, cancellationToken));
         var results = await Task.WhenAll(deliveries);
         return results.Count(delivered => delivered);
     }
@@ -84,8 +91,9 @@ sealed class WebSocketBroadcaster
                 }
             }
         }
-        catch (WebSocketException)
+        catch (WebSocketException exception)
         {
+            _logger.LogDebug(exception, "WebSocket receive loop ended for client {ClientId}.", clientId);
         }
         finally
         {
@@ -110,8 +118,9 @@ sealed class WebSocketBroadcaster
             await socket.SendAsync(payload, WebSocketMessageType.Text, true, cancellationToken);
             return true;
         }
-        catch (WebSocketException)
+        catch (WebSocketException exception)
         {
+            _logger.LogDebug(exception, "WebSocket send failed for client {ClientId}.", clientId);
             _clients.TryRemove(clientId, out _);
             return false;
         }
