@@ -1,130 +1,70 @@
-using System.Collections.Concurrent;
-using System.Net.WebSockets;
-using System.Text;
+using ViewEngineServer.Adapters.Http;
+using ViewEngineServer.Adapters.WebSocket;
+using ViewEngineServer.Core.Engine;
+using ViewEngineServer.Core.Publishing;
+using ViewEngineServer.Core.Storage;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddSingleton<WebSocketBroadcaster>();
+
+// -------------------------------------------------------------------------
+// Core services — no HTTP / WebSocket types inside these registrations
+// -------------------------------------------------------------------------
+builder.Services.AddSingleton<ICollectionStore, CollectionStore>();
+builder.Services.AddSingleton<WebSocketOutboundPublisher>();
+builder.Services.AddSingleton<IOutboundPublisher>(sp =>
+    sp.GetRequiredService<WebSocketOutboundPublisher>());
+builder.Services.AddSingleton<IViewEngine, ViewEngine>();
+
+// -------------------------------------------------------------------------
+// Adapter services
+// -------------------------------------------------------------------------
+builder.Services.AddSingleton<WebSocketSessionManager>();
 
 var app = builder.Build();
-
 app.UseWebSockets();
 
-app.MapGet("/", () => Results.Ok(new
+// -------------------------------------------------------------------------
+// Endpoints — thin; all logic delegated to adapters / engine
+// -------------------------------------------------------------------------
+
+app.MapGet("/", (ICollectionStore store) => Results.Ok(new
 {
     service = "ViewEngineServer",
-    websocket = "/ws",
-    ingest = "/ingest"
+    endpoints = new { websocket = "/ws", collections = "/collections", ingest = "/ingest" },
+    collections = store.CollectionIds
 }));
 
-app.MapGet("/ws", async (HttpContext context, WebSocketBroadcaster broadcaster, CancellationToken cancellationToken) =>
+// Register a new collection schema
+app.MapPost("/collections", async (
+    HttpRequest request, IViewEngine engine, CancellationToken ct) =>
+{
+    var (result, validationError) = await HttpIngestAdapter.HandleCreateCollectionAsync(request, engine, ct);
+    if (!result.Success)
+        return Results.BadRequest(new { error = result.Error, detail = validationError });
+    return Results.Created("/collections", new { message = "Collection created." });
+});
+
+// Upsert or delete rows
+app.MapPost("/ingest", async (
+    HttpRequest request, IViewEngine engine, CancellationToken ct) =>
+{
+    var (result, validationError) = await HttpIngestAdapter.HandleIngestAsync(request, engine, ct);
+    if (!result.Success)
+        return Results.BadRequest(new { error = result.Error, detail = validationError });
+    return Results.Accepted(value: new { message = "Accepted." });
+});
+
+// WebSocket endpoint for live-updating client subscriptions
+app.MapGet("/ws", async (
+    HttpContext context, WebSocketSessionManager sessionManager, CancellationToken ct) =>
 {
     if (!context.WebSockets.IsWebSocketRequest)
     {
         context.Response.StatusCode = StatusCodes.Status400BadRequest;
         return;
     }
-
     using var socket = await context.WebSockets.AcceptWebSocketAsync();
-    var clientId = broadcaster.AddClient(socket);
-    await broadcaster.WaitForDisconnectAsync(clientId, socket, cancellationToken);
-});
-
-app.MapPost("/ingest", async (HttpRequest request, WebSocketBroadcaster broadcaster, CancellationToken cancellationToken) =>
-{
-    using var reader = new StreamReader(request.Body, Encoding.UTF8);
-    var payload = await reader.ReadToEndAsync(cancellationToken);
-
-    if (string.IsNullOrWhiteSpace(payload))
-    {
-        return Results.BadRequest(new { error = "Payload is required." });
-    }
-
-    var sentTo = await broadcaster.BroadcastAsync(payload, cancellationToken);
-    return Results.Accepted(value: new { sentTo });
+    await sessionManager.HandleConnectionAsync(socket, ct);
 });
 
 app.Run();
-
-sealed class WebSocketBroadcaster
-{
-    private const int WebSocketReceiveBufferSize = 1024;
-    private readonly ConcurrentDictionary<Guid, WebSocket> _clients = new();
-    private readonly ILogger<WebSocketBroadcaster> _logger;
-
-    public WebSocketBroadcaster(ILogger<WebSocketBroadcaster> logger)
-    {
-        _logger = logger;
-    }
-
-    public Guid AddClient(WebSocket socket)
-    {
-        var id = Guid.NewGuid();
-        _clients[id] = socket;
-        _logger.LogInformation("Client {ClientId} connected.", id);
-        return id;
-    }
-
-    public async Task<int> BroadcastAsync(string payload, CancellationToken cancellationToken)
-    {
-        if (_clients.IsEmpty)
-        {
-            return 0;
-        }
-
-        var message = Encoding.UTF8.GetBytes(payload);
-        var clientsSnapshot = _clients.ToArray();
-        var deliveries = clientsSnapshot.Select(client => SendToClientAsync(client.Key, client.Value, message, cancellationToken));
-        var results = await Task.WhenAll(deliveries);
-        return results.Count(delivered => delivered);
-    }
-
-    public async Task WaitForDisconnectAsync(Guid clientId, WebSocket socket, CancellationToken cancellationToken)
-    {
-        var buffer = new byte[WebSocketReceiveBufferSize];
-
-        try
-        {
-            while (socket.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
-            {
-                var result = await socket.ReceiveAsync(buffer, cancellationToken);
-                if (result.MessageType == WebSocketMessageType.Close)
-                {
-                    break;
-                }
-            }
-        }
-        catch (WebSocketException exception)
-        {
-            _logger.LogDebug(exception, "WebSocket receive loop ended for client {ClientId}.", clientId);
-        }
-        finally
-        {
-            _clients.TryRemove(clientId, out _);
-            if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
-            {
-                await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Disconnected", CancellationToken.None);
-            }
-        }
-    }
-
-    private async Task<bool> SendToClientAsync(Guid clientId, WebSocket socket, byte[] payload, CancellationToken cancellationToken)
-    {
-        if (socket.State != WebSocketState.Open)
-        {
-            _clients.TryRemove(clientId, out _);
-            return false;
-        }
-
-        try
-        {
-            await socket.SendAsync(payload, WebSocketMessageType.Text, true, cancellationToken);
-            return true;
-        }
-        catch (WebSocketException exception)
-        {
-            _logger.LogDebug(exception, "WebSocket send failed for client {ClientId}.", clientId);
-            _clients.TryRemove(clientId, out _);
-            return false;
-        }
-    }
-}
