@@ -60,6 +60,7 @@ sealed class WebSocketBroadcaster
     {
         var id = Guid.NewGuid();
         _clients[id] = socket;
+        _logger.LogInformation("Client {ClientId} connected.", id);
         return id;
     }
 
