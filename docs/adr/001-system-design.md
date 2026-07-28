@@ -89,5 +89,5 @@ The first working implementation was built in the PR that merged the basic syste
 ## Consequences
 
 - Adding a new `FieldType` requires a new typed column class and a case in the constructor switch expression in `ColumnarCollection`.
-- The `capacity` limit is intentional and must be documented to integrators; attempting to insert beyond capacity throws `InvalidOperationException`.
+- The `capacity` limit is intentional and must be documented to integrators; attempting to insert beyond capacity throws `InvalidOperationException` (enforced in `ColumnarCollection.Upsert` before allocating a new handle).
 - Bulk-load performance may need revisiting if the expected row count approaches 100 000 with high write throughput.
