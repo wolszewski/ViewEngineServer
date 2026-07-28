@@ -21,7 +21,7 @@ public sealed class SortIndex
 
         foreach (var (handle, _) in allRows)
         {
-            var val = collection.GetValue(handle, fieldIndex);
+            var val = collection.GetTypedValue(handle, fieldIndex);
             _handleValues[handle] = val;
             _sortedHandles.Add(handle);
         }
@@ -223,7 +223,7 @@ public sealed class SortIndex
                 continue;
             }
 
-            var val = _collection.GetValue(handle, fi);
+            var val = _collection.GetTypedValue(handle, fi);
             if (!FilterEvaluator.Matches(val, filters[i]))
             {
                 return false;

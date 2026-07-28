@@ -127,7 +127,7 @@ public class ColumnarCollectionTests
 
         Assert.Equal("r1", row["id"]);
         Assert.Equal("Alice", row["name"]);
-        Assert.Equal(42, row["score"]);
+        Assert.Equal("42", row["score"]);
     }
 
     [Fact]

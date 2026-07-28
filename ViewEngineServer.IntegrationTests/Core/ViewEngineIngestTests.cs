@@ -26,7 +26,7 @@ public class ViewEngineIngestTests
             [
                 new FieldDefinition("id", FieldType.String, IsPrimaryKey: true),
                 new FieldDefinition("customer", FieldType.String, IsSortable: true, IsFilterable: true),
-                new FieldDefinition("amount", FieldType.Double, IsSortable: true),
+                new FieldDefinition("amount", FieldType.Decimal, IsSortable: true),
                 new FieldDefinition("status", FieldType.String, IsFilterable: true)
             ]
         };
@@ -107,7 +107,7 @@ public class ViewEngineIngestTests
         Assert.Equal(3, snapshot.TotalCount);
         Assert.Equal(3, snapshot.Rows.Count);
 
-        var ids = snapshot.Rows.Select(r => r["id"]?.ToString()).ToHashSet();
+        var ids = snapshot.Rows.Select(r => r["id"]).ToHashSet();
         Assert.Contains("o1", ids);
         Assert.Contains("o2", ids);
         Assert.Contains("o3", ids);
@@ -131,7 +131,7 @@ public class ViewEngineIngestTests
         var snapshot = Assert.IsType<SnapshotEvent>(events.Single());
         var row = snapshot.Rows.Single();
         Assert.Equal("Alice", row["customer"]);
-        Assert.Equal(99.5, row["amount"]);
+        Assert.Equal("99.5", row["amount"]);
         Assert.Equal("closed", row["status"]);
     }
 
@@ -183,7 +183,7 @@ public class ViewEngineIngestTests
         var evt = updateEvents.First();
         Assert.Equal("o1", evt.RowId);
         Assert.True(evt.ChangedFields.ContainsKey("amount"));
-        Assert.Equal(250.0, evt.ChangedFields["amount"]);
+        Assert.Equal("250", evt.ChangedFields["amount"]);
     }
 
     [Fact]
@@ -274,8 +274,8 @@ public class ViewEngineIngestTests
         });
 
         var snapshot = Assert.IsType<SnapshotEvent>(events.Single());
-        var amounts = snapshot.Rows.Select(r => (double)r["amount"]!).ToList();
-        Assert.Equal([100, 200, 300], amounts);
+        var amounts = snapshot.Rows.Select(r => r["amount"]).ToList();
+        Assert.Equal(["100", "200", "300"], amounts);
     }
 
     [Fact]
@@ -300,8 +300,8 @@ public class ViewEngineIngestTests
         });
 
         var snapshot = Assert.IsType<SnapshotEvent>(events.Single());
-        var amounts = snapshot.Rows.Select(r => (double)r["amount"]!).ToList();
-        Assert.Equal([200, 100], amounts);
+        var amounts = snapshot.Rows.Select(r => r["amount"]).ToList();
+        Assert.Equal(["200", "100"], amounts);
     }
 
 
