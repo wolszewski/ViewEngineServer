@@ -1,12 +1,9 @@
-using ViewEngineServer.Core.Indexing;
+using ViewEngineServer.Core;
 
 namespace ViewEngineServer.UnitTests.Indexing;
 
 public class FilterEvaluatorTests
 {
-    // -------------------------------------------------------------------------
-    // Eq
-    // -------------------------------------------------------------------------
 
     [Fact]
     public void Eq_MatchingStringValue_ReturnsTrue()
@@ -36,9 +33,6 @@ public class FilterEvaluatorTests
         Assert.True(FilterEvaluator.Matches(42, filter));
     }
 
-    // -------------------------------------------------------------------------
-    // NotEq
-    // -------------------------------------------------------------------------
 
     [Fact]
     public void NotEq_DifferentValues_ReturnsTrue()
@@ -54,9 +48,6 @@ public class FilterEvaluatorTests
         Assert.False(FilterEvaluator.Matches("a", filter));
     }
 
-    // -------------------------------------------------------------------------
-    // Gt / Gte / Lt / Lte
-    // -------------------------------------------------------------------------
 
     [Theory]
     [InlineData(5, 3, true)]
@@ -98,9 +89,6 @@ public class FilterEvaluatorTests
         Assert.Equal(expected, FilterEvaluator.Matches(fieldValue, filter));
     }
 
-    // -------------------------------------------------------------------------
-    // Contains
-    // -------------------------------------------------------------------------
 
     [Fact]
     public void Contains_SubstringPresent_ReturnsTrue()
@@ -130,9 +118,6 @@ public class FilterEvaluatorTests
         Assert.False(FilterEvaluator.Matches(null, filter));
     }
 
-    // -------------------------------------------------------------------------
-    // PassesAll
-    // -------------------------------------------------------------------------
 
     [Fact]
     public void PassesAll_AllFiltersMatch_ReturnsTrue()

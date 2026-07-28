@@ -1,16 +1,10 @@
-namespace ViewEngineServer.Core.Indexing;
+namespace ViewEngineServer.Core;
 
-// ---------------------------------------------------------------------------
-// Filter specification
-// ---------------------------------------------------------------------------
 
 public enum FilterOperator { Eq, NotEq, Gt, Gte, Lt, Lte, Contains }
 
 public sealed record FilterSpec(string FieldName, FilterOperator Operator, object? Value);
 
-// ---------------------------------------------------------------------------
-// Stateless evaluator — no dependencies on HTTP or storage layer
-// ---------------------------------------------------------------------------
 
 public static class FilterEvaluator
 {

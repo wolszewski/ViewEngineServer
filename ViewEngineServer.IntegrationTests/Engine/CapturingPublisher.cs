@@ -1,11 +1,7 @@
-using ViewEngineServer.Core.Delta;
-using ViewEngineServer.Core.Publishing;
+using ViewEngineServer.Core;
 
 namespace ViewEngineServer.IntegrationTests.Engine;
 
-/// <summary>
-/// In-memory publisher that records all published events so tests can inspect them.
-/// </summary>
 internal sealed class CapturingPublisher : IOutboundPublisher
 {
     private readonly List<(string ConnectionId, IReadOnlyList<DeltaEvent> Events)> _published = [];
@@ -19,7 +15,6 @@ internal sealed class CapturingPublisher : IOutboundPublisher
         return ValueTask.CompletedTask;
     }
 
-    /// <summary>All events for a specific connection, in publish order.</summary>
     public IEnumerable<DeltaEvent> EventsFor(string connectionId) =>
         _published
             .Where(p => p.ConnectionId == connectionId)

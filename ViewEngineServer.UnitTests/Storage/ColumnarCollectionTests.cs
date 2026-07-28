@@ -1,5 +1,4 @@
-using ViewEngineServer.Core.Schema;
-using ViewEngineServer.Core.Storage;
+using ViewEngineServer.Core;
 
 namespace ViewEngineServer.UnitTests.Storage;
 
@@ -18,9 +17,6 @@ public class ColumnarCollectionTests
             ]
         });
 
-    // -------------------------------------------------------------------------
-    // Upsert — insert
-    // -------------------------------------------------------------------------
 
     [Fact]
     public void Upsert_NewRow_ReturnsIsNewTrue()
@@ -51,9 +47,6 @@ public class ColumnarCollectionTests
         Assert.NotEqual(r1.Handle, r2.Handle);
     }
 
-    // -------------------------------------------------------------------------
-    // Upsert — update
-    // -------------------------------------------------------------------------
 
     [Fact]
     public void Upsert_ExistingRow_ReturnsIsNewFalse_WithPreviousValues()
@@ -93,9 +86,6 @@ public class ColumnarCollectionTests
             col.Upsert(new Dictionary<string, object?> { ["id"] = "r2" }));
     }
 
-    // -------------------------------------------------------------------------
-    // Delete
-    // -------------------------------------------------------------------------
 
     [Fact]
     public void Delete_ExistingRow_ReturnsNonNull_AndDecrementsLiveCount()
@@ -127,9 +117,6 @@ public class ColumnarCollectionTests
         Assert.Null(col.GetRowId(r.Handle));
     }
 
-    // -------------------------------------------------------------------------
-    // GetRow / GetValue / IsLive
-    // -------------------------------------------------------------------------
 
     [Fact]
     public void GetRow_ReturnsAllFields()
@@ -160,9 +147,6 @@ public class ColumnarCollectionTests
         Assert.False(col.IsLive(r.Handle));
     }
 
-    // -------------------------------------------------------------------------
-    // GetAllLiveHandles
-    // -------------------------------------------------------------------------
 
     [Fact]
     public void GetAllLiveHandles_ReturnsOnlyLiveRows()
@@ -177,9 +161,6 @@ public class ColumnarCollectionTests
         Assert.Equal("r2", live[0].rowId);
     }
 
-    // -------------------------------------------------------------------------
-    // TryGetHandle
-    // -------------------------------------------------------------------------
 
     [Fact]
     public void TryGetHandle_FindsInsertedRow()

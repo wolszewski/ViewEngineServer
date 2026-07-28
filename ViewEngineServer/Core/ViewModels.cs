@@ -1,17 +1,8 @@
 using System.Collections.Concurrent;
-using ViewEngineServer.Core.Indexing;
-using ViewEngineServer.Core.Storage;
 
-namespace ViewEngineServer.Core.Views;
+namespace ViewEngineServer.Core;
 
-// ---------------------------------------------------------------------------
-// View definition & canonical key
-// ---------------------------------------------------------------------------
 
-/// <summary>
-/// Transport-neutral description of a view: which collection, how to sort,
-/// and which filters to apply. Produced by any adapter that wants to subscribe.
-/// </summary>
 public sealed class ViewDefinition
 {
     public required string CollectionId { get; init; }
@@ -20,10 +11,6 @@ public sealed class ViewDefinition
     public IReadOnlyList<FilterSpec> Filters { get; init; } = [];
 }
 
-/// <summary>
-/// Canonical, equality-comparable key derived from a <see cref="ViewDefinition"/>.
-/// Two clients whose requests produce the same key will share one server-side view.
-/// </summary>
 public sealed class ViewKey : IEquatable<ViewKey>
 {
     public string CollectionId { get; }
@@ -31,7 +18,6 @@ public sealed class ViewKey : IEquatable<ViewKey>
     public bool SortAscending { get; }
     public IReadOnlyList<FilterSpec> Filters { get; }
 
-    /// <summary>Human-readable stable identifier used in outbound messages.</summary>
     public string Id { get; }
 
     private readonly int _hashCode;
@@ -90,15 +76,7 @@ public sealed class ViewKey : IEquatable<ViewKey>
     }
 }
 
-// ---------------------------------------------------------------------------
-// Shared view — one per unique ViewKey
-// ---------------------------------------------------------------------------
 
-/// <summary>
-/// Server-side materialised view shared by all subscribers with the same
-/// <see cref="ViewKey"/>. Owns the <see cref="SortIndex"/> for its sort column
-/// and tracks which connections are subscribed.
-/// </summary>
 public sealed class SharedView
 {
     public ViewKey Key { get; }
@@ -139,9 +117,6 @@ public sealed class SharedView
     public bool RemoveSubscriber(string connectionId) =>
         _subscribers.TryRemove(connectionId, out _);
 
-    // -----------------------------------------------------------------------
-    // Query helpers
-    // -----------------------------------------------------------------------
 
     public int[] GetPageHandles(int startIndex, int pageSize) =>
         SortIndex.GetPageHandles(startIndex, pageSize, Key.Filters, _filterFieldIndexes);
@@ -149,9 +124,6 @@ public sealed class SharedView
     public int GetTotalCount() =>
         SortIndex.GetCount(Key.Filters, _filterFieldIndexes);
 
-    // -----------------------------------------------------------------------
-    // Mutation notification
-    // -----------------------------------------------------------------------
 
     public void NotifyUpsert(int handle, object? newSortValue) =>
         SortIndex.OnUpsert(handle, newSortValue);

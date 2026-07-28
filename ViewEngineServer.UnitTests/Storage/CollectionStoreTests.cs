@@ -1,5 +1,4 @@
-using ViewEngineServer.Core.Schema;
-using ViewEngineServer.Core.Storage;
+using ViewEngineServer.Core;
 
 namespace ViewEngineServer.UnitTests.Storage;
 

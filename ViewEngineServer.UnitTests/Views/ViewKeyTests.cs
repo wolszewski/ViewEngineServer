@@ -1,5 +1,4 @@
-using ViewEngineServer.Core.Indexing;
-using ViewEngineServer.Core.Views;
+using ViewEngineServer.Core;
 
 namespace ViewEngineServer.UnitTests.Views;
 

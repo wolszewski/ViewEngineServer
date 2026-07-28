@@ -1,6 +1,4 @@
-using ViewEngineServer.Core.Indexing;
-using ViewEngineServer.Core.Schema;
-using ViewEngineServer.Core.Storage;
+using ViewEngineServer.Core;
 
 namespace ViewEngineServer.UnitTests.Indexing;
 
@@ -28,9 +26,6 @@ public class SortIndexTests
         idx.OnUpsert(mut.Handle, mut.NewValues?[1]);
     }
 
-    // -------------------------------------------------------------------------
-    // Basic ordering
-    // -------------------------------------------------------------------------
 
     [Fact]
     public void GetPageHandles_AscendingOrder_ReturnsSortedHandles()
@@ -60,9 +55,6 @@ public class SortIndexTests
         Assert.Equal([30, 20, 10], scores);
     }
 
-    // -------------------------------------------------------------------------
-    // Pagination
-    // -------------------------------------------------------------------------
 
     [Fact]
     public void GetPageHandles_SecondPage_ReturnsCorrectSubset()
@@ -87,9 +79,6 @@ public class SortIndexTests
         Assert.Single(page);
     }
 
-    // -------------------------------------------------------------------------
-    // Mutation updates
-    // -------------------------------------------------------------------------
 
     [Fact]
     public void OnUpsert_UpdatedScore_ReordersIndex()
@@ -98,7 +87,6 @@ public class SortIndexTests
         Upsert(col, idx, "a", 10);
         Upsert(col, idx, "b", 30);
 
-        // Update "b" score to 5 (should move to first)
         var mut = col.Upsert(new Dictionary<string, object?> { ["id"] = "b", ["score"] = 5 });
         idx.OnUpsert(mut.Handle, mut.NewValues?[1]);
 
@@ -124,9 +112,6 @@ public class SortIndexTests
         Assert.Equal("b", col.GetRowId(handles[0]));
     }
 
-    // -------------------------------------------------------------------------
-    // Filtering
-    // -------------------------------------------------------------------------
 
     [Fact]
     public void GetPageHandles_WithFilter_ExcludesNonMatchingRows()
@@ -159,9 +144,6 @@ public class SortIndexTests
         Assert.Equal(2, handles.Length);
     }
 
-    // -------------------------------------------------------------------------
-    // GetCount
-    // -------------------------------------------------------------------------
 
     [Fact]
     public void GetCount_NoFilter_ReturnsAllRows()

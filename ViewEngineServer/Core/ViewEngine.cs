@@ -1,40 +1,24 @@
 using System.Collections.Concurrent;
-using Microsoft.Extensions.Logging;
-using ViewEngineServer.Core.Delta;
-using ViewEngineServer.Core.Ingestion;
-using ViewEngineServer.Core.Publishing;
-using ViewEngineServer.Core.Storage;
-using ViewEngineServer.Core.Subscriptions;
-using ViewEngineServer.Core.Views;
 
-namespace ViewEngineServer.Core.Engine;
+namespace ViewEngineServer.Core;
 
-/// <summary>
-/// Transport-agnostic orchestrator. Has zero dependencies on HTTP, TCP, or
-/// WebSocket types — those live exclusively in the adapter layer.
-///
-/// Mutation pipeline:
-///   IngestAsync → validate → write storage → update sort indexes →
-///   compute per-viewport deltas → publish via IOutboundPublisher
-///
-/// Subscription pipeline:
-///   SubscribeAsync → find/create SharedView → build snapshot →
-///   return snapshot to caller for immediate delivery
-/// </summary>
+
+public interface IViewEngine
+{
+    Task<IngestResult> IngestAsync(IngestCommand command, CancellationToken ct = default);
+    Task<IReadOnlyList<DeltaEvent>> SubscribeAsync(SubscriptionCommand command, CancellationToken ct = default);
+}
+
 public sealed class ViewEngine : IViewEngine
 {
     private readonly ICollectionStore _store;
     private readonly IOutboundPublisher _publisher;
     private readonly ILogger<ViewEngine> _logger;
 
-    // One SharedView per unique ViewKey
     private readonly ConcurrentDictionary<ViewKey, SharedView> _sharedViews = new();
 
-    // One ViewportState per connected client
     private readonly ConcurrentDictionary<string, ViewportState> _viewports = new();
 
-    // Serialises mutation propagation per collection so delta ordering is deterministic.
-    // Key = collectionId; value = SemaphoreSlim(1,1).
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _mutationLocks = new();
 
     public ViewEngine(ICollectionStore store, IOutboundPublisher publisher,
@@ -44,10 +28,6 @@ public sealed class ViewEngine : IViewEngine
         _publisher = publisher;
         _logger = logger;
     }
-
-    // =========================================================================
-    // IViewEngine — Ingestion
-    // =========================================================================
 
     public async Task<IngestResult> IngestAsync(IngestCommand command, CancellationToken ct = default)
     {
@@ -70,10 +50,6 @@ public sealed class ViewEngine : IViewEngine
         }
     }
 
-    // =========================================================================
-    // IViewEngine — Subscriptions
-    // =========================================================================
-
     public Task<IReadOnlyList<DeltaEvent>> SubscribeAsync(
         SubscriptionCommand command, CancellationToken ct = default)
     {
@@ -87,10 +63,6 @@ public sealed class ViewEngine : IViewEngine
         return Task.FromResult(result);
     }
 
-    // =========================================================================
-    // Private — collection creation
-    // =========================================================================
-
     private IngestResult HandleCreateCollection(CreateCollectionCommand command)
     {
         if (!_store.TryCreate(command.Schema))
@@ -101,10 +73,6 @@ public sealed class ViewEngine : IViewEngine
             command.CollectionId, command.Schema.Fields.Count, command.Schema.Capacity);
         return IngestResult.Ok();
     }
-
-    // =========================================================================
-    // Private — upsert / delete
-    // =========================================================================
 
     private async Task<IngestResult> HandleUpsertAsync(UpsertRowCommand command, CancellationToken ct)
     {
@@ -122,20 +90,16 @@ public sealed class ViewEngine : IViewEngine
             return IngestResult.Fail($"Collection '{command.CollectionId}' not found.");
 
         var mutation = collection.Delete(command.PrimaryKeyValue);
-        if (mutation is null) return IngestResult.Ok(); // row not found — idempotent
+        if (mutation is null) return IngestResult.Ok();
 
         await PropagateMutationAsync(collection, mutation, isDelete: true, ct);
         return IngestResult.Ok();
     }
 
-    // =========================================================================
-    // Private — delta propagation
-    // =========================================================================
-
     private async Task PropagateMutationAsync(
         ColumnarCollection collection, MutationInfo mutation, bool isDelete, CancellationToken ct)
     {
-        // Serialise per-collection so deltas are ordered consistently.
+        // Enforce per-collection ordering so every subscriber sees deltas in the same sequence.
         var sem = _mutationLocks.GetOrAdd(collection.Schema.CollectionId, _ => new SemaphoreSlim(1, 1));
         await sem.WaitAsync(ct);
         try
@@ -145,7 +109,6 @@ public sealed class ViewEngine : IViewEngine
                 var view = kv.Value;
                 if (view.Key.CollectionId != collection.Schema.CollectionId) continue;
 
-                // Update sort index
                 if (isDelete)
                 {
                     view.NotifyDelete(mutation.Handle);
@@ -156,7 +119,6 @@ public sealed class ViewEngine : IViewEngine
                     view.NotifyUpsert(mutation.Handle, sortValue);
                 }
 
-                // Push deltas to every subscriber of this view
                 foreach (var connectionId in view.Subscribers)
                 {
                     if (!_viewports.TryGetValue(connectionId, out var viewport)) continue;
@@ -164,7 +126,6 @@ public sealed class ViewEngine : IViewEngine
                     var events = BuildDeltas(view, collection, viewport, mutation, isDelete);
                     if (events.Count == 0) continue;
 
-                    // Record the new viewport snapshot before publishing
                     viewport.CurrentRowIds = GetCurrentRowIds(view, viewport, collection);
                     await _publisher.PublishAsync(connectionId, events, ct);
                 }
@@ -186,8 +147,6 @@ public sealed class ViewEngine : IViewEngine
 
         if (newRowIds.SequenceEqual(oldRowIds))
         {
-            // Viewport composition unchanged — check for in-place field changes on upserts only.
-            // A delete that lands outside the visible window produces no events.
             if (isDelete) return [];
             return BuildFieldUpdateEvents(view.Key.Id, newHandles, newRowIds, mutation, collection);
         }
@@ -196,12 +155,10 @@ public sealed class ViewEngine : IViewEngine
         var newSet = new HashSet<string>(newRowIds);
         var oldSet = new HashSet<string>(oldRowIds);
 
-        // Rows removed from viewport
         for (int i = oldRowIds.Length - 1; i >= 0; i--)
             if (!newSet.Contains(oldRowIds[i]))
                 events.Add(new RowRemoveEvent { ViewId = view.Key.Id, Position = i });
 
-        // Rows inserted into viewport
         for (int i = 0; i < newRowIds.Length; i++)
             if (!oldSet.Contains(newRowIds[i]))
                 events.Add(new RowInsertEvent
@@ -211,7 +168,6 @@ public sealed class ViewEngine : IViewEngine
                     Row = collection.GetRow(newHandles[i])
                 });
 
-        // In-place updates for rows that are in both old and new viewports
         var fieldUpdates = BuildFieldUpdateEvents(view.Key.Id, newHandles, newRowIds, mutation, collection);
         events.AddRange(fieldUpdates);
 
@@ -229,7 +185,7 @@ public sealed class ViewEngine : IViewEngine
             return [];
 
         int pos = Array.IndexOf(rowIds, mutation.RowId);
-        if (pos < 0) return []; // mutated row is not in this viewport
+        if (pos < 0) return [];
 
         var changed = new Dictionary<string, object?>();
         for (int fi = 0; fi < collection.Schema.Fields.Count; fi++)
@@ -256,9 +212,6 @@ public sealed class ViewEngine : IViewEngine
         return handles.Select(h => collection.GetRowId(h) ?? string.Empty).ToArray();
     }
 
-    // =========================================================================
-    // Private — subscription handling
-    // =========================================================================
 
     private IReadOnlyList<DeltaEvent> HandleSubscribe(SubscribeCommand command)
     {
@@ -282,7 +235,6 @@ public sealed class ViewEngine : IViewEngine
         };
         _viewports[command.ConnectionId] = viewport;
 
-        // Build initial snapshot
         var handles = view.GetPageHandles(command.StartIndex, command.PageSize);
         viewport.CurrentRowIds = handles
             .Select(h => collection.GetRowId(h) ?? string.Empty)

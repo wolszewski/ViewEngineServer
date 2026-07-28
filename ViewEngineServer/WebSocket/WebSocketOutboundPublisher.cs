@@ -1,20 +1,10 @@
 using System.Collections.Concurrent;
 using System.Net.WebSockets;
-using System.Text;
 using System.Text.Json;
-using Microsoft.Extensions.Logging;
-using ViewEngineServer.Core.Delta;
-using ViewEngineServer.Core.Publishing;
+using ViewEngineServer.Core;
 
-namespace ViewEngineServer.Adapters.WebSocket;
+namespace ViewEngineServer.WebSocket;
 
-/// <summary>
-/// Implements <see cref="IOutboundPublisher"/> by writing JSON-serialised
-/// <see cref="DeltaEvent"/> arrays to a registered WebSocket connection.
-///
-/// All WebSocket / transport details are encapsulated here; the core engine
-/// calls only <see cref="PublishAsync"/> with plain objects.
-/// </summary>
 public sealed class WebSocketOutboundPublisher : IOutboundPublisher
 {
     private readonly ConcurrentDictionary<string, System.Net.WebSockets.WebSocket> _sockets = new();

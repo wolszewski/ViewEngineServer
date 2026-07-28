@@ -1,23 +1,10 @@
 using Microsoft.Extensions.Logging.Abstractions;
-using ViewEngineServer.Core.Delta;
-using ViewEngineServer.Core.Engine;
-using ViewEngineServer.Core.Ingestion;
-using ViewEngineServer.Core.Schema;
-using ViewEngineServer.Core.Storage;
-using ViewEngineServer.Core.Subscriptions;
-using ViewEngineServer.Core.Views;
+using ViewEngineServer.Core;
 
 namespace ViewEngineServer.IntegrationTests.Engine;
 
-/// <summary>
-/// Integration tests for the ViewEngine using real CollectionStore and ColumnarCollection.
-/// No HTTP or WebSocket dependencies — all transport layers are excluded.
-/// </summary>
 public class ViewEngineIngestTests
 {
-    // -------------------------------------------------------------------------
-    // Test fixture helpers
-    // -------------------------------------------------------------------------
 
     private static (ViewEngine engine, CapturingPublisher publisher, ICollectionStore store)
         CreateEngine()
@@ -63,9 +50,6 @@ public class ViewEngineIngestTests
             }
         });
 
-    // -------------------------------------------------------------------------
-    // Collection creation
-    // -------------------------------------------------------------------------
 
     [Fact]
     public async Task CreateCollection_Succeeds()
@@ -93,16 +77,12 @@ public class ViewEngineIngestTests
     {
         var (engine, _, _) = CreateEngine();
 
-        // Subclass unknown to the engine
         var result = await engine.IngestAsync(new UnknownTestCommand { CollectionId = "x" });
         Assert.False(result.Success);
     }
 
     private sealed class UnknownTestCommand : IngestCommand { }
 
-    // -------------------------------------------------------------------------
-    // Ingest → Subscribe: snapshot reflects ingested rows
-    // -------------------------------------------------------------------------
 
     [Fact]
     public async Task IngestThenSubscribe_SnapshotContainsAllRows()
@@ -153,9 +133,6 @@ public class ViewEngineIngestTests
         Assert.Equal("closed", row["status"]);
     }
 
-    // -------------------------------------------------------------------------
-    // Subscribe → Ingest: delta events pushed to subscriber
-    // -------------------------------------------------------------------------
 
     [Fact]
     public async Task SubscribeThenIngest_NewRow_PublishesInsertOrSnapshot()
@@ -175,7 +152,6 @@ public class ViewEngineIngestTests
 
         var deltas = publisher.EventsFor("client1").ToList();
         Assert.NotEmpty(deltas);
-        // The row must appear either as a SnapshotEvent (re-snapshot) or RowInsertEvent
         Assert.Contains(deltas, e => e is RowInsertEvent or SnapshotEvent);
     }
 
@@ -194,7 +170,6 @@ public class ViewEngineIngestTests
             PageSize = 10
         });
 
-        // Update existing row — only the changed field should produce a RowUpdateEvent
         await engine.IngestAsync(new UpsertRowCommand
         {
             CollectionId = "orders",
@@ -234,9 +209,6 @@ public class ViewEngineIngestTests
         Assert.NotEmpty(removeEvents);
     }
 
-    // -------------------------------------------------------------------------
-    // Upsert non-existent collection
-    // -------------------------------------------------------------------------
 
     [Fact]
     public async Task UpsertToMissingCollection_Fails()
@@ -267,7 +239,6 @@ public class ViewEngineIngestTests
         var (engine, _, _) = CreateEngine();
         await CreateOrders(engine);
 
-        // Deleting a row that does not exist should succeed silently
         var result = await engine.IngestAsync(new DeleteRowCommand
         {
             CollectionId = "orders",
@@ -277,9 +248,6 @@ public class ViewEngineIngestTests
         Assert.True(result.Success);
     }
 
-    // -------------------------------------------------------------------------
-    // Sorting
-    // -------------------------------------------------------------------------
 
     [Fact]
     public async Task Subscribe_SortedByAmount_SnapshotIsOrdered()
@@ -334,9 +302,6 @@ public class ViewEngineIngestTests
         Assert.Equal([200, 100], amounts);
     }
 
-    // -------------------------------------------------------------------------
-    // Filtering
-    // -------------------------------------------------------------------------
 
     [Fact]
     public async Task Subscribe_WithFilter_SnapshotOnlyContainsMatchingRows()
@@ -353,7 +318,7 @@ public class ViewEngineIngestTests
             View = new ViewDefinition
             {
                 CollectionId = "orders",
-                Filters = [new Core.Indexing.FilterSpec("status", Core.Indexing.FilterOperator.Eq, "open")]
+                Filters = [new FilterSpec("status", FilterOperator.Eq, "open")]
             },
             StartIndex = 0,
             PageSize = 10
@@ -364,9 +329,6 @@ public class ViewEngineIngestTests
         Assert.All(snapshot.Rows, r => Assert.Equal("open", r["status"]));
     }
 
-    // -------------------------------------------------------------------------
-    // Pagination via viewport
-    // -------------------------------------------------------------------------
 
     [Fact]
     public async Task Subscribe_PageSize_LimitsReturnedRows()
@@ -415,12 +377,9 @@ public class ViewEngineIngestTests
 
         var snapshot = Assert.IsType<SnapshotEvent>(events.Single());
         Assert.Equal(2, snapshot.StartIndex);
-        Assert.Single(snapshot.Rows); // only 3 rows total, page 2 has 1
+        Assert.Single(snapshot.Rows);
     }
 
-    // -------------------------------------------------------------------------
-    // Unsubscribe
-    // -------------------------------------------------------------------------
 
     [Fact]
     public async Task Unsubscribe_ThenIngest_DoesNotPublishToDisconnectedClient()
@@ -446,9 +405,6 @@ public class ViewEngineIngestTests
         Assert.Equal(countBefore, countAfter);
     }
 
-    // -------------------------------------------------------------------------
-    // Subscribe to non-existent collection
-    // -------------------------------------------------------------------------
 
     [Fact]
     public async Task SubscribeToMissingCollection_ReturnsNoEvents()
@@ -466,9 +422,6 @@ public class ViewEngineIngestTests
         Assert.Empty(events);
     }
 
-    // -------------------------------------------------------------------------
-    // Multiple subscribers share one view
-    // -------------------------------------------------------------------------
 
     [Fact]
     public async Task MultipleSubscribers_SameView_BothReceiveDelta()

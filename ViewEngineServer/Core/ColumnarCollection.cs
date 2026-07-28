@@ -1,16 +1,6 @@
-using ViewEngineServer.Core.Schema;
+namespace ViewEngineServer.Core;
 
-namespace ViewEngineServer.Core.Storage;
 
-// ---------------------------------------------------------------------------
-// Mutation result — returned by Upsert / Delete so callers can compute deltas
-// ---------------------------------------------------------------------------
-
-/// <param name="RowId">String representation of the primary-key value.</param>
-/// <param name="Handle">Stable integer slot for this row (never reused).</param>
-/// <param name="IsNew">True if this was an insert; false if an update.</param>
-/// <param name="PreviousValues">Field values before mutation (null when IsNew).</param>
-/// <param name="NewValues">Field values after mutation (null when deleted).</param>
 public sealed record MutationInfo(
     string RowId,
     int Handle,
@@ -18,29 +8,17 @@ public sealed record MutationInfo(
     object?[]? PreviousValues,
     object?[]? NewValues);
 
-// ---------------------------------------------------------------------------
-// Columnar collection
-// ---------------------------------------------------------------------------
 
-/// <summary>
-/// Fixed-capacity in-memory store with one primitive array per field.
-/// Rows are addressed by a monotonically-assigned integer <em>handle</em>.
-/// Deleted handles are never reused or compacted so that sort indexes remain
-/// valid without requiring a full rebuild after every delete.
-/// </summary>
 public sealed class ColumnarCollection
 {
     public CollectionSchema Schema { get; }
 
     private readonly int _capacity;
 
-    // _columns[fieldIndex][handle] — one array per field
     private readonly object?[][] _columns;
 
-    // Slot-to-id mapping; null means the slot is deleted/unused
     private readonly string?[] _handleToRowId;
 
-    // Reverse: rowId → handle
     private readonly Dictionary<string, int> _rowIdToHandle = new();
 
     private int _nextHandle;
@@ -60,14 +38,7 @@ public sealed class ColumnarCollection
 
     public int LiveCount => Volatile.Read(ref _liveCount);
 
-    // -----------------------------------------------------------------------
-    // Mutations (write lock)
-    // -----------------------------------------------------------------------
 
-    /// <summary>
-    /// Insert or update a row. Returns metadata including previous field values
-    /// so that callers can propagate deltas without re-reading the store.
-    /// </summary>
     public MutationInfo Upsert(IReadOnlyDictionary<string, object?> fields)
     {
         var pkName = Schema.PrimaryKeyField.Name;
@@ -116,10 +87,6 @@ public sealed class ColumnarCollection
         finally { _rwLock.ExitWriteLock(); }
     }
 
-    /// <summary>
-    /// Logically delete a row. Returns null if the row does not exist.
-    /// The handle is invalidated but the slot is not reused.
-    /// </summary>
     public MutationInfo? Delete(string rowId)
     {
         _rwLock.EnterWriteLock();
@@ -143,9 +110,6 @@ public sealed class ColumnarCollection
         finally { _rwLock.ExitWriteLock(); }
     }
 
-    // -----------------------------------------------------------------------
-    // Reads (read lock)
-    // -----------------------------------------------------------------------
 
     public object? GetValue(int handle, int fieldIndex)
     {
@@ -175,7 +139,6 @@ public sealed class ColumnarCollection
         finally { _rwLock.ExitReadLock(); }
     }
 
-    /// <summary>Returns a snapshot of all (handle, rowId) pairs for live rows.</summary>
     public IReadOnlyList<(int handle, string rowId)> GetAllLiveHandles()
     {
         _rwLock.EnterReadLock();
@@ -189,7 +152,6 @@ public sealed class ColumnarCollection
         finally { _rwLock.ExitReadLock(); }
     }
 
-    /// <summary>Returns all field values for a live handle as a dictionary.</summary>
     public IReadOnlyDictionary<string, object?> GetRow(int handle)
     {
         _rwLock.EnterReadLock();

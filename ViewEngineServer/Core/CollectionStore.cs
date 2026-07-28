@@ -1,14 +1,11 @@
 using System.Collections.Concurrent;
-using ViewEngineServer.Core.Schema;
 
-namespace ViewEngineServer.Core.Storage;
+namespace ViewEngineServer.Core;
 
 public interface ICollectionStore
 {
-    /// <summary>Create a new collection. Returns false if the id already exists.</summary>
     bool TryCreate(CollectionSchema schema);
 
-    /// <summary>Look up an existing collection by id.</summary>
     bool TryGet(string collectionId, out ColumnarCollection? collection);
 
     IReadOnlyList<string> CollectionIds { get; }

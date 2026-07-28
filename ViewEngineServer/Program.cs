@@ -1,31 +1,20 @@
-using ViewEngineServer.Adapters.Http;
-using ViewEngineServer.Adapters.WebSocket;
-using ViewEngineServer.Core.Engine;
-using ViewEngineServer.Core.Publishing;
-using ViewEngineServer.Core.Storage;
+using ViewEngineServer.Core;
+using ViewEngineServer.Http;
+using ViewEngineServer.WebSocket;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// -------------------------------------------------------------------------
-// Core services — no HTTP / WebSocket types inside these registrations
-// -------------------------------------------------------------------------
 builder.Services.AddSingleton<ICollectionStore, CollectionStore>();
 builder.Services.AddSingleton<WebSocketOutboundPublisher>();
 builder.Services.AddSingleton<IOutboundPublisher>(sp =>
     sp.GetRequiredService<WebSocketOutboundPublisher>());
 builder.Services.AddSingleton<IViewEngine, ViewEngine>();
 
-// -------------------------------------------------------------------------
-// Adapter services
-// -------------------------------------------------------------------------
 builder.Services.AddSingleton<WebSocketSessionManager>();
 
 var app = builder.Build();
 app.UseWebSockets();
 
-// -------------------------------------------------------------------------
-// Endpoints — thin; all logic delegated to adapters / engine
-// -------------------------------------------------------------------------
 
 app.MapGet("/", (ICollectionStore store) => Results.Ok(new
 {
@@ -34,7 +23,6 @@ app.MapGet("/", (ICollectionStore store) => Results.Ok(new
     collections = store.CollectionIds
 }));
 
-// Register a new collection schema
 app.MapPost("/collections", async (
     HttpRequest request, IViewEngine engine, CancellationToken ct) =>
 {
@@ -44,7 +32,6 @@ app.MapPost("/collections", async (
     return Results.Created("/collections", new { message = "Collection created." });
 });
 
-// Upsert or delete rows
 app.MapPost("/ingest", async (
     HttpRequest request, IViewEngine engine, CancellationToken ct) =>
 {
@@ -54,7 +41,6 @@ app.MapPost("/ingest", async (
     return Results.Accepted(value: new { message = "Accepted." });
 });
 
-// WebSocket endpoint for live-updating client subscriptions
 app.MapGet("/ws", async (
     HttpContext context, WebSocketSessionManager sessionManager, CancellationToken ct) =>
 {

@@ -2,25 +2,15 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Microsoft.Extensions.Logging;
-using ViewEngineServer.Core.Engine;
-using ViewEngineServer.Core.Indexing;
-using ViewEngineServer.Core.Subscriptions;
-using ViewEngineServer.Core.Views;
+using ViewEngineServer.Core;
 
-namespace ViewEngineServer.Adapters.WebSocket;
+namespace ViewEngineServer.WebSocket;
 
-// ---------------------------------------------------------------------------
-// Inbound message DTO — only used at the WebSocket boundary
-// ---------------------------------------------------------------------------
 
-/// <summary>JSON shape of messages sent by front-end clients over WebSocket.</summary>
 public sealed class WsInboundMessage
 {
-    /// <summary>"subscribe" | "setViewport" | "unsubscribe"</summary>
     public string Type { get; set; } = string.Empty;
 
-    // -- subscribe fields --
     public string? CollectionId { get; set; }
     public string? SortColumn { get; set; }
     public bool SortAscending { get; set; } = true;
@@ -33,22 +23,12 @@ public sealed class WsFilterDto
 {
     public string Field { get; set; } = string.Empty;
 
-    /// <summary>"eq"|"notEq"|"gt"|"gte"|"lt"|"lte"|"contains"</summary>
     public string Operator { get; set; } = "eq";
 
     [JsonConverter(typeof(JsonObjectConverter))]
     public object? Value { get; set; }
 }
 
-/// <summary>
-/// Converts a raw JSON element to its best-fit .NET primitive.
-/// Used for filter values that arrive as JSON.
-/// </summary>
-/// <summary>
-/// Reads a raw JSON token and returns its best-fit .NET primitive (bool, string,
-/// int, long, or double). Used for filter values that arrive as untyped JSON within
-/// <see cref="WsFilterDto.Value"/>.
-/// </summary>
 file sealed class JsonObjectConverter : JsonConverter<object?>
 {
     public override object? Read(ref Utf8JsonReader reader, Type typeToConvert,
@@ -70,18 +50,7 @@ file sealed class JsonObjectConverter : JsonConverter<object?>
         => JsonSerializer.Serialize(writer, value, options);
 }
 
-// ---------------------------------------------------------------------------
-// Session manager — the only place in the WebSocket adapter that touches
-// System.Net.WebSockets.WebSocket
-// ---------------------------------------------------------------------------
 
-/// <summary>
-/// Manages the lifecycle of a single WebSocket connection. Reads inbound
-/// messages, maps them to transport-neutral <see cref="SubscriptionCommand"/>s,
-/// forwards them to the engine, and dispatches any immediate response events.
-/// Ongoing delta events are pushed asynchronously by the engine via
-/// <see cref="WebSocketOutboundPublisher"/>.
-/// </summary>
 public sealed class WebSocketSessionManager
 {
     private readonly IViewEngine _engine;

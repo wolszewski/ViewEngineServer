@@ -1,26 +1,17 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Microsoft.AspNetCore.Http;
-using ViewEngineServer.Core.Engine;
-using ViewEngineServer.Core.Ingestion;
-using ViewEngineServer.Core.Schema;
+using ViewEngineServer.Core;
 
-namespace ViewEngineServer.Adapters.Http;
+namespace ViewEngineServer.Http;
 
-// ---------------------------------------------------------------------------
-// DTOs — only used at the HTTP boundary
-// ---------------------------------------------------------------------------
 
 public sealed class IngestRequestDto
 {
-    /// <summary>"upsert" (default) | "delete"</summary>
     public string Operation { get; set; } = "upsert";
     public string? CollectionId { get; set; }
 
-    /// <summary>Field name → JSON value. Used for upsert operations.</summary>
     public Dictionary<string, JsonElement>? Fields { get; set; }
 
-    /// <summary>Primary-key value to delete. Used for delete operations.</summary>
     public string? PrimaryKeyValue { get; set; }
 }
 
@@ -43,9 +34,6 @@ public sealed class FieldDefinitionDto
     public bool IsFilterable { get; set; }
 }
 
-// ---------------------------------------------------------------------------
-// Adapter — maps HTTP request bodies to transport-neutral ingest commands
-// ---------------------------------------------------------------------------
 
 public static class HttpIngestAdapter
 {
@@ -54,10 +42,6 @@ public static class HttpIngestAdapter
         PropertyNameCaseInsensitive = true
     };
 
-    /// <summary>
-    /// Parse a POST /ingest request body and forward the resulting command to
-    /// the engine. Returns (result, validationError).
-    /// </summary>
     public static async Task<(IngestResult result, string? validationError)> HandleIngestAsync(
         HttpRequest request, IViewEngine engine, CancellationToken ct)
     {
@@ -96,9 +80,6 @@ public static class HttpIngestAdapter
         return (result, null);
     }
 
-    /// <summary>
-    /// Parse a POST /collections request body and register the collection schema.
-    /// </summary>
     public static async Task<(IngestResult result, string? validationError)> HandleCreateCollectionAsync(
         HttpRequest request, IViewEngine engine, CancellationToken ct)
     {
@@ -162,7 +143,7 @@ public static class HttpIngestAdapter
         JsonValueKind.Null    => null,
         JsonValueKind.String  => element.GetString(),
         JsonValueKind.Number  => UnboxNumber(element),
-        _                     => element.GetRawText() // Array, Object, Undefined — store as raw JSON text
+        _                     => element.GetRawText()
     };
 
     private static object? UnboxNumber(JsonElement element)
