@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using ViewEngineServer.Core.Views;
 
 namespace ViewEngineServer.Core;
 
@@ -9,25 +10,12 @@ public interface IViewEngine
     Task<IReadOnlyList<DeltaEvent>> SubscribeAsync(SubscriptionCommand command, CancellationToken ct = default);
 }
 
-public sealed class ViewEngine : IViewEngine
+public sealed class ViewEngine(ICollectionStore store, IOutboundPublisher publisher, ILogger<ViewEngine> logger)
+    : IViewEngine
 {
-    private readonly ICollectionStore _store;
-    private readonly IOutboundPublisher _publisher;
-    private readonly ILogger<ViewEngine> _logger;
-
     private readonly ConcurrentDictionary<ViewKey, SharedView> _sharedViews = new();
-
     private readonly ConcurrentDictionary<string, ViewportState> _viewports = new();
-
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _mutationLocks = new();
-
-    public ViewEngine(ICollectionStore store, IOutboundPublisher publisher,
-                      ILogger<ViewEngine> logger)
-    {
-        _store = store;
-        _publisher = publisher;
-        _logger = logger;
-    }
 
     public async Task<IngestResult> IngestAsync(IngestCommand command, CancellationToken ct = default)
     {
@@ -44,7 +32,7 @@ public sealed class ViewEngine : IViewEngine
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error processing ingest command for collection '{CollectionId}'.",
+            logger.LogError(ex, "Error processing ingest command for collection '{CollectionId}'.",
                 command.CollectionId);
             return IngestResult.Fail(ex.Message);
         }
@@ -65,20 +53,20 @@ public sealed class ViewEngine : IViewEngine
 
     private IngestResult HandleCreateCollection(CreateCollectionCommand command)
     {
-        if (!_store.TryCreate(command.Schema))
+        if (!store.TryCreate(command.Schema))
         {
             return IngestResult.Fail(
                 $"Collection '{command.CollectionId}' already exists.");
         }
 
-        _logger.LogInformation("Collection '{CollectionId}' created ({FieldCount} fields, capacity {Capacity}).",
+        logger.LogInformation("Collection '{CollectionId}' created ({FieldCount} fields, capacity {Capacity}).",
             command.CollectionId, command.Schema.Fields.Count, command.Schema.Capacity);
         return IngestResult.Ok();
     }
 
     private async Task<IngestResult> HandleUpsertAsync(UpsertRowCommand command, CancellationToken ct)
     {
-        if (!_store.TryGet(command.CollectionId, out var collection) || collection is null)
+        if (!store.TryGet(command.CollectionId, out var collection) || collection is null)
         {
             return IngestResult.Fail($"Collection '{command.CollectionId}' not found.");
         }
@@ -90,7 +78,7 @@ public sealed class ViewEngine : IViewEngine
 
     private async Task<IngestResult> HandleDeleteAsync(DeleteRowCommand command, CancellationToken ct)
     {
-        if (!_store.TryGet(command.CollectionId, out var collection) || collection is null)
+        if (!store.TryGet(command.CollectionId, out var collection) || collection is null)
         {
             return IngestResult.Fail($"Collection '{command.CollectionId}' not found.");
         }
@@ -145,7 +133,7 @@ public sealed class ViewEngine : IViewEngine
                     }
 
                     viewport.CurrentRowIds = GetCurrentRowIds(view, viewport, collection);
-                    await _publisher.PublishAsync(connectionId, events, ct);
+                    await publisher.PublishAsync(connectionId, events, ct);
                 }
             }
         }
@@ -255,9 +243,9 @@ public sealed class ViewEngine : IViewEngine
 
     private IReadOnlyList<DeltaEvent> HandleSubscribe(SubscribeCommand command)
     {
-        if (!_store.TryGet(command.View.CollectionId, out var collection) || collection is null)
+        if (!store.TryGet(command.View.CollectionId, out var collection) || collection is null)
         {
-            _logger.LogWarning("Subscribe failed: collection '{CollectionId}' not found.",
+            logger.LogWarning("Subscribe failed: collection '{CollectionId}' not found.",
                 command.View.CollectionId);
             return [];
         }
@@ -280,7 +268,7 @@ public sealed class ViewEngine : IViewEngine
             .Select(h => collection.GetRowId(h) ?? string.Empty)
             .ToArray();
 
-        _logger.LogInformation(
+        logger.LogInformation(
             "Client '{ConnectionId}' subscribed to view '{ViewId}' (start={Start}, page={Page}).",
             command.ConnectionId, key.Id, command.StartIndex, command.PageSize);
 
@@ -305,7 +293,7 @@ public sealed class ViewEngine : IViewEngine
             return [];
         }
 
-        if (!_store.TryGet(viewport.ViewKey.CollectionId, out var collection) || collection is null)
+        if (!store.TryGet(viewport.ViewKey.CollectionId, out var collection) || collection is null)
         {
             return [];
         }
@@ -343,7 +331,7 @@ public sealed class ViewEngine : IViewEngine
             }
         }
 
-        _logger.LogInformation("Client '{ConnectionId}' unsubscribed.", command.ConnectionId);
+        logger.LogInformation("Client '{ConnectionId}' unsubscribed.", command.ConnectionId);
         return [];
     }
 }

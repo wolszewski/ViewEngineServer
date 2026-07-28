@@ -1,13 +1,11 @@
 using ViewEngineServer.Core;
 
-namespace ViewEngineServer.IntegrationTests.Engine;
+namespace ViewEngineServer.IntegrationTests.Core;
 
 internal sealed class CapturingPublisher : IOutboundPublisher
 {
     private readonly List<(string ConnectionId, IReadOnlyList<DeltaEvent> Events)> _published = [];
-
     public IReadOnlyList<(string ConnectionId, IReadOnlyList<DeltaEvent> Events)> Published => _published;
-
     public ValueTask PublishAsync(string connectionId, IReadOnlyList<DeltaEvent> events,
                                   CancellationToken ct = default)
     {

@@ -1,5 +1,7 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using ViewEngineServer.Core;
+using ViewEngineServer.Core.Views;
+using ViewEngineServer.IntegrationTests.Core;
 
 namespace ViewEngineServer.IntegrationTests.Engine;
 

@@ -2,7 +2,6 @@ using System.Text.Json.Serialization;
 
 namespace ViewEngineServer.Core;
 
-
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
 [JsonDerivedType(typeof(SnapshotEvent), "snapshot")]
 [JsonDerivedType(typeof(RowUpdateEvent), "rowUpdate")]

@@ -5,9 +5,7 @@ namespace ViewEngineServer.Core;
 public interface ICollectionStore
 {
     bool TryCreate(CollectionSchema schema);
-
     bool TryGet(string collectionId, out ColumnarCollection? collection);
-
     IReadOnlyList<string> CollectionIds { get; }
 }
 
