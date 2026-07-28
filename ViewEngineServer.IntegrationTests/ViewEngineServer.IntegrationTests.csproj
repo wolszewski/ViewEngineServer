@@ -19,7 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\ViewEngineServer.csproj" />
+    <ProjectReference Include="..\ViewEngineServer\ViewEngineServer.csproj" />
   </ItemGroup>
 
 </Project>
