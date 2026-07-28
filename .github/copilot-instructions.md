@@ -10,6 +10,7 @@
 6. Keep only comments that explain non-obvious behavior, invariants, concurrency constraints, or performance optimizations.
 7. Do not add section-divider or decorative comments.
 8. Always use braces `{}` for control flow blocks, even for single-line bodies (`if`, `else`, `foreach`, `for`, `while`, `do`, `using`, `lock`).
+9. Prefer a maximum line width of 120 characters; wrap only when exceeding 120.
 
 ## Current application in this repository
 

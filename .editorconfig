@@ -1,5 +1,8 @@
 root = true
 
+[*.{cs,csproj,sln}]
+max_line_length = 120
+
 [*.cs]
 csharp_prefer_braces = true:error
 dotnet_diagnostic.IDE0011.severity = error

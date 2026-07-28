@@ -5,20 +5,14 @@ using ViewEngineServer.Core;
 
 namespace ViewEngineServer.WebSocket;
 
-public sealed class WebSocketOutboundPublisher : IOutboundPublisher
+public sealed class WebSocketOutboundPublisher(ILogger<WebSocketOutboundPublisher> logger) : IOutboundPublisher
 {
     private readonly ConcurrentDictionary<string, System.Net.WebSockets.WebSocket> _sockets = new();
-    private readonly ILogger<WebSocketOutboundPublisher> _logger;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
-
-    public WebSocketOutboundPublisher(ILogger<WebSocketOutboundPublisher> logger)
-    {
-        _logger = logger;
-    }
 
     public void Register(string connectionId, System.Net.WebSockets.WebSocket socket) =>
         _sockets[connectionId] = socket;
@@ -26,8 +20,7 @@ public sealed class WebSocketOutboundPublisher : IOutboundPublisher
     public void Unregister(string connectionId) =>
         _sockets.TryRemove(connectionId, out _);
 
-    public async ValueTask PublishAsync(string connectionId, IReadOnlyList<DeltaEvent> events,
-                                         CancellationToken ct = default)
+    public async ValueTask PublishAsync(string connectionId, IReadOnlyList<DeltaEvent> events, CancellationToken ct = default)
     {
         if (!_sockets.TryGetValue(connectionId, out var socket))
         {
@@ -46,7 +39,7 @@ public sealed class WebSocketOutboundPublisher : IOutboundPublisher
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to serialise events for client '{ConnectionId}'.", connectionId);
+            logger.LogError(ex, "Failed to serialise events for client '{ConnectionId}'.", connectionId);
             return;
         }
 
@@ -56,7 +49,7 @@ public sealed class WebSocketOutboundPublisher : IOutboundPublisher
         }
         catch (WebSocketException ex)
         {
-            _logger.LogDebug(ex, "WebSocket send failed for client '{ConnectionId}'.", connectionId);
+            logger.LogDebug(ex, "WebSocket send failed for client '{ConnectionId}'.", connectionId);
             _sockets.TryRemove(connectionId, out _);
         }
     }

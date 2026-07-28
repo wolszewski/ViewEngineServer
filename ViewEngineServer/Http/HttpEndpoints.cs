@@ -25,8 +25,7 @@ public static class HttpEndpoints
             return Results.Created("/collections", new { message = "Collection created." });
         });
 
-        app.MapPost("/ingest", async (
-            HttpRequest request, IViewEngine engine, CancellationToken ct) =>
+        app.MapPost("/ingest", async (HttpRequest request, IViewEngine engine, CancellationToken ct) =>
         {
             var (result, validationError) = await HttpIngestAdapter.HandleIngestAsync(request, engine, ct);
             if (!result.Success)

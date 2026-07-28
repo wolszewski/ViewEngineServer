@@ -1,6 +1,5 @@
 namespace ViewEngineServer.Core;
 
-
 public sealed record MutationInfo(
     string RowId,
     int Handle,
@@ -8,23 +7,16 @@ public sealed record MutationInfo(
     object?[]? PreviousValues,
     object?[]? NewValues);
 
-
 public sealed class ColumnarCollection
 {
-    public CollectionSchema Schema { get; }
-
     private readonly int _capacity;
-
     private readonly object?[][] _columns;
-
     private readonly string?[] _handleToRowId;
-
     private readonly Dictionary<string, int> _rowIdToHandle = new();
-
     private int _nextHandle;
     private int _liveCount;
-
     private readonly ReaderWriterLockSlim _rwLock = new(LockRecursionPolicy.NoRecursion);
+    public CollectionSchema Schema { get; }
 
     public ColumnarCollection(CollectionSchema schema)
     {
@@ -97,7 +89,10 @@ public sealed class ColumnarCollection
 
             return new MutationInfo(rowId, handle, isNew, previousValues, newValues);
         }
-        finally { _rwLock.ExitWriteLock(); }
+        finally
+        {
+            _rwLock.ExitWriteLock();
+        }
     }
 
     public MutationInfo? Delete(string rowId)
@@ -123,36 +118,63 @@ public sealed class ColumnarCollection
 
             return new MutationInfo(rowId, handle, false, previousValues, null);
         }
-        finally { _rwLock.ExitWriteLock(); }
+        finally
+        {
+            _rwLock.ExitWriteLock();
+        }
     }
 
 
     public object? GetValue(int handle, int fieldIndex)
     {
         _rwLock.EnterReadLock();
-        try { return _columns[fieldIndex][handle]; }
-        finally { _rwLock.ExitReadLock(); }
+        try
+        {
+            return _columns[fieldIndex][handle];
+        }
+        finally
+        {
+            _rwLock.ExitReadLock();
+        }
     }
 
     public bool IsLive(int handle)
     {
         _rwLock.EnterReadLock();
-        try { return handle >= 0 && handle < _nextHandle && _handleToRowId[handle] is not null; }
-        finally { _rwLock.ExitReadLock(); }
+        try
+        {
+            return handle >= 0 && handle < _nextHandle && _handleToRowId[handle] is not null;
+        }
+        finally
+        {
+            _rwLock.ExitReadLock();
+        }
     }
 
     public string? GetRowId(int handle)
     {
         _rwLock.EnterReadLock();
-        try { return handle < _nextHandle ? _handleToRowId[handle] : null; }
-        finally { _rwLock.ExitReadLock(); }
+        try
+        {
+            return handle < _nextHandle ? _handleToRowId[handle] : null;
+        }
+        finally
+        {
+            _rwLock.ExitReadLock();
+        }
     }
 
     public bool TryGetHandle(string rowId, out int handle)
     {
         _rwLock.EnterReadLock();
-        try { return _rowIdToHandle.TryGetValue(rowId, out handle); }
-        finally { _rwLock.ExitReadLock(); }
+        try
+        {
+            return _rowIdToHandle.TryGetValue(rowId, out handle);
+        }
+        finally
+        {
+            _rwLock.ExitReadLock();
+        }
     }
 
     public IReadOnlyList<(int handle, string rowId)> GetAllLiveHandles()
@@ -171,7 +193,10 @@ public sealed class ColumnarCollection
 
             return list;
         }
-        finally { _rwLock.ExitReadLock(); }
+        finally
+        {
+            _rwLock.ExitReadLock();
+        }
     }
 
     public IReadOnlyDictionary<string, object?> GetRow(int handle)
@@ -187,6 +212,9 @@ public sealed class ColumnarCollection
 
             return row;
         }
-        finally { _rwLock.ExitReadLock(); }
+        finally
+        {
+            _rwLock.ExitReadLock();
+        }
     }
 }

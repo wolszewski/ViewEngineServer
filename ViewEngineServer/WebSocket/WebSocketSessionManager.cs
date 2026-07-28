@@ -3,31 +3,9 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using ViewEngineServer.Core;
+using ViewEngineServer.WebSocket.Dto;
 
 namespace ViewEngineServer.WebSocket;
-
-
-public sealed class WsInboundMessage
-{
-    public string Type { get; set; } = string.Empty;
-
-    public string? CollectionId { get; set; }
-    public string? SortColumn { get; set; }
-    public bool SortAscending { get; set; } = true;
-    public List<WsFilterDto>? Filters { get; set; }
-    public int StartIndex { get; set; }
-    public int PageSize { get; set; } = 50;
-}
-
-public sealed class WsFilterDto
-{
-    public string Field { get; set; } = string.Empty;
-
-    public string Operator { get; set; } = "eq";
-
-    [JsonConverter(typeof(JsonObjectConverter))]
-    public object? Value { get; set; }
-}
 
 file sealed class JsonObjectConverter : JsonConverter<object?>
 {

@@ -5,12 +5,9 @@ public sealed class SortIndex
     private readonly ColumnarCollection _collection;
     private readonly int _fieldIndex;
     private readonly bool _ascending;
-
     private readonly List<int> _sortedHandles;
-
     private readonly Dictionary<int, object?> _handleValues;
-
-    private readonly object _lock = new();
+    private readonly Lock _lock = new();
 
     public SortIndex(ColumnarCollection collection, int fieldIndex, bool ascending = true)
     {

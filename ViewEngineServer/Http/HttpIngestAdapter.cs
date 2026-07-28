@@ -1,39 +1,8 @@
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using ViewEngineServer.Core;
+using ViewEngineServer.Http.Dto;
 
 namespace ViewEngineServer.Http;
-
-
-public sealed class IngestRequestDto
-{
-    public string Operation { get; set; } = "upsert";
-    public string? CollectionId { get; set; }
-
-    public Dictionary<string, JsonElement>? Fields { get; set; }
-
-    public string? PrimaryKeyValue { get; set; }
-}
-
-public sealed class CreateCollectionRequestDto
-{
-    public string? CollectionId { get; set; }
-    public int Capacity { get; set; } = 100_000;
-    public List<FieldDefinitionDto> Fields { get; set; } = [];
-}
-
-public sealed class FieldDefinitionDto
-{
-    public string Name { get; set; } = string.Empty;
-
-    [JsonConverter(typeof(JsonStringEnumConverter))]
-    public FieldType Type { get; set; } = FieldType.String;
-
-    public bool IsPrimaryKey { get; set; }
-    public bool IsSortable { get; set; }
-    public bool IsFilterable { get; set; }
-}
-
 
 public static class HttpIngestAdapter
 {
