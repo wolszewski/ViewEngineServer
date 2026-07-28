@@ -9,8 +9,55 @@ public sealed record MutationInfo(
 
 public sealed class ColumnarCollection
 {
+    private interface IColumn
+    {
+        object? GetValue(int handle);
+        void SetValue(int handle, object? value);
+        void Clear(int handle);
+    }
+
+    private sealed class Int32Column(int capacity) : IColumn
+    {
+        private readonly int?[] _data = new int?[capacity];
+        public object? GetValue(int handle) => _data[handle];
+        public void SetValue(int handle, object? value) => _data[handle] = value is null ? null : Convert.ToInt32(value);
+        public void Clear(int handle) => _data[handle] = null;
+    }
+
+    private sealed class Int64Column(int capacity) : IColumn
+    {
+        private readonly long?[] _data = new long?[capacity];
+        public object? GetValue(int handle) => _data[handle];
+        public void SetValue(int handle, object? value) => _data[handle] = value is null ? null : Convert.ToInt64(value);
+        public void Clear(int handle) => _data[handle] = null;
+    }
+
+    private sealed class DoubleColumn(int capacity) : IColumn
+    {
+        private readonly double?[] _data = new double?[capacity];
+        public object? GetValue(int handle) => _data[handle];
+        public void SetValue(int handle, object? value) => _data[handle] = value is null ? null : Convert.ToDouble(value);
+        public void Clear(int handle) => _data[handle] = null;
+    }
+
+    private sealed class StringColumn(int capacity) : IColumn
+    {
+        private readonly string?[] _data = new string?[capacity];
+        public object? GetValue(int handle) => _data[handle];
+        public void SetValue(int handle, object? value) => _data[handle] = value?.ToString();
+        public void Clear(int handle) => _data[handle] = null;
+    }
+
+    private sealed class BoolColumn(int capacity) : IColumn
+    {
+        private readonly bool?[] _data = new bool?[capacity];
+        public object? GetValue(int handle) => _data[handle];
+        public void SetValue(int handle, object? value) => _data[handle] = value is null ? null : Convert.ToBoolean(value);
+        public void Clear(int handle) => _data[handle] = null;
+    }
+
     private readonly int _capacity;
-    private readonly object?[][] _columns;
+    private readonly IColumn[] _columns;
     private readonly string?[] _handleToRowId;
     private readonly Dictionary<string, int> _rowIdToHandle = new();
     private int _nextHandle;
@@ -22,10 +69,19 @@ public sealed class ColumnarCollection
     {
         Schema = schema;
         _capacity = schema.Capacity;
-        _columns = new object?[schema.Fields.Count][];
+        _columns = new IColumn[schema.Fields.Count];
         for (int i = 0; i < schema.Fields.Count; i++)
         {
-            _columns[i] = new object?[_capacity];
+            _columns[i] = schema.Fields[i].Type switch
+            {
+                FieldType.Int32 => new Int32Column(_capacity),
+                FieldType.Int64 => new Int64Column(_capacity),
+                FieldType.Double => new DoubleColumn(_capacity),
+                FieldType.String => new StringColumn(_capacity),
+                FieldType.Boolean => new BoolColumn(_capacity),
+                _ => throw new ArgumentOutOfRangeException(nameof(schema),
+                    $"Unsupported field type '{schema.Fields[i].Type}' for field '{schema.Fields[i].Name}'.")
+            };
         }
 
         _handleToRowId = new string?[_capacity];
@@ -57,7 +113,7 @@ public sealed class ColumnarCollection
                 previousValues = new object?[Schema.Fields.Count];
                 for (int i = 0; i < Schema.Fields.Count; i++)
                 {
-                    previousValues[i] = _columns[i][handle];
+                    previousValues[i] = _columns[i].GetValue(handle);
                 }
             }
             else
@@ -81,10 +137,10 @@ public sealed class ColumnarCollection
             {
                 if (fields.TryGetValue(Schema.Fields[i].Name, out var val))
                 {
-                    _columns[i][handle] = val;
+                    _columns[i].SetValue(handle, val);
                 }
 
-                newValues[i] = _columns[i][handle];
+                newValues[i] = _columns[i].GetValue(handle);
             }
 
             return new MutationInfo(rowId, handle, isNew, previousValues, newValues);
@@ -108,8 +164,8 @@ public sealed class ColumnarCollection
             var previousValues = new object?[Schema.Fields.Count];
             for (int i = 0; i < Schema.Fields.Count; i++)
             {
-                previousValues[i] = _columns[i][handle];
-                _columns[i][handle] = null;
+                previousValues[i] = _columns[i].GetValue(handle);
+                _columns[i].Clear(handle);
             }
 
             _rowIdToHandle.Remove(rowId);
@@ -130,7 +186,7 @@ public sealed class ColumnarCollection
         _rwLock.EnterReadLock();
         try
         {
-            return _columns[fieldIndex][handle];
+            return _columns[fieldIndex].GetValue(handle);
         }
         finally
         {
@@ -207,7 +263,7 @@ public sealed class ColumnarCollection
             var row = new Dictionary<string, object?>(Schema.Fields.Count);
             for (int i = 0; i < Schema.Fields.Count; i++)
             {
-                row[Schema.Fields[i].Name] = _columns[i][handle];
+                row[Schema.Fields[i].Name] = _columns[i].GetValue(handle);
             }
 
             return row;
