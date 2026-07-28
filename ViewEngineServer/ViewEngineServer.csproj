@@ -6,4 +6,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
+  <ItemGroup>
+    <Compile Remove="ViewEngineServer.UnitTests/**" />
+    <Compile Remove="ViewEngineServer.IntegrationTests/**" />
+  </ItemGroup>
+
 </Project>

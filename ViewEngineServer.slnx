@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="ViewEngineServer.IntegrationTests/ViewEngineServer.IntegrationTests.csproj" />
+  <Project Path="ViewEngineServer.UnitTests/ViewEngineServer.UnitTests.csproj" />
+  <Project Path="ViewEngineServer/ViewEngineServer.csproj" />
+</Solution>
