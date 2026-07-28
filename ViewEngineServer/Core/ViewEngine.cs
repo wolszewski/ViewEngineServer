@@ -36,9 +36,9 @@ public sealed class ViewEngine : IViewEngine
             return command switch
             {
                 CreateCollectionCommand create => HandleCreateCollection(create),
-                UpsertRowCommand upsert        => await HandleUpsertAsync(upsert, ct),
-                DeleteRowCommand delete        => await HandleDeleteAsync(delete, ct),
-                _                              => IngestResult.Fail(
+                UpsertRowCommand upsert => await HandleUpsertAsync(upsert, ct),
+                DeleteRowCommand delete => await HandleDeleteAsync(delete, ct),
+                _ => IngestResult.Fail(
                     $"Unknown command type '{command.GetType().Name}'.")
             };
         }
@@ -55,10 +55,10 @@ public sealed class ViewEngine : IViewEngine
     {
         IReadOnlyList<DeltaEvent> result = command switch
         {
-            SubscribeCommand sub         => HandleSubscribe(sub),
+            SubscribeCommand sub => HandleSubscribe(sub),
             ChangeViewportCommand change => HandleChangeViewport(change),
-            UnsubscribeCommand unsub     => HandleUnsubscribe(unsub),
-            _                            => []
+            UnsubscribeCommand unsub => HandleUnsubscribe(unsub),
+            _ => []
         };
         return Task.FromResult(result);
     }
@@ -66,8 +66,10 @@ public sealed class ViewEngine : IViewEngine
     private IngestResult HandleCreateCollection(CreateCollectionCommand command)
     {
         if (!_store.TryCreate(command.Schema))
+        {
             return IngestResult.Fail(
                 $"Collection '{command.CollectionId}' already exists.");
+        }
 
         _logger.LogInformation("Collection '{CollectionId}' created ({FieldCount} fields, capacity {Capacity}).",
             command.CollectionId, command.Schema.Fields.Count, command.Schema.Capacity);
@@ -77,7 +79,9 @@ public sealed class ViewEngine : IViewEngine
     private async Task<IngestResult> HandleUpsertAsync(UpsertRowCommand command, CancellationToken ct)
     {
         if (!_store.TryGet(command.CollectionId, out var collection) || collection is null)
+        {
             return IngestResult.Fail($"Collection '{command.CollectionId}' not found.");
+        }
 
         var mutation = collection.Upsert(command.Fields);
         await PropagateMutationAsync(collection, mutation, isDelete: false, ct);
@@ -87,10 +91,15 @@ public sealed class ViewEngine : IViewEngine
     private async Task<IngestResult> HandleDeleteAsync(DeleteRowCommand command, CancellationToken ct)
     {
         if (!_store.TryGet(command.CollectionId, out var collection) || collection is null)
+        {
             return IngestResult.Fail($"Collection '{command.CollectionId}' not found.");
+        }
 
         var mutation = collection.Delete(command.PrimaryKeyValue);
-        if (mutation is null) return IngestResult.Ok();
+        if (mutation is null)
+        {
+            return IngestResult.Ok();
+        }
 
         await PropagateMutationAsync(collection, mutation, isDelete: true, ct);
         return IngestResult.Ok();
@@ -107,7 +116,10 @@ public sealed class ViewEngine : IViewEngine
             foreach (var kv in _sharedViews)
             {
                 var view = kv.Value;
-                if (view.Key.CollectionId != collection.Schema.CollectionId) continue;
+                if (view.Key.CollectionId != collection.Schema.CollectionId)
+                {
+                    continue;
+                }
 
                 if (isDelete)
                 {
@@ -121,10 +133,16 @@ public sealed class ViewEngine : IViewEngine
 
                 foreach (var connectionId in view.Subscribers)
                 {
-                    if (!_viewports.TryGetValue(connectionId, out var viewport)) continue;
+                    if (!_viewports.TryGetValue(connectionId, out var viewport))
+                    {
+                        continue;
+                    }
 
                     var events = BuildDeltas(view, collection, viewport, mutation, isDelete);
-                    if (events.Count == 0) continue;
+                    if (events.Count == 0)
+                    {
+                        continue;
+                    }
 
                     viewport.CurrentRowIds = GetCurrentRowIds(view, viewport, collection);
                     await _publisher.PublishAsync(connectionId, events, ct);
@@ -147,7 +165,11 @@ public sealed class ViewEngine : IViewEngine
 
         if (newRowIds.SequenceEqual(oldRowIds))
         {
-            if (isDelete) return [];
+            if (isDelete)
+            {
+                return [];
+            }
+
             return BuildFieldUpdateEvents(view.Key.Id, newHandles, newRowIds, mutation, collection);
         }
 
@@ -156,17 +178,25 @@ public sealed class ViewEngine : IViewEngine
         var oldSet = new HashSet<string>(oldRowIds);
 
         for (int i = oldRowIds.Length - 1; i >= 0; i--)
+        {
             if (!newSet.Contains(oldRowIds[i]))
+            {
                 events.Add(new RowRemoveEvent { ViewId = view.Key.Id, Position = i });
+            }
+        }
 
         for (int i = 0; i < newRowIds.Length; i++)
+        {
             if (!oldSet.Contains(newRowIds[i]))
+            {
                 events.Add(new RowInsertEvent
                 {
                     ViewId = view.Key.Id,
                     Position = i,
                     Row = collection.GetRow(newHandles[i])
                 });
+            }
+        }
 
         var fieldUpdates = BuildFieldUpdateEvents(view.Key.Id, newHandles, newRowIds, mutation, collection);
         events.AddRange(fieldUpdates);
@@ -182,19 +212,29 @@ public sealed class ViewEngine : IViewEngine
         ColumnarCollection collection)
     {
         if (mutation.IsNew || mutation.PreviousValues is null || mutation.NewValues is null)
+        {
             return [];
+        }
 
         int pos = Array.IndexOf(rowIds, mutation.RowId);
-        if (pos < 0) return [];
+        if (pos < 0)
+        {
+            return [];
+        }
 
         var changed = new Dictionary<string, object?>();
         for (int fi = 0; fi < collection.Schema.Fields.Count; fi++)
         {
             if (!Equals(mutation.PreviousValues[fi], mutation.NewValues[fi]))
+            {
                 changed[collection.Schema.Fields[fi].Name] = mutation.NewValues[fi];
+            }
         }
 
-        if (changed.Count == 0) return [];
+        if (changed.Count == 0)
+        {
+            return [];
+        }
 
         return [new RowUpdateEvent
         {
@@ -255,10 +295,20 @@ public sealed class ViewEngine : IViewEngine
 
     private IReadOnlyList<DeltaEvent> HandleChangeViewport(ChangeViewportCommand command)
     {
-        if (!_viewports.TryGetValue(command.ConnectionId, out var viewport)) return [];
-        if (!_sharedViews.TryGetValue(viewport.ViewKey, out var view)) return [];
-        if (!_store.TryGet(viewport.ViewKey.CollectionId, out var collection) || collection is null)
+        if (!_viewports.TryGetValue(command.ConnectionId, out var viewport))
+        {
             return [];
+        }
+
+        if (!_sharedViews.TryGetValue(viewport.ViewKey, out var view))
+        {
+            return [];
+        }
+
+        if (!_store.TryGet(viewport.ViewKey.CollectionId, out var collection) || collection is null)
+        {
+            return [];
+        }
 
         viewport.StartIndex = command.StartIndex;
         viewport.PageSize = command.PageSize;
@@ -279,13 +329,18 @@ public sealed class ViewEngine : IViewEngine
 
     private IReadOnlyList<DeltaEvent> HandleUnsubscribe(UnsubscribeCommand command)
     {
-        if (!_viewports.TryRemove(command.ConnectionId, out var viewport)) return [];
+        if (!_viewports.TryRemove(command.ConnectionId, out var viewport))
+        {
+            return [];
+        }
 
         if (_sharedViews.TryGetValue(viewport.ViewKey, out var view))
         {
             view.RemoveSubscriber(command.ConnectionId);
             if (view.IsEmpty)
+            {
                 _sharedViews.TryRemove(viewport.ViewKey, out _);
+            }
         }
 
         _logger.LogInformation("Client '{ConnectionId}' unsubscribed.", command.ConnectionId);

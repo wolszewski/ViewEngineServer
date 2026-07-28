@@ -29,8 +29,15 @@ public sealed class WebSocketOutboundPublisher : IOutboundPublisher
     public async ValueTask PublishAsync(string connectionId, IReadOnlyList<DeltaEvent> events,
                                          CancellationToken ct = default)
     {
-        if (!_sockets.TryGetValue(connectionId, out var socket)) return;
-        if (socket.State != WebSocketState.Open) return;
+        if (!_sockets.TryGetValue(connectionId, out var socket))
+        {
+            return;
+        }
+
+        if (socket.State != WebSocketState.Open)
+        {
+            return;
+        }
 
         byte[] payload;
         try

@@ -23,9 +23,16 @@ public sealed class CollectionSchema
     {
         get
         {
-            if (_pkIndex >= -1) return _pkIndex;
+            if (_pkIndex >= -1)
+            {
+                return _pkIndex;
+            }
+
             for (int i = 0; i < Fields.Count; i++)
+            {
                 if (Fields[i].IsPrimaryKey) { _pkIndex = i; return i; }
+            }
+
             _pkIndex = -1;
             throw new InvalidOperationException(
                 $"Collection '{CollectionId}' has no field marked IsPrimaryKey.");
@@ -37,7 +44,13 @@ public sealed class CollectionSchema
     public int GetFieldIndex(string name)
     {
         for (int i = 0; i < Fields.Count; i++)
-            if (Fields[i].Name == name) return i;
+        {
+            if (Fields[i].Name == name)
+            {
+                return i;
+            }
+        }
+
         return -1;
     }
 }

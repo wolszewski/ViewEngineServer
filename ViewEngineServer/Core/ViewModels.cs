@@ -41,17 +41,40 @@ public sealed class ViewKey : IEquatable<ViewKey>
 
     public bool Equals(ViewKey? other)
     {
-        if (other is null) return false;
-        if (CollectionId != other.CollectionId) return false;
-        if (SortColumn != other.SortColumn) return false;
-        if (SortAscending != other.SortAscending) return false;
-        if (Filters.Count != other.Filters.Count) return false;
+        if (other is null)
+        {
+            return false;
+        }
+
+        if (CollectionId != other.CollectionId)
+        {
+            return false;
+        }
+
+        if (SortColumn != other.SortColumn)
+        {
+            return false;
+        }
+
+        if (SortAscending != other.SortAscending)
+        {
+            return false;
+        }
+
+        if (Filters.Count != other.Filters.Count)
+        {
+            return false;
+        }
+
         for (int i = 0; i < Filters.Count; i++)
         {
             var f = Filters[i]; var o = other.Filters[i];
             if (f.FieldName != o.FieldName ||
                 f.Operator != o.Operator ||
-                !Equals(f.Value, o.Value)) return false;
+                !Equals(f.Value, o.Value))
+            {
+                return false;
+            }
         }
         return true;
     }
@@ -98,7 +121,9 @@ public sealed class SharedView
             ? collection.Schema.GetFieldIndex(key.SortColumn)
             : -1;
         if (_sortFieldIndex < 0)
+        {
             _sortFieldIndex = collection.Schema.PrimaryKeyIndex;
+        }
 
         _filterFieldIndexes = key.Filters.Count > 0
             ? key.Filters.Select(f => collection.Schema.GetFieldIndex(f.FieldName)).ToArray()

@@ -4,7 +4,7 @@ namespace ViewEngineServer.Core;
 
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
-[JsonDerivedType(typeof(SnapshotEvent),  "snapshot")]
+[JsonDerivedType(typeof(SnapshotEvent), "snapshot")]
 [JsonDerivedType(typeof(RowUpdateEvent), "rowUpdate")]
 [JsonDerivedType(typeof(RowInsertEvent), "rowInsert")]
 [JsonDerivedType(typeof(RowRemoveEvent), "rowRemove")]

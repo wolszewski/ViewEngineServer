@@ -61,7 +61,9 @@ public class SortIndexTests
     {
         var (col, idx) = CreateSortedByScore();
         for (int i = 1; i <= 5; i++)
+        {
             Upsert(col, idx, $"r{i}", i * 10);
+        }
 
         var page2 = idx.GetPageHandles(2, 2);
         var scores = page2.Select(h => (int)col.GetValue(h, 1)!).ToList();

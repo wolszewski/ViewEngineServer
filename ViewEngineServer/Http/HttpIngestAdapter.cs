@@ -56,15 +56,23 @@ public static class HttpIngestAdapter
         }
 
         if (dto is null)
+        {
             return (IngestResult.Fail("Request body is required."), null);
+        }
+
         if (string.IsNullOrWhiteSpace(dto.CollectionId))
+        {
             return (IngestResult.Fail("'collectionId' is required."), null);
+        }
 
         IngestCommand command;
         if (dto.Operation.Equals("delete", StringComparison.OrdinalIgnoreCase))
         {
             if (string.IsNullOrWhiteSpace(dto.PrimaryKeyValue))
+            {
                 return (IngestResult.Fail("'primaryKeyValue' is required for delete."), null);
+            }
+
             command = new DeleteRowCommand
             {
                 CollectionId = dto.CollectionId,
@@ -94,13 +102,24 @@ public static class HttpIngestAdapter
         }
 
         if (dto is null)
+        {
             return (IngestResult.Fail("Request body is required."), null);
+        }
+
         if (string.IsNullOrWhiteSpace(dto.CollectionId))
+        {
             return (IngestResult.Fail("'collectionId' is required."), null);
+        }
+
         if (dto.Fields.Count == 0)
+        {
             return (IngestResult.Fail("At least one field must be defined."), null);
+        }
+
         if (!dto.Fields.Any(f => f.IsPrimaryKey))
+        {
             return (IngestResult.Fail("Exactly one field must be marked 'isPrimaryKey'."), null);
+        }
 
         var schema = new CollectionSchema
         {
@@ -127,7 +146,9 @@ public static class HttpIngestAdapter
         if (dto.Fields is not null)
         {
             foreach (var (key, element) in dto.Fields)
+            {
                 fields[key] = UnboxJsonElement(element);
+            }
         }
         return new UpsertRowCommand
         {
@@ -138,18 +159,26 @@ public static class HttpIngestAdapter
 
     private static object? UnboxJsonElement(JsonElement element) => element.ValueKind switch
     {
-        JsonValueKind.True    => (object?)true,
-        JsonValueKind.False   => false,
-        JsonValueKind.Null    => null,
-        JsonValueKind.String  => element.GetString(),
-        JsonValueKind.Number  => UnboxNumber(element),
-        _                     => element.GetRawText()
+        JsonValueKind.True => (object?)true,
+        JsonValueKind.False => false,
+        JsonValueKind.Null => null,
+        JsonValueKind.String => element.GetString(),
+        JsonValueKind.Number => UnboxNumber(element),
+        _ => element.GetRawText()
     };
 
     private static object? UnboxNumber(JsonElement element)
     {
-        if (element.TryGetInt32(out var i)) return i;
-        if (element.TryGetInt64(out var l)) return l;
+        if (element.TryGetInt32(out var i))
+        {
+            return i;
+        }
+
+        if (element.TryGetInt64(out var l))
+        {
+            return l;
+        }
+
         return element.GetDouble();
     }
 }

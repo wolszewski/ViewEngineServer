@@ -35,9 +35,9 @@ file sealed class JsonObjectConverter : JsonConverter<object?>
                                   JsonSerializerOptions options) =>
         reader.TokenType switch
         {
-            JsonTokenType.True   => true,
-            JsonTokenType.False  => false,
-            JsonTokenType.Null   => null,
+            JsonTokenType.True => true,
+            JsonTokenType.False => false,
+            JsonTokenType.Null => null,
             JsonTokenType.String => reader.GetString(),
             JsonTokenType.Number =>
                 reader.TryGetInt32(out var i) ? i :
@@ -91,7 +91,10 @@ public sealed class WebSocketSessionManager
                     break;
                 }
 
-                if (result.MessageType == WebSocketMessageType.Close) break;
+                if (result.MessageType == WebSocketMessageType.Close)
+                {
+                    break;
+                }
 
                 var json = Encoding.UTF8.GetString(buffer, 0, result.Count);
                 WsInboundMessage? msg;
@@ -102,14 +105,22 @@ public sealed class WebSocketSessionManager
                     continue;
                 }
 
-                if (msg is null) continue;
+                if (msg is null)
+                {
+                    continue;
+                }
 
                 var command = MapCommand(connectionId, msg);
-                if (command is null) continue;
+                if (command is null)
+                {
+                    continue;
+                }
 
                 var events = await _engine.SubscribeAsync(command, ct);
                 if (events.Count > 0)
+                {
                     await _publisher.PublishAsync(connectionId, events, ct);
+                }
             }
         }
         finally

@@ -9,9 +9,10 @@
 5. Remove XML doc comments unless they are required for externally consumed APIs.
 6. Keep only comments that explain non-obvious behavior, invariants, concurrency constraints, or performance optimizations.
 7. Do not add section-divider or decorative comments.
+8. Always use braces `{}` for control flow blocks, even for single-line bodies (`if`, `else`, `foreach`, `for`, `while`, `do`, `using`, `lock`).
 
 ## Current application in this repository
 
-- `IViewEngine` and `ViewEngine` are colocated in `Core/Engine/ViewEngine.cs`.
-- `ICollectionStore` and `CollectionStore` are colocated in `Core/Storage/CollectionStore.cs`.
-- `IOutboundPublisher` stays in `Core/Publishing/IOutboundPublisher.cs` because it has multiple implementations (`WebSocketOutboundPublisher`, `CapturingPublisher`).
+- `IViewEngine` and `ViewEngine` are colocated in `Core/ViewEngine.cs`.
+- `ICollectionStore` and `CollectionStore` are colocated in `Core/CollectionStore.cs`.
+- `IOutboundPublisher` stays in `Core/IOutboundPublisher.cs` because it has multiple implementations (`WebSocketOutboundPublisher`, `CapturingPublisher`).

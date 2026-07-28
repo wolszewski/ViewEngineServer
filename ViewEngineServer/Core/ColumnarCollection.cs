@@ -32,7 +32,10 @@ public sealed class ColumnarCollection
         _capacity = schema.Capacity;
         _columns = new object?[schema.Fields.Count][];
         for (int i = 0; i < schema.Fields.Count; i++)
+        {
             _columns[i] = new object?[_capacity];
+        }
+
         _handleToRowId = new string?[_capacity];
     }
 
@@ -43,7 +46,9 @@ public sealed class ColumnarCollection
     {
         var pkName = Schema.PrimaryKeyField.Name;
         if (!fields.TryGetValue(pkName, out var pkRaw) || pkRaw is null)
+        {
             throw new ArgumentException($"Primary key field '{pkName}' is required.");
+        }
 
         var rowId = pkRaw.ToString()!;
 
@@ -59,14 +64,19 @@ public sealed class ColumnarCollection
                 isNew = false;
                 previousValues = new object?[Schema.Fields.Count];
                 for (int i = 0; i < Schema.Fields.Count; i++)
+                {
                     previousValues[i] = _columns[i][handle];
+                }
             }
             else
             {
                 if (_nextHandle >= _capacity)
+                {
                     throw new InvalidOperationException(
                         $"Collection '{Schema.CollectionId}' is at capacity ({_capacity}). " +
                         "Consider deleting stale rows or increasing the capacity when creating the collection.");
+                }
+
                 handle = _nextHandle++;
                 isNew = true;
                 _liveCount++;
@@ -78,7 +88,10 @@ public sealed class ColumnarCollection
             for (int i = 0; i < Schema.Fields.Count; i++)
             {
                 if (fields.TryGetValue(Schema.Fields[i].Name, out var val))
+                {
                     _columns[i][handle] = val;
+                }
+
                 newValues[i] = _columns[i][handle];
             }
 
@@ -92,7 +105,10 @@ public sealed class ColumnarCollection
         _rwLock.EnterWriteLock();
         try
         {
-            if (!_rowIdToHandle.TryGetValue(rowId, out var handle)) return null;
+            if (!_rowIdToHandle.TryGetValue(rowId, out var handle))
+            {
+                return null;
+            }
 
             var previousValues = new object?[Schema.Fields.Count];
             for (int i = 0; i < Schema.Fields.Count; i++)
@@ -146,7 +162,13 @@ public sealed class ColumnarCollection
         {
             var list = new List<(int, string)>(_liveCount);
             for (int h = 0; h < _nextHandle; h++)
-                if (_handleToRowId[h] is { } id) list.Add((h, id));
+            {
+                if (_handleToRowId[h] is { } id)
+                {
+                    list.Add((h, id));
+                }
+            }
+
             return list;
         }
         finally { _rwLock.ExitReadLock(); }
@@ -159,7 +181,10 @@ public sealed class ColumnarCollection
         {
             var row = new Dictionary<string, object?>(Schema.Fields.Count);
             for (int i = 0; i < Schema.Fields.Count; i++)
+            {
                 row[Schema.Fields[i].Name] = _columns[i][handle];
+            }
+
             return row;
         }
         finally { _rwLock.ExitReadLock(); }

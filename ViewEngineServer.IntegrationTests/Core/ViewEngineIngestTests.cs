@@ -336,7 +336,9 @@ public class ViewEngineIngestTests
         var (engine, _, _) = CreateEngine();
         await CreateOrders(engine);
         for (int i = 1; i <= 10; i++)
+        {
             await Upsert(engine, $"o{i}", $"Customer{i}", i * 10);
+        }
 
         var events = await engine.SubscribeAsync(new SubscribeCommand
         {

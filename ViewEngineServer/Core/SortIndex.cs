@@ -37,7 +37,9 @@ public sealed class SortIndex
         lock (_lock)
         {
             if (_handleValues.ContainsKey(handle))
+            {
                 RemoveHandle(handle);
+            }
 
             _handleValues[handle] = newSortValue;
             InsertHandle(handle);
@@ -48,7 +50,11 @@ public sealed class SortIndex
     {
         lock (_lock)
         {
-            if (!_handleValues.ContainsKey(handle)) return;
+            if (!_handleValues.ContainsKey(handle))
+            {
+                return;
+            }
+
             RemoveHandle(handle);
             _handleValues.Remove(handle);
         }
@@ -68,11 +74,16 @@ public sealed class SortIndex
             foreach (var handle in _sortedHandles)
             {
                 if (filtered && !PassesFilters(handle, filters!, filterFieldIndexes!))
+                {
                     continue;
+                }
 
                 if (skipped < startIndex) { skipped++; continue; }
                 result.Add(handle);
-                if (result.Count >= pageSize) break;
+                if (result.Count >= pageSize)
+                {
+                    break;
+                }
             }
             return [.. result];
         }
@@ -82,11 +93,20 @@ public sealed class SortIndex
     {
         lock (_lock)
         {
-            if (filters is not { Count: > 0 }) return _sortedHandles.Count;
+            if (filters is not { Count: > 0 })
+            {
+                return _sortedHandles.Count;
+            }
 
             int count = 0;
             foreach (var handle in _sortedHandles)
-                if (PassesFilters(handle, filters, filterFieldIndexes!)) count++;
+            {
+                if (PassesFilters(handle, filters, filterFieldIndexes!))
+                {
+                    count++;
+                }
+            }
+
             return count;
         }
     }
@@ -98,8 +118,14 @@ public sealed class SortIndex
         while (lo < hi)
         {
             int mid = (lo + hi) >> 1;
-            if (CompareByHandle(_sortedHandles[mid], handle) < 0) lo = mid + 1;
-            else hi = mid;
+            if (CompareByHandle(_sortedHandles[mid], handle) < 0)
+            {
+                lo = mid + 1;
+            }
+            else
+            {
+                hi = mid;
+            }
         }
         _sortedHandles.Insert(lo, handle);
     }
@@ -125,8 +151,14 @@ public sealed class SortIndex
         while (lo < hi)
         {
             int mid = (lo + hi) >> 1;
-            if (CompareValues(_handleValues[_sortedHandles[mid]], value) < 0) lo = mid + 1;
-            else hi = mid;
+            if (CompareValues(_handleValues[_sortedHandles[mid]], value) < 0)
+            {
+                lo = mid + 1;
+            }
+            else
+            {
+                hi = mid;
+            }
         }
         return lo;
     }
@@ -137,8 +169,14 @@ public sealed class SortIndex
         while (lo < hi)
         {
             int mid = (lo + hi) >> 1;
-            if (CompareValues(_handleValues[_sortedHandles[mid]], value) <= 0) lo = mid + 1;
-            else hi = mid;
+            if (CompareValues(_handleValues[_sortedHandles[mid]], value) <= 0)
+            {
+                lo = mid + 1;
+            }
+            else
+            {
+                hi = mid;
+            }
         }
         return lo;
     }
@@ -148,9 +186,20 @@ public sealed class SortIndex
 
     private int CompareValues(object? a, object? b)
     {
-        if (a is null && b is null) return 0;
-        if (a is null) return _ascending ? -1 : 1;
-        if (b is null) return _ascending ? 1 : -1;
+        if (a is null && b is null)
+        {
+            return 0;
+        }
+
+        if (a is null)
+        {
+            return _ascending ? -1 : 1;
+        }
+
+        if (b is null)
+        {
+            return _ascending ? 1 : -1;
+        }
 
         int cmp;
         try
@@ -172,9 +221,16 @@ public sealed class SortIndex
         for (int i = 0; i < filters.Count; i++)
         {
             int fi = fieldIndexes[i];
-            if (fi < 0) continue;
+            if (fi < 0)
+            {
+                continue;
+            }
+
             var val = _collection.GetValue(handle, fi);
-            if (!FilterEvaluator.Matches(val, filters[i])) return false;
+            if (!FilterEvaluator.Matches(val, filters[i]))
+            {
+                return false;
+            }
         }
         return true;
     }
