@@ -115,7 +115,7 @@ public sealed class ViewEngine(ICollectionStore store, IOutboundPublisher publis
                 }
                 else
                 {
-                    var sortValue = mutation.NewValues?[view.SortFieldIndex];
+                    var sortValue = collection.GetTypedValue(mutation.Handle, view.SortFieldIndex);
                     view.NotifyUpsert(mutation.Handle, sortValue);
                 }
 
@@ -210,7 +210,7 @@ public sealed class ViewEngine(ICollectionStore store, IOutboundPublisher publis
             return [];
         }
 
-        var changed = new Dictionary<string, object?>();
+        var changed = new Dictionary<string, string?>();
         for (int fi = 0; fi < collection.Schema.Fields.Count; fi++)
         {
             if (!Equals(mutation.PreviousValues[fi], mutation.NewValues[fi]))

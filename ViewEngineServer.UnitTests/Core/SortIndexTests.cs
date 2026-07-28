@@ -36,9 +36,9 @@ public class SortIndexTests
         Upsert(col, idx, "c", 20);
 
         var handles = idx.GetPageHandles(0, 10);
-        var scores = handles.Select(h => (int)col.GetValue(h, 1)!).ToList();
+        var scores = handles.Select(h => col.GetValue(h, 1)).ToList();
 
-        Assert.Equal([10, 20, 30], scores);
+        Assert.Equal(["10", "20", "30"], scores);
     }
 
     [Fact]
@@ -50,9 +50,9 @@ public class SortIndexTests
         Upsert(col, idx, "c", 20);
 
         var handles = idx.GetPageHandles(0, 10);
-        var scores = handles.Select(h => (int)col.GetValue(h, 1)!).ToList();
+        var scores = handles.Select(h => col.GetValue(h, 1)).ToList();
 
-        Assert.Equal([30, 20, 10], scores);
+        Assert.Equal(["30", "20", "10"], scores);
     }
 
 
@@ -66,8 +66,8 @@ public class SortIndexTests
         }
 
         var page2 = idx.GetPageHandles(2, 2);
-        var scores = page2.Select(h => (int)col.GetValue(h, 1)!).ToList();
-        Assert.Equal([30, 40], scores);
+        var scores = page2.Select(h => col.GetValue(h, 1)).ToList();
+        Assert.Equal(["30", "40"], scores);
     }
 
     [Fact]
