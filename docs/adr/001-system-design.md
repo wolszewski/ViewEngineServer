@@ -2,44 +2,60 @@
 
 ## Status
 
-Accepted
+Accepted (amended)
 
 ## Context
 
 ViewEngineServer is a real-time data-view engine. Clients subscribe to named *views* over named *collections*, specifying a sort column, optional filters, and a viewport (start index + page size). When rows in a collection are mutated via HTTP ingest or WebSocket commands the server pushes minimal delta events to every affected subscriber rather than re-sending full snapshots.
 
-The first working implementation was built in the PR that merged the basic system. This ADR records the key decisions taken there so future contributors can understand the *why* behind the design.
+This ADR records the key design decisions so future contributors understand the *why* behind the architecture.
 
 ---
 
-## Decision 1 – Columnar in-memory storage with pre-allocated arrays
+## Decision 1 – Columnar in-memory storage with dynamic-growth per-type lists
 
-**Decision**: Each collection is stored as a `ColumnarCollection` whose data is a set of typed column arrays, one per schema field. Each column is an array of length `capacity` (default 100 000). Rows are identified by a stable *handle* (an integer slot index) that is assigned once on first insert and never changes.
+**Decision**: Each collection is stored as a `ColumnarCollection` whose data is a set of typed column lists, one per schema field. Each column is a `List<T?>` that grows by one slot each time a new row is inserted. Rows are identified by a stable *handle* (an integer slot index) that is assigned once on first insert and never changes.
 
 **Rationale**:
 - Columnar layout is cache-friendly for sort and filter passes, which iterate a single column across many rows.
-- Pre-allocation avoids incremental resizing and gives O(1) random access by handle.
+- Dynamic-growth lists (`List<T?>`) mean only the memory actually required for inserted rows is consumed. A collection of 50 rows uses 50-slot lists regardless of the declared capacity ceiling.
 - The handle abstraction decouples the sort index and viewport tracking from the physical slot position, so deletions do not require compaction.
 
-**Trade-offs**:
-- The full `capacity` memory is committed at creation time even if the collection is sparse.
-- Handles are never recycled, so a collection that repeatedly inserts and deletes will eventually exhaust its capacity without ever filling the logical row count.
+**Trade-offs vs. a pre-allocated array**:
+- `List<T?>` has slightly more overhead per access (bounds-checked indexer, backing-array indirection) compared to a raw array. This is negligible compared to the cost of pre-allocating `capacity × field_count` elements regardless of actual use.
+- Inserting a new row is O(1) amortised (list append), the same as the previous approach.
+
+**Capacity as a ceiling, not a floor**: `CollectionSchema.Capacity` (default 100 000) is still enforced as a hard row limit — attempting to insert beyond it throws `InvalidOperationException` (enforced in `ColumnarCollection.Upsert` before allocating a new handle). This prevents unbounded growth from runaway producers, but no memory is committed for that ceiling upfront.
+
+**Handle reuse**: Handles are never recycled, so a collection that repeatedly inserts and deletes will eventually exhaust its capacity without ever filling the logical row count. Bulk-load performance may need revisiting at very high throughput since each new slot triggers a list-append.
 
 ---
 
-## Decision 2 – Typed column arrays (no boxing for stored values)
+## Decision 2 – Typed column storage with string output API
 
-**Decision**: Column storage uses typed arrays (`int?[]`, `long?[]`, `double?[]`, `string?[]`, `bool?[]`) behind an internal `IColumn` interface, rather than a single `object?[][]`.
+**Decision**: Column storage uses typed lists (`List<int?>`, `List<long?>`, `List<decimal?>`, `List<string?>`, `List<bool?>`, `List<DateTime?>`, `List<DateOnly?>`, `List<byte?>`) behind a private `IColumn` interface. The public output API returns `string?` — each column formats its stored value to a culture-invariant string representation. A separate internal method returns the typed `object?` for operations that require ordered comparison (sort, filter).
 
-**Rationale**:
-- Storing value types (`Int32`, `Int64`, `Double`, `Boolean`) in an `object?[]` array boxes each value onto the heap. At 100 000 rows with several numeric columns this creates hundreds of thousands of small heap objects, increasing GC pause frequency and consuming roughly 6× more memory than a raw value-type array.
-- With typed arrays the values live contiguously in array memory as structs. Boxing is deferred to the moment a value crosses the `object?` API boundary (snapshot/delta serialisation), where it is unavoidable anyway.
-- The `IColumn` abstraction keeps the `ColumnarCollection` code simple: write, read, and clear operations delegate to the column implementation; the rest of the class is unchanged.
+**Supported column types**:
+
+| `FieldType` | .NET backing type | String format |
+|---|---|---|
+| `Int32` | `int?` | invariant integer |
+| `Int64` | `long?` | invariant integer |
+| `Decimal` | `decimal?` | invariant decimal |
+| `String` | `string?` | as-is |
+| `Boolean` | `bool?` | `"true"` / `"false"` |
+| `DateTime` | `DateTime?` | ISO 8601 round-trip (`"O"` format) |
+| `DateOnly` | `DateOnly?` | `"yyyy-MM-dd"` |
+| `Byte` | `byte?` | invariant integer |
+
+**Why string output**: The intended wire format to subscribers is a Lightstreamer-style pipe-delimited string (e.g. `val1|val2||val4` where empty segments represent null/unchanged fields). Converting every field to its string representation at the storage boundary aligns `GetValue()` and `GetRow()` with that wire contract: callers receive `string?` and can pipe-join without further boxing or type dispatch.
+
+**Why keep a typed internal accessor**: Sort and filter operations need ordered comparison (e.g. `100m < 200m`, not `"100" < "200"` which is lexicographic). `ColumnarCollection.GetTypedValue(handle, fieldIndex)` returns `object?` with the stored value as its native .NET type. Only sort-index maintenance and filter evaluation use this path.
 
 **Scope of remaining boxing**:
-- `GetValue(int handle, int fieldIndex) → object?` boxes on read. This is intentional: callers need `object?` for JSON serialisation and for the filter/sort comparers.
-- `MutationInfo.PreviousValues / NewValues` are `object?[]` snapshots of changed values; boxing happens once per mutation for the affected row.
-- `SortIndex._handleValues` is `Dictionary<int, object?>` and boxes the sort column value. This is a smaller dataset (one value per live handle, not per field × handle) and is left as-is.
+- `GetTypedValue()` boxes value-type results — unavoidable for the `object?` return type.
+- `MutationInfo.PreviousValues / NewValues` are `string?[]` snapshots of changed values; string allocation happens once per mutation for the affected row.
+- `SortIndex._handleValues` is `Dictionary<int, object?>` and boxes the sort column value. This is a smaller dataset (one value per live handle, not per field × handle) and is accepted.
 
 ---
 
@@ -52,7 +68,7 @@ The first working implementation was built in the PR that merged the basic syste
 - A `List<int>` is compact (4 bytes per element) and allows slicing to serve paginated viewport requests without copying the entire result set.
 
 **Trade-offs**:
-- High-throughput bulk ingestion (e.g. loading 100 000 rows) will be dominated by O(n) list shifts. An alternative would be a balanced BST (e.g. `SortedList`) or deferred batching, but neither is warranted at current scale.
+- High-throughput bulk ingestion (e.g. loading 100 000 rows) will be dominated by O(n) list shifts. An alternative would be a balanced BST or deferred batching, but neither is warranted at current scale.
 
 ---
 
@@ -89,5 +105,6 @@ The first working implementation was built in the PR that merged the basic syste
 ## Consequences
 
 - Adding a new `FieldType` requires a new typed column class and a case in the constructor switch expression in `ColumnarCollection`.
-- The `capacity` limit is intentional and must be documented to integrators; attempting to insert beyond capacity throws `InvalidOperationException` (enforced in `ColumnarCollection.Upsert` before allocating a new handle).
-- Bulk-load performance may need revisiting if the expected row count approaches 100 000 with high write throughput.
+- The `Capacity` ceiling is intentional and must be documented to integrators; the limit is enforced in `ColumnarCollection.Upsert` before allocating a new handle.
+- Numeric and temporal filtering (e.g. `amount > 100`) works correctly because `FilterEvaluator` receives typed values via `GetTypedValue`, not the string representation.
+- The sort index stores typed sort values obtained via `GetTypedValue` at mutation time, not from `MutationInfo.NewValues` (which is string).

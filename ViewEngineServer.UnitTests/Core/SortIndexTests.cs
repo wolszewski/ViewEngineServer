@@ -23,7 +23,7 @@ public class SortIndexTests
     private static void Upsert(ColumnarCollection col, SortIndex idx, string id, int score)
     {
         var mut = col.Upsert(new Dictionary<string, object?> { ["id"] = id, ["score"] = score });
-        idx.OnUpsert(mut.Handle, mut.NewValues?[1]);
+        idx.OnUpsert(mut.Handle, score);
     }
 
 
@@ -90,11 +90,11 @@ public class SortIndexTests
         Upsert(col, idx, "b", 30);
 
         var mut = col.Upsert(new Dictionary<string, object?> { ["id"] = "b", ["score"] = 5 });
-        idx.OnUpsert(mut.Handle, mut.NewValues?[1]);
+        idx.OnUpsert(mut.Handle, 5);
 
         var handles = idx.GetPageHandles(0, 10);
-        Assert.Equal(5, (int)col.GetValue(handles[0], 1)!);
-        Assert.Equal(10, (int)col.GetValue(handles[1], 1)!);
+        Assert.Equal("5", col.GetValue(handles[0], 1));
+        Assert.Equal("10", col.GetValue(handles[1], 1));
     }
 
     [Fact]
@@ -102,9 +102,9 @@ public class SortIndexTests
     {
         var (col, idx) = CreateSortedByScore();
         var r1 = col.Upsert(new Dictionary<string, object?> { ["id"] = "a", ["score"] = 1 });
-        idx.OnUpsert(r1.Handle, r1.NewValues?[1]);
+        idx.OnUpsert(r1.Handle, 1);
         var r2 = col.Upsert(new Dictionary<string, object?> { ["id"] = "b", ["score"] = 2 });
-        idx.OnUpsert(r2.Handle, r2.NewValues?[1]);
+        idx.OnUpsert(r2.Handle, 2);
 
         var del = col.Delete("a");
         idx.OnDelete(del!.Handle);
@@ -134,7 +134,7 @@ public class SortIndexTests
         var insert = (string id, int score, bool active) =>
         {
             var m = col.Upsert(new Dictionary<string, object?> { ["id"] = id, ["score"] = score, ["active"] = active });
-            idx.OnUpsert(m.Handle, m.NewValues?[1]);
+            idx.OnUpsert(m.Handle, score);
         };
 
         insert("a", 10, true);
@@ -161,7 +161,7 @@ public class SortIndexTests
     {
         var (col, idx) = CreateSortedByScore();
         var r = col.Upsert(new Dictionary<string, object?> { ["id"] = "a", ["score"] = 1 });
-        idx.OnUpsert(r.Handle, r.NewValues?[1]);
+        idx.OnUpsert(r.Handle, 1);
         var del = col.Delete("a");
         idx.OnDelete(del!.Handle);
         Assert.Equal(0, idx.GetCount());
