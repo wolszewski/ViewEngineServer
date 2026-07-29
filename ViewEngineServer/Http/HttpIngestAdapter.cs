@@ -111,12 +111,12 @@ public static class HttpIngestAdapter
 
     private static UpsertRowCommand MapUpsertCommand(IngestRequestDto dto)
     {
-        var fields = new Dictionary<string, object?>();
+        var fields = new Dictionary<string, string?>();
         if (dto.Fields is not null)
         {
             foreach (var (key, element) in dto.Fields)
             {
-                fields[key] = UnboxJsonElement(element);
+                fields[key] = element.ValueKind == JsonValueKind.Null ? null : element.GetString() ?? element.GetRawText();
             }
         }
         return new UpsertRowCommand
@@ -124,30 +124,5 @@ public static class HttpIngestAdapter
             CollectionId = dto.CollectionId!,
             Fields = fields
         };
-    }
-
-    private static object? UnboxJsonElement(JsonElement element) => element.ValueKind switch
-    {
-        JsonValueKind.True => (object?)true,
-        JsonValueKind.False => false,
-        JsonValueKind.Null => null,
-        JsonValueKind.String => element.GetString(),
-        JsonValueKind.Number => UnboxNumber(element),
-        _ => element.GetRawText()
-    };
-
-    private static object? UnboxNumber(JsonElement element)
-    {
-        if (element.TryGetInt32(out var i))
-        {
-            return i;
-        }
-
-        if (element.TryGetInt64(out var l))
-        {
-            return l;
-        }
-
-        return element.GetDouble();
     }
 }

@@ -13,7 +13,7 @@ public class ColumnarCollectionTests
             [
                 new FieldDefinition("id", FieldType.String, IsPrimaryKey: true),
                 new FieldDefinition("name", FieldType.String, IsSortable: true),
-                new FieldDefinition("score", FieldType.Int32)
+                new FieldDefinition("score", FieldType.String)
             ]
         });
 
@@ -22,7 +22,7 @@ public class ColumnarCollectionTests
     public void Upsert_NewRow_ReturnsIsNewTrue()
     {
         var col = CreateCollection();
-        var result = col.Upsert(new Dictionary<string, object?> { ["id"] = "r1", ["name"] = "Alice", ["score"] = 10 });
+        var result = col.Upsert(new Dictionary<string, string?> { ["id"] = "r1", ["name"] = "Alice", ["score"] = "10" });
 
         Assert.True(result.IsNew);
         Assert.Equal("r1", result.RowId);
@@ -34,7 +34,7 @@ public class ColumnarCollectionTests
     public void Upsert_NewRow_IncreasesLiveCount()
     {
         var col = CreateCollection();
-        col.Upsert(new Dictionary<string, object?> { ["id"] = "r1" });
+        col.Upsert(new Dictionary<string, string?> { ["id"] = "r1" });
         Assert.Equal(1, col.LiveCount);
     }
 
@@ -42,8 +42,8 @@ public class ColumnarCollectionTests
     public void Upsert_MultipleRows_AssignsUniqueHandles()
     {
         var col = CreateCollection();
-        var r1 = col.Upsert(new Dictionary<string, object?> { ["id"] = "r1" });
-        var r2 = col.Upsert(new Dictionary<string, object?> { ["id"] = "r2" });
+        var r1 = col.Upsert(new Dictionary<string, string?> { ["id"] = "r1" });
+        var r2 = col.Upsert(new Dictionary<string, string?> { ["id"] = "r2" });
         Assert.NotEqual(r1.Handle, r2.Handle);
     }
 
@@ -52,8 +52,8 @@ public class ColumnarCollectionTests
     public void Upsert_ExistingRow_ReturnsIsNewFalse_WithPreviousValues()
     {
         var col = CreateCollection();
-        col.Upsert(new Dictionary<string, object?> { ["id"] = "r1", ["name"] = "Alice" });
-        var result = col.Upsert(new Dictionary<string, object?> { ["id"] = "r1", ["name"] = "Bob" });
+        col.Upsert(new Dictionary<string, string?> { ["id"] = "r1", ["name"] = "Alice" });
+        var result = col.Upsert(new Dictionary<string, string?> { ["id"] = "r1", ["name"] = "Bob" });
 
         Assert.False(result.IsNew);
         Assert.Equal("Alice", result.PreviousValues?[1]);
@@ -64,8 +64,8 @@ public class ColumnarCollectionTests
     public void Upsert_ExistingRow_DoesNotIncreaseLiveCount()
     {
         var col = CreateCollection();
-        col.Upsert(new Dictionary<string, object?> { ["id"] = "r1", ["name"] = "Alice" });
-        col.Upsert(new Dictionary<string, object?> { ["id"] = "r1", ["name"] = "Bob" });
+        col.Upsert(new Dictionary<string, string?> { ["id"] = "r1", ["name"] = "Alice" });
+        col.Upsert(new Dictionary<string, string?> { ["id"] = "r1", ["name"] = "Bob" });
         Assert.Equal(1, col.LiveCount);
     }
 
@@ -74,16 +74,16 @@ public class ColumnarCollectionTests
     {
         var col = CreateCollection();
         Assert.Throws<ArgumentException>(() =>
-            col.Upsert(new Dictionary<string, object?> { ["name"] = "Alice" }));
+            col.Upsert(new Dictionary<string, string?> { ["name"] = "Alice" }));
     }
 
     [Fact]
     public void Upsert_AtCapacity_Throws()
     {
         var col = CreateCollection(capacity: 1);
-        col.Upsert(new Dictionary<string, object?> { ["id"] = "r1" });
+        col.Upsert(new Dictionary<string, string?> { ["id"] = "r1" });
         Assert.Throws<InvalidOperationException>(() =>
-            col.Upsert(new Dictionary<string, object?> { ["id"] = "r2" }));
+            col.Upsert(new Dictionary<string, string?> { ["id"] = "r2" }));
     }
 
 
@@ -91,7 +91,7 @@ public class ColumnarCollectionTests
     public void Delete_ExistingRow_ReturnsNonNull_AndDecrementsLiveCount()
     {
         var col = CreateCollection();
-        col.Upsert(new Dictionary<string, object?> { ["id"] = "r1", ["name"] = "Alice" });
+        col.Upsert(new Dictionary<string, string?> { ["id"] = "r1", ["name"] = "Alice" });
         var result = col.Delete("r1");
 
         Assert.NotNull(result);
@@ -112,7 +112,7 @@ public class ColumnarCollectionTests
     public void Delete_ThenGetRowId_ReturnsNull()
     {
         var col = CreateCollection();
-        var r = col.Upsert(new Dictionary<string, object?> { ["id"] = "r1" });
+        var r = col.Upsert(new Dictionary<string, string?> { ["id"] = "r1" });
         col.Delete("r1");
         Assert.Null(col.GetRowId(r.Handle));
     }
@@ -122,7 +122,7 @@ public class ColumnarCollectionTests
     public void GetRow_ReturnsAllFields()
     {
         var col = CreateCollection();
-        var r = col.Upsert(new Dictionary<string, object?> { ["id"] = "r1", ["name"] = "Alice", ["score"] = 42 });
+        var r = col.Upsert(new Dictionary<string, string?> { ["id"] = "r1", ["name"] = "Alice", ["score"] = "42" });
         var row = col.GetRow(r.Handle);
 
         Assert.Equal("r1", row["id"]);
@@ -134,7 +134,7 @@ public class ColumnarCollectionTests
     public void IsLive_ReturnsTrueForInsertedRow()
     {
         var col = CreateCollection();
-        var r = col.Upsert(new Dictionary<string, object?> { ["id"] = "r1" });
+        var r = col.Upsert(new Dictionary<string, string?> { ["id"] = "r1" });
         Assert.True(col.IsLive(r.Handle));
     }
 
@@ -142,7 +142,7 @@ public class ColumnarCollectionTests
     public void IsLive_ReturnsFalseAfterDelete()
     {
         var col = CreateCollection();
-        var r = col.Upsert(new Dictionary<string, object?> { ["id"] = "r1" });
+        var r = col.Upsert(new Dictionary<string, string?> { ["id"] = "r1" });
         col.Delete("r1");
         Assert.False(col.IsLive(r.Handle));
     }
@@ -152,8 +152,8 @@ public class ColumnarCollectionTests
     public void GetAllLiveHandles_ReturnsOnlyLiveRows()
     {
         var col = CreateCollection();
-        col.Upsert(new Dictionary<string, object?> { ["id"] = "r1" });
-        col.Upsert(new Dictionary<string, object?> { ["id"] = "r2" });
+        col.Upsert(new Dictionary<string, string?> { ["id"] = "r1" });
+        col.Upsert(new Dictionary<string, string?> { ["id"] = "r2" });
         col.Delete("r1");
 
         var live = col.GetAllLiveHandles();
@@ -166,7 +166,7 @@ public class ColumnarCollectionTests
     public void TryGetHandle_FindsInsertedRow()
     {
         var col = CreateCollection();
-        var r = col.Upsert(new Dictionary<string, object?> { ["id"] = "r1" });
+        var r = col.Upsert(new Dictionary<string, string?> { ["id"] = "r1" });
         Assert.True(col.TryGetHandle("r1", out var h));
         Assert.Equal(r.Handle, h);
     }
@@ -175,7 +175,7 @@ public class ColumnarCollectionTests
     public void TryGetHandle_ReturnsFalseAfterDelete()
     {
         var col = CreateCollection();
-        col.Upsert(new Dictionary<string, object?> { ["id"] = "r1" });
+        col.Upsert(new Dictionary<string, string?> { ["id"] = "r1" });
         col.Delete("r1");
         Assert.False(col.TryGetHandle("r1", out _));
     }

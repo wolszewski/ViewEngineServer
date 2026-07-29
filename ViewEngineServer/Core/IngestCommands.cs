@@ -23,7 +23,7 @@ public sealed class CreateCollectionCommand : IngestCommand
 
 public sealed class UpsertRowCommand : IngestCommand
 {
-    public required IReadOnlyDictionary<string, object?> Fields { get; init; }
+    public required IReadOnlyDictionary<string, string?> Fields { get; init; }
 }
 
 public sealed class DeleteRowCommand : IngestCommand

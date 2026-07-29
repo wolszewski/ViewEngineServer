@@ -3,12 +3,12 @@ namespace ViewEngineServer.Core;
 
 public enum FilterOperator { Eq, NotEq, Gt, Gte, Lt, Lte, Contains }
 
-public sealed record FilterSpec(string FieldName, FilterOperator Operator, object? Value);
+public sealed record FilterSpec(string FieldName, FilterOperator Operator, string? Value);
 
 
 public static class FilterEvaluator
 {
-    public static bool Matches(object? fieldValue, FilterSpec filter)
+    public static bool Matches(string? fieldValue, FilterSpec filter)
     {
         return filter.Operator switch
         {
@@ -18,14 +18,13 @@ public static class FilterEvaluator
             FilterOperator.Gte => CompareValues(fieldValue, filter.Value) >= 0,
             FilterOperator.Lt => CompareValues(fieldValue, filter.Value) < 0,
             FilterOperator.Lte => CompareValues(fieldValue, filter.Value) <= 0,
-            FilterOperator.Contains => fieldValue?.ToString()
-                ?.Contains(filter.Value?.ToString() ?? string.Empty,
+            FilterOperator.Contains => fieldValue?.Contains(filter.Value ?? string.Empty,
                            StringComparison.OrdinalIgnoreCase) == true,
             _ => false
         };
     }
 
-    public static bool PassesAll(object?[] rowValues, int[] fieldIndexes, IReadOnlyList<FilterSpec> filters)
+    public static bool PassesAll(string?[] rowValues, int[] fieldIndexes, IReadOnlyList<FilterSpec> filters)
     {
         for (int i = 0; i < filters.Count; i++)
         {
@@ -43,7 +42,7 @@ public static class FilterEvaluator
         return true;
     }
 
-    private static int CompareValues(object? a, object? b)
+    private static int CompareValues(string? a, string? b)
     {
         if (a is null && b is null)
         {
@@ -60,15 +59,6 @@ public static class FilterEvaluator
             return 1;
         }
 
-        try
-        {
-            if (a is IComparable ca)
-            {
-                return ca.CompareTo(Convert.ChangeType(b, a.GetType()));
-            }
-        }
-        catch { /* fall through to string compare */ }
-
-        return string.Compare(a.ToString(), b.ToString(), StringComparison.Ordinal);
+        return string.Compare(a, b, StringComparison.Ordinal);
     }
 }

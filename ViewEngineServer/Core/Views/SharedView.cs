@@ -52,7 +52,7 @@ public sealed class SharedView
         SortIndex.GetCount(Key.Filters, _filterFieldIndexes);
 
 
-    public void NotifyUpsert(int handle, object? newSortValue) =>
+    public void NotifyUpsert(int handle, string? newSortValue) =>
         SortIndex.OnUpsert(handle, newSortValue);
 
     public void NotifyDelete(int handle) =>
