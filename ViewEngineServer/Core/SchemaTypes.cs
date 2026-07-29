@@ -1,6 +1,6 @@
 namespace ViewEngineServer.Core;
 
-public enum FieldType { Int32, Int64, Decimal, String, Boolean, DateTime, DateOnly, Byte }
+public enum FieldType { String }
 
 public sealed record FieldDefinition(
     string Name,

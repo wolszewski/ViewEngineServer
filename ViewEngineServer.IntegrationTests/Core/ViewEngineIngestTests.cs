@@ -26,7 +26,7 @@ public class ViewEngineIngestTests
             [
                 new FieldDefinition("id", FieldType.String, IsPrimaryKey: true),
                 new FieldDefinition("customer", FieldType.String, IsSortable: true, IsFilterable: true),
-                new FieldDefinition("amount", FieldType.Decimal, IsSortable: true),
+                new FieldDefinition("amount", FieldType.String, IsSortable: true),
                 new FieldDefinition("status", FieldType.String, IsFilterable: true)
             ]
         };
@@ -39,11 +39,11 @@ public class ViewEngineIngestTests
         });
 
     private static Task<IngestResult> Upsert(ViewEngine engine, string id, string customer,
-                                             double amount, string status = "open") =>
+                                             string amount, string status = "open") =>
         engine.IngestAsync(new UpsertRowCommand
         {
             CollectionId = "orders",
-            Fields = new Dictionary<string, object?>
+            Fields = new Dictionary<string, string?>
             {
                 ["id"] = id,
                 ["customer"] = customer,
@@ -91,9 +91,9 @@ public class ViewEngineIngestTests
     {
         var (engine, _, _) = CreateEngine();
         await CreateOrders(engine);
-        await Upsert(engine, "o1", "Alice", 100);
-        await Upsert(engine, "o2", "Bob", 200);
-        await Upsert(engine, "o3", "Carol", 150);
+        await Upsert(engine, "o1", "Alice", "100");
+        await Upsert(engine, "o2", "Bob", "200");
+        await Upsert(engine, "o3", "Carol", "150");
 
         var events = await engine.SubscribeAsync(new SubscribeCommand
         {
@@ -118,7 +118,7 @@ public class ViewEngineIngestTests
     {
         var (engine, _, _) = CreateEngine();
         await CreateOrders(engine);
-        await Upsert(engine, "o1", "Alice", 99.5, "closed");
+        await Upsert(engine, "o1", "Alice", "99.5", "closed");
 
         var events = await engine.SubscribeAsync(new SubscribeCommand
         {
@@ -150,7 +150,7 @@ public class ViewEngineIngestTests
             PageSize = 10
         });
 
-        await Upsert(engine, "o1", "Alice", 100);
+        await Upsert(engine, "o1", "Alice", "100");
 
         var deltas = publisher.EventsFor("client1").ToList();
         Assert.NotEmpty(deltas);
@@ -162,7 +162,7 @@ public class ViewEngineIngestTests
     {
         var (engine, publisher, _) = CreateEngine();
         await CreateOrders(engine);
-        await Upsert(engine, "o1", "Alice", 100);
+        await Upsert(engine, "o1", "Alice", "100");
 
         await engine.SubscribeAsync(new SubscribeCommand
         {
@@ -175,7 +175,7 @@ public class ViewEngineIngestTests
         await engine.IngestAsync(new UpsertRowCommand
         {
             CollectionId = "orders",
-            Fields = new Dictionary<string, object?> { ["id"] = "o1", ["amount"] = 250.0 }
+            Fields = new Dictionary<string, string?> { ["id"] = "o1", ["amount"] = "250" }
         });
 
         var updateEvents = publisher.EventsFor("client1").OfType<RowUpdateEvent>().ToList();
@@ -191,7 +191,7 @@ public class ViewEngineIngestTests
     {
         var (engine, publisher, _) = CreateEngine();
         await CreateOrders(engine);
-        await Upsert(engine, "o1", "Alice", 100);
+        await Upsert(engine, "o1", "Alice", "100");
 
         await engine.SubscribeAsync(new SubscribeCommand
         {
@@ -216,7 +216,7 @@ public class ViewEngineIngestTests
     public async Task UpsertToMissingCollection_Fails()
     {
         var (engine, _, _) = CreateEngine();
-        var result = await Upsert(engine, "o1", "Alice", 100);
+        var result = await Upsert(engine, "o1", "Alice", "100");
 
         Assert.False(result.Success);
         Assert.Contains("not found", result.Error, StringComparison.OrdinalIgnoreCase);
@@ -256,9 +256,9 @@ public class ViewEngineIngestTests
     {
         var (engine, _, _) = CreateEngine();
         await CreateOrders(engine);
-        await Upsert(engine, "o3", "Carol", 300);
-        await Upsert(engine, "o1", "Alice", 100);
-        await Upsert(engine, "o2", "Bob", 200);
+        await Upsert(engine, "o3", "Carol", "300");
+        await Upsert(engine, "o1", "Alice", "100");
+        await Upsert(engine, "o2", "Bob", "200");
 
         var events = await engine.SubscribeAsync(new SubscribeCommand
         {
@@ -283,8 +283,8 @@ public class ViewEngineIngestTests
     {
         var (engine, _, _) = CreateEngine();
         await CreateOrders(engine);
-        await Upsert(engine, "o1", "Alice", 100);
-        await Upsert(engine, "o2", "Bob", 200);
+        await Upsert(engine, "o1", "Alice", "100");
+        await Upsert(engine, "o2", "Bob", "200");
 
         var events = await engine.SubscribeAsync(new SubscribeCommand
         {
@@ -310,9 +310,9 @@ public class ViewEngineIngestTests
     {
         var (engine, _, _) = CreateEngine();
         await CreateOrders(engine);
-        await Upsert(engine, "o1", "Alice", 100, "open");
-        await Upsert(engine, "o2", "Bob", 200, "closed");
-        await Upsert(engine, "o3", "Carol", 150, "open");
+        await Upsert(engine, "o1", "Alice", "100", "open");
+        await Upsert(engine, "o2", "Bob", "200", "closed");
+        await Upsert(engine, "o3", "Carol", "150", "open");
 
         var events = await engine.SubscribeAsync(new SubscribeCommand
         {
@@ -339,7 +339,7 @@ public class ViewEngineIngestTests
         await CreateOrders(engine);
         for (int i = 1; i <= 10; i++)
         {
-            await Upsert(engine, $"o{i}", $"Customer{i}", i * 10);
+            await Upsert(engine, $"o{i}", $"Customer{i}", $"{i * 10}");
         }
 
         var events = await engine.SubscribeAsync(new SubscribeCommand
@@ -360,9 +360,9 @@ public class ViewEngineIngestTests
     {
         var (engine, _, _) = CreateEngine();
         await CreateOrders(engine);
-        await Upsert(engine, "o1", "Alice", 100);
-        await Upsert(engine, "o2", "Bob", 200);
-        await Upsert(engine, "o3", "Carol", 300);
+        await Upsert(engine, "o1", "Alice", "100");
+        await Upsert(engine, "o2", "Bob", "200");
+        await Upsert(engine, "o3", "Carol", "300");
 
         await engine.SubscribeAsync(new SubscribeCommand
         {
@@ -390,7 +390,7 @@ public class ViewEngineIngestTests
     {
         var (engine, publisher, _) = CreateEngine();
         await CreateOrders(engine);
-        await Upsert(engine, "o1", "Alice", 100);
+        await Upsert(engine, "o1", "Alice", "100");
 
         await engine.SubscribeAsync(new SubscribeCommand
         {
@@ -403,7 +403,7 @@ public class ViewEngineIngestTests
         await engine.SubscribeAsync(new UnsubscribeCommand { ConnectionId = "client1" });
 
         var countBefore = publisher.EventsFor("client1").Count();
-        await Upsert(engine, "o2", "Bob", 200);
+        await Upsert(engine, "o2", "Bob", "200");
         var countAfter = publisher.EventsFor("client1").Count();
 
         Assert.Equal(countBefore, countAfter);
@@ -432,7 +432,7 @@ public class ViewEngineIngestTests
     {
         var (engine, publisher, _) = CreateEngine();
         await CreateOrders(engine);
-        await Upsert(engine, "o1", "Alice", 100);
+        await Upsert(engine, "o1", "Alice", "100");
 
         await engine.SubscribeAsync(new SubscribeCommand
         {
@@ -449,7 +449,7 @@ public class ViewEngineIngestTests
             PageSize = 10
         });
 
-        await Upsert(engine, "o2", "Bob", 200);
+        await Upsert(engine, "o2", "Bob", "200");
 
         Assert.NotEmpty(publisher.EventsFor("clientA"));
         Assert.NotEmpty(publisher.EventsFor("clientB"));

@@ -15,7 +15,6 @@ public sealed class ViewEngine(ICollectionStore store, IOutboundPublisher publis
 {
     private readonly ConcurrentDictionary<ViewKey, SharedView> _sharedViews = new();
     private readonly ConcurrentDictionary<string, ViewportState> _viewports = new();
-    private readonly ConcurrentDictionary<string, SemaphoreSlim> _mutationLocks = new();
 
     public async Task<IngestResult> IngestAsync(IngestCommand command, CancellationToken ct = default)
     {
@@ -96,48 +95,41 @@ public sealed class ViewEngine(ICollectionStore store, IOutboundPublisher publis
     private async Task PropagateMutationAsync(
         ColumnarCollection collection, MutationInfo mutation, bool isDelete, CancellationToken ct)
     {
-        // Enforce per-collection ordering so every subscriber sees deltas in the same sequence.
-        var sem = _mutationLocks.GetOrAdd(collection.Schema.CollectionId, _ => new SemaphoreSlim(1, 1));
-        await sem.WaitAsync(ct);
-        try
+        foreach (var kv in _sharedViews)
         {
-            foreach (var kv in _sharedViews)
+            var view = kv.Value;
+            if (view.Key.CollectionId != collection.Schema.CollectionId)
             {
-                var view = kv.Value;
-                if (view.Key.CollectionId != collection.Schema.CollectionId)
+                continue;
+            }
+
+            if (isDelete)
+            {
+                view.NotifyDelete(mutation.Handle);
+            }
+            else
+            {
+                var sortValue = collection.GetValue(mutation.Handle, view.SortFieldIndex);
+                view.NotifyUpsert(mutation.Handle, sortValue);
+            }
+
+            foreach (var connectionId in view.Subscribers)
+            {
+                if (!_viewports.TryGetValue(connectionId, out var viewport))
                 {
                     continue;
                 }
 
-                if (isDelete)
+                var events = BuildDeltas(view, collection, viewport, mutation, isDelete);
+                if (events.Count == 0)
                 {
-                    view.NotifyDelete(mutation.Handle);
-                }
-                else
-                {
-                    var sortValue = collection.GetTypedValue(mutation.Handle, view.SortFieldIndex);
-                    view.NotifyUpsert(mutation.Handle, sortValue);
+                    continue;
                 }
 
-                foreach (var connectionId in view.Subscribers)
-                {
-                    if (!_viewports.TryGetValue(connectionId, out var viewport))
-                    {
-                        continue;
-                    }
-
-                    var events = BuildDeltas(view, collection, viewport, mutation, isDelete);
-                    if (events.Count == 0)
-                    {
-                        continue;
-                    }
-
-                    viewport.CurrentRowIds = GetCurrentRowIds(view, viewport, collection);
-                    await publisher.PublishAsync(connectionId, events, ct);
-                }
+                viewport.CurrentRowIds = GetCurrentRowIds(view, viewport, collection);
+                await publisher.PublishAsync(connectionId, events, ct);
             }
         }
-        finally { sem.Release(); }
     }
 
     private IReadOnlyList<DeltaEvent> BuildDeltas(
