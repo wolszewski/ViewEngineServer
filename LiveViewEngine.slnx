@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/LiveViewEngine.Core/LiveViewEngine.Core.csproj" />
+    <Project Path="src/LiveViewEngine.WebHost/LiveViewEngine.WebHost.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="src/LiveViewEngine.Core.IntegrationTests/LiveViewEngine.Core.IntegrationTests.csproj" />
+    <Project Path="src/LiveViewEngine.Core.UnitTests/LiveViewEngine.Core.UnitTests.csproj" />
+  </Folder>
+</Solution>
