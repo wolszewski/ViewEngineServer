@@ -1,0 +1,13 @@
+namespace ViewEngineServer.WebApp.WebSocket.Dto;
+
+public sealed class WsInboundMessage
+{
+    public string Type { get; set; } = string.Empty;
+
+    public string? CollectionId { get; set; }
+    public string? SortColumn { get; set; }
+    public bool SortAscending { get; set; } = true;
+    public List<WsFilterDto>? Filters { get; set; }
+    public int StartIndex { get; set; }
+    public int PageSize { get; set; } = 50;
+}

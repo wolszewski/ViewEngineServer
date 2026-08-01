@@ -1,5 +1,5 @@
-using ViewEngineServer.Core;
-using ViewEngineServer.Core.Views;
+using ViewEngineServer.WebApp.Core;
+using ViewEngineServer.WebApp.Core.Views;
 
 namespace ViewEngineServer.UnitTests.Views;
 

@@ -1,0 +1,39 @@
+using ViewEngineServer.WebApp.Core;
+
+namespace ViewEngineServer.WebApp.Http;
+
+public static class HttpEndpoints
+{
+    public static void MapHttpEndpoints(this WebApplication app)
+    {
+        app.MapGet("/", (ICollectionStore store) => Results.Ok(new
+        {
+            service = "ViewEngineServer.WebApp",
+            endpoints = new { websocket = "/ws", collections = "/collections", ingest = "/ingest" },
+            collections = store.CollectionIds
+        }));
+
+        app.MapPost("/collections", async (
+            HttpRequest request, IViewEngine engine, CancellationToken ct) =>
+        {
+            var (result, validationError) = await HttpIngestAdapter.HandleCreateCollectionAsync(request, engine, ct);
+            if (!result.Success)
+            {
+                return Results.BadRequest(new { error = result.Error, detail = validationError });
+            }
+
+            return Results.Created("/collections", new { message = "Collection created." });
+        });
+
+        app.MapPost("/ingest", async (HttpRequest request, IViewEngine engine, CancellationToken ct) =>
+        {
+            var (result, validationError) = await HttpIngestAdapter.HandleIngestAsync(request, engine, ct);
+            if (!result.Success)
+            {
+                return Results.BadRequest(new { error = result.Error, detail = validationError });
+            }
+
+            return Results.Accepted(value: new { message = "Accepted." });
+        });
+    }
+}

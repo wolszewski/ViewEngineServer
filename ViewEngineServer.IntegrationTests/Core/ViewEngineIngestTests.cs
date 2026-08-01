@@ -1,9 +1,8 @@
 using Microsoft.Extensions.Logging.Abstractions;
-using ViewEngineServer.Core;
-using ViewEngineServer.Core.Views;
-using ViewEngineServer.IntegrationTests.Core;
+using ViewEngineServer.WebApp.Core;
+using ViewEngineServer.WebApp.Core.Views;
 
-namespace ViewEngineServer.IntegrationTests.Engine;
+namespace ViewEngineServer.IntegrationTests.Core;
 
 public class ViewEngineIngestTests
 {

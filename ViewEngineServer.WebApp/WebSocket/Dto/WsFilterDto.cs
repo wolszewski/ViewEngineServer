@@ -1,0 +1,12 @@
+using System.Text.Json.Serialization;
+
+namespace ViewEngineServer.WebApp.WebSocket.Dto;
+
+public sealed class WsFilterDto
+{
+    public string Field { get; set; } = string.Empty;
+
+    public string Operator { get; set; } = "eq";
+
+    public string? Value { get; set; }
+}

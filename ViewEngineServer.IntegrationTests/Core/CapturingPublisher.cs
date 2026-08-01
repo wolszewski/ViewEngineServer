@@ -1,4 +1,4 @@
-using ViewEngineServer.Core;
+using ViewEngineServer.WebApp.Core;
 
 namespace ViewEngineServer.IntegrationTests.Core;
 
