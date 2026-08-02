@@ -15,7 +15,7 @@ pre-indexed sort buffers, shared view reuse, and a transport-agnostic core.
 [Ingestion adapters]          [Core engine — no HTTP/WS types]     [Output adapters]
   POST /collections    ──►  IViewEngine.IngestAsync()         ──►  WebSocket /ws
   POST /ingest               ├─ CollectionStore                     (IOutboundPublisher)
-  (future: TCP / Kafka)      │   └─ ColumnarCollection
+  (future: TCP / Kafka)      │   └─ RowCollection
                              ├─ SharedView + SortIndex
                              ├─ ViewportState (per client)
                              └─ Delta engine → DeltaEvent[]
@@ -164,7 +164,7 @@ ViewEngineServer/
 ├── Core/                      ← no HTTP/WS dependencies
 │   ├── Schema/                  CollectionSchema, FieldDefinition, FieldType
 │   ├── Ingestion/               IngestCommand types, IngestResult
-│   ├── Storage/                 ColumnarCollection, ICollectionStore
+│   ├── Storage/                 RowCollection, ICollectionStore
 │   ├── Indexing/                SortIndex, FilterSpec, FilterEvaluator
 │   ├── Views/                   ViewDefinition, ViewKey, SharedView
 │   ├── Subscriptions/           SubscriptionCommand types, ViewportState

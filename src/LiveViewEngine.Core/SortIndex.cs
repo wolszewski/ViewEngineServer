@@ -2,56 +2,56 @@ namespace LiveViewEngine.Core;
 
 public sealed class SortIndex
 {
-    private readonly ColumnarCollection _collection;
+    private readonly RowCollection _collection;
     private readonly int _fieldIndex;
     private readonly bool _ascending;
-    private readonly List<int> _sortedHandles;
-    private readonly Dictionary<int, string?> _handleValues;
+    private readonly List<int> _sortedIndexes;
+    private readonly Dictionary<int, string?> _indexValues;
 
-    public SortIndex(ColumnarCollection collection, int fieldIndex, bool ascending = true)
+    public SortIndex(RowCollection collection, int fieldIndex, bool ascending = true)
     {
         _collection = collection;
         _fieldIndex = fieldIndex;
         _ascending = ascending;
 
-        var allRows = collection.GetAllLiveHandles();
-        _sortedHandles = new List<int>(allRows.Count);
-        _handleValues = new Dictionary<int, string?>(allRows.Count);
+        var allRows = collection.GetAllLiveIndexes();
+        _sortedIndexes = new List<int>(allRows.Count);
+        _indexValues = new Dictionary<int, string?>(allRows.Count);
 
-        foreach (var (handle, _) in allRows)
+        foreach (var (index, _) in allRows)
         {
-            var val = collection.GetValue(handle, fieldIndex);
-            _handleValues[handle] = val;
-            _sortedHandles.Add(handle);
+            var val = collection.GetValue(index, fieldIndex);
+            _indexValues[index] = val;
+            _sortedIndexes.Add(index);
         }
-        _sortedHandles.Sort((a, b) => CompareByHandle(a, b));
+        _sortedIndexes.Sort((a, b) => CompareByIndex(a, b));
     }
 
 
-    public void OnUpsert(int handle, string? newSortValue)
+    public void OnUpsert(int index, string? newSortValue)
     {
-        if (_handleValues.ContainsKey(handle))
+        if (_indexValues.ContainsKey(index))
         {
-            RemoveHandle(handle);
+            RemoveIndex(index);
         }
 
-        _handleValues[handle] = newSortValue;
-        InsertHandle(handle);
+        _indexValues[index] = newSortValue;
+        InsertIndex(index);
     }
 
-    public void OnDelete(int handle)
+    public void OnDelete(int index)
     {
-        if (!_handleValues.ContainsKey(handle))
+        if (!_indexValues.ContainsKey(index))
         {
             return;
         }
 
-        RemoveHandle(handle);
-        _handleValues.Remove(handle);
+        RemoveIndex(index);
+        _indexValues.Remove(index);
     }
 
 
-    public int[] GetPageHandles(int startIndex, int pageSize,
+    public int[] GetPageIndexes(int startIndex, int pageSize,
         IReadOnlyList<FilterSpec>? filters = null,
         int[]? filterFieldIndexes = null)
     {
@@ -59,15 +59,15 @@ public sealed class SortIndex
         var result = new List<int>(pageSize);
         int skipped = 0;
 
-        foreach (var handle in _sortedHandles)
+        foreach (var index in _sortedIndexes)
         {
-            if (filtered && !PassesFilters(handle, filters!, filterFieldIndexes!))
+            if (filtered && !PassesFilters(index, filters!, filterFieldIndexes!))
             {
                 continue;
             }
 
             if (skipped < startIndex) { skipped++; continue; }
-            result.Add(handle);
+            result.Add(index);
             if (result.Count >= pageSize)
             {
                 break;
@@ -80,13 +80,13 @@ public sealed class SortIndex
     {
         if (filters is not { Count: > 0 })
         {
-            return _sortedHandles.Count;
+            return _sortedIndexes.Count;
         }
 
         int count = 0;
-        foreach (var handle in _sortedHandles)
+        foreach (var index in _sortedIndexes)
         {
-            if (PassesFilters(handle, filters, filterFieldIndexes!))
+            if (PassesFilters(index, filters, filterFieldIndexes!))
             {
                 count++;
             }
@@ -96,13 +96,13 @@ public sealed class SortIndex
     }
 
 
-    private void InsertHandle(int handle)
+    private void InsertIndex(int index)
     {
-        int lo = 0, hi = _sortedHandles.Count;
+        int lo = 0, hi = _sortedIndexes.Count;
         while (lo < hi)
         {
             int mid = (lo + hi) >> 1;
-            if (CompareByHandle(_sortedHandles[mid], handle) < 0)
+            if (CompareByIndex(_sortedIndexes[mid], index) < 0)
             {
                 lo = mid + 1;
             }
@@ -111,18 +111,18 @@ public sealed class SortIndex
                 hi = mid;
             }
         }
-        _sortedHandles.Insert(lo, handle);
+        _sortedIndexes.Insert(lo, index);
     }
 
-    private void RemoveHandle(int handle)
+    private void RemoveIndex(int index)
     {
-        var val = _handleValues[handle];
+        var val = _indexValues[index];
         int lo = LowerBound(val), hi = UpperBound(val);
         for (int i = lo; i < hi; i++)
         {
-            if (_sortedHandles[i] == handle)
+            if (_sortedIndexes[i] == index)
             {
-                _sortedHandles.RemoveAt(i);
+                _sortedIndexes.RemoveAt(i);
                 return;
             }
         }
@@ -130,11 +130,11 @@ public sealed class SortIndex
 
     private int LowerBound(string? value)
     {
-        int lo = 0, hi = _sortedHandles.Count;
+        int lo = 0, hi = _sortedIndexes.Count;
         while (lo < hi)
         {
             int mid = (lo + hi) >> 1;
-            if (CompareValues(_handleValues[_sortedHandles[mid]], value) < 0)
+            if (CompareValues(_indexValues[_sortedIndexes[mid]], value) < 0)
             {
                 lo = mid + 1;
             }
@@ -148,11 +148,11 @@ public sealed class SortIndex
 
     private int UpperBound(string? value)
     {
-        int lo = 0, hi = _sortedHandles.Count;
+        int lo = 0, hi = _sortedIndexes.Count;
         while (lo < hi)
         {
             int mid = (lo + hi) >> 1;
-            if (CompareValues(_handleValues[_sortedHandles[mid]], value) <= 0)
+            if (CompareValues(_indexValues[_sortedIndexes[mid]], value) <= 0)
             {
                 lo = mid + 1;
             }
@@ -164,8 +164,8 @@ public sealed class SortIndex
         return lo;
     }
 
-    private int CompareByHandle(int a, int b) =>
-        CompareValues(_handleValues[a], _handleValues[b]);
+    private int CompareByIndex(int a, int b) =>
+        CompareValues(_indexValues[a], _indexValues[b]);
 
     private int CompareValues(string? a, string? b)
     {
@@ -188,7 +188,7 @@ public sealed class SortIndex
         return _ascending ? cmp : -cmp;
     }
 
-    private bool PassesFilters(int handle, IReadOnlyList<FilterSpec> filters, int[] fieldIndexes)
+    private bool PassesFilters(int index, IReadOnlyList<FilterSpec> filters, int[] fieldIndexes)
     {
         for (int i = 0; i < filters.Count; i++)
         {
@@ -198,7 +198,7 @@ public sealed class SortIndex
                 continue;
             }
 
-            var val = _collection.GetValue(handle, fi);
+            var val = _collection.GetValue(index, fi);
             if (!FilterEvaluator.Matches(val, filters[i]))
             {
                 return false;

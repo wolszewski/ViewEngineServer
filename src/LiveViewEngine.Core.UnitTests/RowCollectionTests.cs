@@ -1,8 +1,8 @@
 namespace LiveViewEngine.Core.UnitTests;
 
-public class ColumnarCollectionTests
+public class RowCollectionTests
 {
-    private static ColumnarCollection CreateCollection(int capacity = 100) =>
+    private static RowCollection CreateCollection(int capacity = 100) =>
         new(new CollectionSchema
         {
             CollectionId = "test",
@@ -37,12 +37,12 @@ public class ColumnarCollectionTests
     }
 
     [Fact]
-    public void Upsert_MultipleRows_AssignsUniqueHandles()
+    public void Upsert_MultipleRows_AssignsUniqueIndexes()
     {
         var col = CreateCollection();
         var r1 = col.Upsert(new Dictionary<string, string?> { ["id"] = "r1" });
         var r2 = col.Upsert(new Dictionary<string, string?> { ["id"] = "r2" });
-        Assert.NotEqual(r1.Handle, r2.Handle);
+        Assert.NotEqual(r1.Index, r2.Index);
     }
 
 
@@ -112,7 +112,7 @@ public class ColumnarCollectionTests
         var col = CreateCollection();
         var r = col.Upsert(new Dictionary<string, string?> { ["id"] = "r1" });
         col.Delete("r1");
-        Assert.Null(col.GetRowId(r.Handle));
+        Assert.Null(col.GetRowId(r.Index));
     }
 
 
@@ -121,7 +121,7 @@ public class ColumnarCollectionTests
     {
         var col = CreateCollection();
         var r = col.Upsert(new Dictionary<string, string?> { ["id"] = "r1", ["name"] = "Alice", ["score"] = "42" });
-        var row = col.GetRow(r.Handle);
+        var row = col.GetRow(r.Index);
 
         Assert.Equal("r1", row["id"]);
         Assert.Equal("Alice", row["name"]);
@@ -133,7 +133,7 @@ public class ColumnarCollectionTests
     {
         var col = CreateCollection();
         var r = col.Upsert(new Dictionary<string, string?> { ["id"] = "r1" });
-        Assert.True(col.IsLive(r.Handle));
+        Assert.True(col.IsLive(r.Index));
     }
 
     [Fact]
@@ -142,39 +142,39 @@ public class ColumnarCollectionTests
         var col = CreateCollection();
         var r = col.Upsert(new Dictionary<string, string?> { ["id"] = "r1" });
         col.Delete("r1");
-        Assert.False(col.IsLive(r.Handle));
+        Assert.False(col.IsLive(r.Index));
     }
 
 
     [Fact]
-    public void GetAllLiveHandles_ReturnsOnlyLiveRows()
+    public void GetAllLiveIndexes_ReturnsOnlyLiveRows()
     {
         var col = CreateCollection();
         col.Upsert(new Dictionary<string, string?> { ["id"] = "r1" });
         col.Upsert(new Dictionary<string, string?> { ["id"] = "r2" });
         col.Delete("r1");
 
-        var live = col.GetAllLiveHandles();
+        var live = col.GetAllLiveIndexes();
         Assert.Single(live);
         Assert.Equal("r2", live[0].rowId);
     }
 
 
     [Fact]
-    public void TryGetHandle_FindsInsertedRow()
+    public void TryGetIndex_FindsInsertedRow()
     {
         var col = CreateCollection();
         var r = col.Upsert(new Dictionary<string, string?> { ["id"] = "r1" });
-        Assert.True(col.TryGetHandle("r1", out var h));
-        Assert.Equal(r.Handle, h);
+        Assert.True(col.TryGetIndex("r1", out var index));
+        Assert.Equal(r.Index, index);
     }
 
     [Fact]
-    public void TryGetHandle_ReturnsFalseAfterDelete()
+    public void TryGetIndex_ReturnsFalseAfterDelete()
     {
         var col = CreateCollection();
         col.Upsert(new Dictionary<string, string?> { ["id"] = "r1" });
         col.Delete("r1");
-        Assert.False(col.TryGetHandle("r1", out _));
+        Assert.False(col.TryGetIndex("r1", out _));
     }
 }

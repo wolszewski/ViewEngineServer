@@ -6,7 +6,7 @@ public sealed class SharedView
 {
     public ViewKey Key { get; }
 
-    private readonly ColumnarCollection _collection;
+    private readonly RowCollection _collection;
     private readonly int _sortFieldIndex;
     private readonly int[] _filterFieldIndexes;
 
@@ -14,7 +14,7 @@ public sealed class SharedView
 
     private readonly ConcurrentDictionary<string, bool> _subscribers = new();
 
-    public SharedView(ViewKey key, ColumnarCollection collection)
+    public SharedView(ViewKey key, RowCollection collection)
     {
         Key = key;
         _collection = collection;
@@ -45,16 +45,16 @@ public sealed class SharedView
         _subscribers.TryRemove(connectionId, out _);
 
 
-    public int[] GetPageHandles(int startIndex, int pageSize) =>
-        SortIndex.GetPageHandles(startIndex, pageSize, Key.Filters, _filterFieldIndexes);
+    public int[] GetPageIndexes(int startIndex, int pageSize) =>
+        SortIndex.GetPageIndexes(startIndex, pageSize, Key.Filters, _filterFieldIndexes);
 
     public int GetTotalCount() =>
         SortIndex.GetCount(Key.Filters, _filterFieldIndexes);
 
 
-    public void NotifyUpsert(int handle, string? newSortValue) =>
-        SortIndex.OnUpsert(handle, newSortValue);
+    public void NotifyUpsert(int index, string? newSortValue) =>
+        SortIndex.OnUpsert(index, newSortValue);
 
-    public void NotifyDelete(int handle) =>
-        SortIndex.OnDelete(handle);
+    public void NotifyDelete(int index) =>
+        SortIndex.OnDelete(index);
 }

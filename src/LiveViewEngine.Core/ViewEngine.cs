@@ -94,7 +94,7 @@ public sealed class ViewEngine(ICollectionStore store, IOutboundPublisher publis
     }
 
     private async Task PropagateMutationAsync(
-        ColumnarCollection collection, MutationInfo mutation, bool isDelete, CancellationToken ct)
+        RowCollection collection, MutationInfo mutation, bool isDelete, CancellationToken ct)
     {
         foreach (var kv in _sharedViews)
         {
@@ -106,12 +106,12 @@ public sealed class ViewEngine(ICollectionStore store, IOutboundPublisher publis
 
             if (isDelete)
             {
-                view.NotifyDelete(mutation.Handle);
+                view.NotifyDelete(mutation.Index);
             }
             else
             {
-                var sortValue = collection.GetValue(mutation.Handle, view.SortFieldIndex);
-                view.NotifyUpsert(mutation.Handle, sortValue);
+                var sortValue = collection.GetValue(mutation.Index, view.SortFieldIndex);
+                view.NotifyUpsert(mutation.Index, sortValue);
             }
 
             foreach (var connectionId in view.Subscribers)
@@ -135,13 +135,13 @@ public sealed class ViewEngine(ICollectionStore store, IOutboundPublisher publis
 
     private IReadOnlyList<DeltaEvent> BuildDeltas(
         SharedView view,
-        ColumnarCollection collection,
+        RowCollection collection,
         ViewportState viewport,
         MutationInfo mutation,
         bool isDelete)
     {
-        var newHandles = view.GetPageHandles(viewport.StartIndex, viewport.PageSize);
-        var newRowIds = newHandles.Select(h => collection.GetRowId(h) ?? string.Empty).ToArray();
+        var newIndexes = view.GetPageIndexes(viewport.StartIndex, viewport.PageSize);
+        var newRowIds = newIndexes.Select(i => collection.GetRowId(i) ?? string.Empty).ToArray();
         var oldRowIds = viewport.CurrentRowIds;
 
         if (newRowIds.SequenceEqual(oldRowIds))
@@ -151,7 +151,7 @@ public sealed class ViewEngine(ICollectionStore store, IOutboundPublisher publis
                 return [];
             }
 
-            return BuildFieldUpdateEvents(view.Key.Id, newHandles, newRowIds, mutation, collection);
+            return BuildFieldUpdateEvents(view.Key.Id, newIndexes, newRowIds, mutation, collection);
         }
 
         var events = new List<DeltaEvent>();
@@ -174,12 +174,12 @@ public sealed class ViewEngine(ICollectionStore store, IOutboundPublisher publis
                 {
                     ViewId = view.Key.Id,
                     Position = i,
-                    Row = collection.GetRow(newHandles[i])
+                    Row = collection.GetRow(newIndexes[i])
                 });
             }
         }
 
-        var fieldUpdates = BuildFieldUpdateEvents(view.Key.Id, newHandles, newRowIds, mutation, collection);
+        var fieldUpdates = BuildFieldUpdateEvents(view.Key.Id, newIndexes, newRowIds, mutation, collection);
         events.AddRange(fieldUpdates);
 
         return events;
@@ -187,10 +187,10 @@ public sealed class ViewEngine(ICollectionStore store, IOutboundPublisher publis
 
     private static IReadOnlyList<DeltaEvent> BuildFieldUpdateEvents(
         string viewId,
-        int[] handles,
+        int[] indexes,
         string[] rowIds,
         MutationInfo mutation,
-        ColumnarCollection collection)
+        RowCollection collection)
     {
         if (mutation.IsNew || mutation.PreviousValues is null || mutation.NewValues is null)
         {
@@ -227,10 +227,10 @@ public sealed class ViewEngine(ICollectionStore store, IOutboundPublisher publis
     }
 
     private static string[] GetCurrentRowIds(
-        SharedView view, ViewportState viewport, ColumnarCollection collection)
+        SharedView view, ViewportState viewport, RowCollection collection)
     {
-        var handles = view.GetPageHandles(viewport.StartIndex, viewport.PageSize);
-        return handles.Select(h => collection.GetRowId(h) ?? string.Empty).ToArray();
+        var indexes = view.GetPageIndexes(viewport.StartIndex, viewport.PageSize);
+        return indexes.Select(i => collection.GetRowId(i) ?? string.Empty).ToArray();
     }
 
 
@@ -256,9 +256,9 @@ public sealed class ViewEngine(ICollectionStore store, IOutboundPublisher publis
         };
         _viewports[command.ConnectionId] = viewport;
 
-        var handles = view.GetPageHandles(command.StartIndex, command.PageSize);
-        viewport.CurrentRowIds = handles
-            .Select(h => collection.GetRowId(h) ?? string.Empty)
+        var indexes = view.GetPageIndexes(command.StartIndex, command.PageSize);
+        viewport.CurrentRowIds = indexes
+            .Select(i => collection.GetRowId(i) ?? string.Empty)
             .ToArray();
 
         logger.LogInformation(
@@ -270,7 +270,7 @@ public sealed class ViewEngine(ICollectionStore store, IOutboundPublisher publis
             ViewId = key.Id,
             TotalCount = view.GetTotalCount(),
             StartIndex = command.StartIndex,
-            Rows = handles.Select(h => collection.GetRow(h)).ToList()
+            Rows = indexes.Select(i => collection.GetRow(i)).ToList()
         }];
     }
 
@@ -294,9 +294,9 @@ public sealed class ViewEngine(ICollectionStore store, IOutboundPublisher publis
         viewport.StartIndex = command.StartIndex;
         viewport.PageSize = command.PageSize;
 
-        var handles = view.GetPageHandles(command.StartIndex, command.PageSize);
-        viewport.CurrentRowIds = handles
-            .Select(h => collection.GetRowId(h) ?? string.Empty)
+        var indexes = view.GetPageIndexes(command.StartIndex, command.PageSize);
+        viewport.CurrentRowIds = indexes
+            .Select(i => collection.GetRowId(i) ?? string.Empty)
             .ToArray();
 
         return [new SnapshotEvent
@@ -304,7 +304,7 @@ public sealed class ViewEngine(ICollectionStore store, IOutboundPublisher publis
             ViewId = viewport.ViewKey.Id,
             TotalCount = view.GetTotalCount(),
             StartIndex = command.StartIndex,
-            Rows = handles.Select(h => collection.GetRow(h)).ToList()
+            Rows = indexes.Select(i => collection.GetRow(i)).ToList()
         }];
     }
 

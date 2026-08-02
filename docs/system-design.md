@@ -25,7 +25,7 @@ The design is inspired by [Lightstreamer](https://lightstreamer.com/): a server-
 │  ICollectionStore  SharedView    ViewportState        │
 │       │            (per view key)   (per connection)  │
 │       ▼                 │                             │
-│  ColumnarCollection     │                             │
+│  RowCollection          │                             │
 │  (typed List columns)   ▼                             │
 │                    SortIndex                          │
 │                    (sorted handle list)               │
@@ -35,7 +35,7 @@ The design is inspired by [Lightstreamer](https://lightstreamer.com/): a server-
 └──────────────────────────────────────────────────────┘
 ```
 
-### `ColumnarCollection`
+### `RowCollection`
 
 Stores all rows for one collection. Internally holds one `List<T?>` per schema field, indexed by a stable integer *handle* assigned on first insert. Lists grow on demand — no memory is pre-allocated for the full capacity.
 
@@ -69,7 +69,7 @@ Orchestrates the full ingest-to-delta pipeline. Serialises per-collection mutati
 HTTP POST /ingest
   → HttpIngestAdapter (JSON → IngestCommand)
   → ViewEngine.IngestAsync
-      → ColumnarCollection.Upsert / Delete   (write lock)
+      → RowCollection.Upsert / Delete   (write lock)
       → PropagateMutationAsync               (per-collection semaphore)
           for each SharedView on this collection:
               → SortIndex.OnUpsert / OnDelete
@@ -153,7 +153,7 @@ val1|val2||val4
 - A snapshot sends all fields for each row.
 - An update sends only changed fields; unchanged fields are empty segments.
 
-This format eliminates field-name repetition and JSON overhead. The `GetValue() → string?` API on `ColumnarCollection` is already shaped for this: values are strings at the storage boundary, and pipe-joining them is O(fields) with no further serialisation.
+This format eliminates field-name repetition and JSON overhead. The `GetValue() → string?` API on `RowCollection` is already shaped for this: values are strings at the storage boundary, and pipe-joining them is O(fields) with no further serialisation.
 
 ---
 
@@ -176,7 +176,7 @@ This format eliminates field-name repetition and JSON overhead. The `GetValue() 
 
 | Lock | Scope | Purpose |
 |---|---|---|
-| `ReaderWriterLockSlim` on `ColumnarCollection` | per collection | Protects column list reads and writes |
+| `ReaderWriterLockSlim` on `RowCollection` | per collection | Protects row storage reads and writes |
 | `SemaphoreSlim(1,1)` in `ViewEngine` | per collection | Serialises `PropagateMutationAsync` so deltas are published in write order |
 | `Lock` on `SortIndex` | per sort index | Protects sorted handle list during insert/remove |
 | `ConcurrentDictionary` | shared views, viewports, mutation locks | Lock-free lookup/registration |

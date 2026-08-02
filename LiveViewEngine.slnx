@@ -1,4 +1,7 @@
 <Solution>
+  <Folder Name="/docs/">
+    <File Path="docs\system-design.md" />
+  </Folder>
   <Folder Name="/src/">
     <Project Path="src/LiveViewEngine.Core/LiveViewEngine.Core.csproj" />
     <Project Path="src/LiveViewEngine.WebHost/LiveViewEngine.WebHost.csproj" />
