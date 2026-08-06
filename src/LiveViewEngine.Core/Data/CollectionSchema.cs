@@ -28,7 +28,7 @@ public sealed class CollectionSchema
         fields[0] = new FieldDefinition("key", 0);
         for (int i = 1; i <= fieldNames.Count; i++)
         {
-            fields[i - 1] = new FieldDefinition(fieldNames[i - 1], i);
+            fields[i] = new FieldDefinition(fieldNames[i - 1], i);
         }
 
         return fields;
@@ -39,8 +39,19 @@ public sealed class CollectionSchema
         return _fieldNameToIndex.GetValueOrDefault(name, -1);
     }
     
-    public IReadOnlyCollection<KeyValuePair<int, string?>> MapToColumnChanges(IReadOnlyCollection<KeyValuePair<string, string?>> fieldValues) =>
-        fieldValues
-            .Select(x=> new KeyValuePair<int,string?>(GetFieldIndex(x.Key), x.Value))
-            .ToArray();
+    public IReadOnlyCollection<KeyValuePair<int, string?>> MapToColumnChanges(
+        IReadOnlyCollection<KeyValuePair<string, string?>> fieldValues)
+    {
+        var mapped = new List<KeyValuePair<int, string?>>(fieldValues.Count);
+        foreach (var (fieldName, value) in fieldValues)
+        {
+            var fieldIndex = GetFieldIndex(fieldName);
+            if (fieldIndex >= 0)
+            {
+                mapped.Add(new KeyValuePair<int, string?>(fieldIndex, value));
+            }
+        }
+
+        return mapped;
+    }
 }

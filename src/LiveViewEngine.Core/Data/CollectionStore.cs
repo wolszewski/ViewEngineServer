@@ -6,7 +6,7 @@ public interface ICollectionStore
 {
     bool TryCreate(CollectionSchema schema);
     bool TryGet(string collectionId, out RowCollection? collection);
-    IReadOnlyList<string> CollectionIds { get; }
+    ICollection<string> CollectionIds { get; }
 }
 
 public sealed class CollectionStore : ICollectionStore
@@ -26,5 +26,5 @@ public sealed class CollectionStore : ICollectionStore
         return found;
     }
 
-    public IReadOnlyList<string> CollectionIds => [.. _collections.Keys];
+    public ICollection<string> CollectionIds => _collections.Keys;
 }

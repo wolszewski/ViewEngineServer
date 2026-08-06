@@ -5,11 +5,7 @@ namespace LiveViewEngine.Core.UnitTests;
 public class CollectionStoreTests
 {
     private static CollectionSchema MakeSchema(string id = "col1") =>
-        new()
-        {
-            CollectionName = id,
-            Fields = [new FieldDefinition("id", FieldType.String, IsPrimaryKey: true)]
-        };
+        new(id, ["name"]);
 
     [Fact]
     public void TryCreate_NewId_ReturnsTrue()
@@ -31,6 +27,7 @@ public class CollectionStoreTests
     {
         var store = new CollectionStore();
         store.TryCreate(MakeSchema());
+
         Assert.True(store.TryGet("col1", out var col));
         Assert.NotNull(col);
     }

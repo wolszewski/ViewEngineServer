@@ -4,179 +4,83 @@ namespace LiveViewEngine.Core.UnitTests;
 
 public class RowCollectionTests
 {
-    private static RowCollection CreateCollection(int capacity = 100) =>
-        new(new CollectionSchema
-        {
-            CollectionName = "test",
-            Capacity = capacity,
-            Fields =
-            [
-                new FieldDefinition("id", FieldType.String, IsPrimaryKey: true),
-                new FieldDefinition("name", FieldType.String, IsSortable: true),
-                new FieldDefinition("score", FieldType.String)
-            ]
-        });
-
+    private static RowCollection CreateCollection() =>
+        new(new CollectionSchema("test", ["name", "score"]));
 
     [Fact]
-    public void Upsert_NewRow_ReturnsIsNewTrue()
+    public void AddOrUpdate_NewRow_ReturnsIsNewTrue()
     {
         var col = CreateCollection();
-        var result = col.Upsert(new Dictionary<string, string?> { ["id"] = "r1", ["name"] = "Alice", ["score"] = "10" });
+        var result = col.AddOrUpdate("r1", new Dictionary<string, string?> { ["name"] = "Alice", ["score"] = "10" });
 
         Assert.True(result.IsNew);
         Assert.Equal("r1", result.RowId);
-        Assert.Null(result.PreviousValues);
-        Assert.NotNull(result.NewValues);
+        Assert.NotEmpty(result.ChangedColumns!);
     }
 
     [Fact]
-    public void Upsert_NewRow_IncreasesLiveCount()
+    public void AddOrUpdate_EmptyKey_Throws()
     {
         var col = CreateCollection();
-        col.Upsert(new Dictionary<string, string?> { ["id"] = "r1" });
-        Assert.Equal(1, col.LiveCount);
+        Assert.Throws<ArgumentException>(() => col.AddOrUpdate("", new Dictionary<string, string?>()));
     }
 
     [Fact]
-    public void Upsert_MultipleRows_AssignsUniqueIndexes()
+    public void AddOrUpdate_ExistingRow_ReusesIndex()
     {
         var col = CreateCollection();
-        var r1 = col.Upsert(new Dictionary<string, string?> { ["id"] = "r1" });
-        var r2 = col.Upsert(new Dictionary<string, string?> { ["id"] = "r2" });
-        Assert.NotEqual(r1.Index, r2.Index);
+        var first = col.AddOrUpdate("r1", new Dictionary<string, string?> { ["name"] = "Alice" });
+        var second = col.AddOrUpdate("r1", new Dictionary<string, string?> { ["name"] = "Bob" });
+
+        Assert.False(second.IsNew);
+        Assert.Equal(first.Index, second.Index);
+        Assert.Equal("Bob", col.GetValue(second.Index, col.Schema.GetFieldIndex("name")));
     }
 
-
     [Fact]
-    public void Upsert_ExistingRow_ReturnsIsNewFalse_WithPreviousValues()
+    public void Delete_ExistingRow_ReturnsMutationAndRemovesRow()
     {
         var col = CreateCollection();
-        col.Upsert(new Dictionary<string, string?> { ["id"] = "r1", ["name"] = "Alice" });
-        var result = col.Upsert(new Dictionary<string, string?> { ["id"] = "r1", ["name"] = "Bob" });
+        var row = col.AddOrUpdate("r1", new Dictionary<string, string?> { ["name"] = "Alice" });
 
-        Assert.False(result.IsNew);
-        Assert.Equal("Alice", result.PreviousValues?[1]);
-        Assert.Equal("Bob", result.NewValues?[1]);
+        var deleted = col.Delete("r1");
+
+        Assert.NotNull(deleted);
+        Assert.Equal("r1", deleted!.RowId);
+        Assert.Null(col.GetRowId(row.Index));
     }
 
     [Fact]
-    public void Upsert_ExistingRow_DoesNotIncreaseLiveCount()
+    public void Delete_NonExistingRow_ReturnsNull()
     {
         var col = CreateCollection();
-        col.Upsert(new Dictionary<string, string?> { ["id"] = "r1", ["name"] = "Alice" });
-        col.Upsert(new Dictionary<string, string?> { ["id"] = "r1", ["name"] = "Bob" });
-        Assert.Equal(1, col.LiveCount);
+        Assert.Null(col.Delete("missing"));
     }
 
     [Fact]
-    public void Upsert_MissingPrimaryKey_Throws()
+    public void GetAllLiveIndexes_ExcludesDeletedRows()
     {
         var col = CreateCollection();
-        Assert.Throws<ArgumentException>(() =>
-            col.Upsert(new Dictionary<string, string?> { ["name"] = "Alice" }));
-    }
-
-    [Fact]
-    public void Upsert_AtCapacity_Throws()
-    {
-        var col = CreateCollection(capacity: 1);
-        col.Upsert(new Dictionary<string, string?> { ["id"] = "r1" });
-        Assert.Throws<InvalidOperationException>(() =>
-            col.Upsert(new Dictionary<string, string?> { ["id"] = "r2" }));
-    }
-
-
-    [Fact]
-    public void Delete_ExistingRow_ReturnsNonNull_AndDecrementsLiveCount()
-    {
-        var col = CreateCollection();
-        col.Upsert(new Dictionary<string, string?> { ["id"] = "r1", ["name"] = "Alice" });
-        var result = col.Delete("r1");
-
-        Assert.NotNull(result);
-        Assert.Equal("r1", result.RowId);
-        Assert.Equal("Alice", result.PreviousValues?[1]);
-        Assert.Null(result.NewValues);
-        Assert.Equal(0, col.LiveCount);
-    }
-
-    [Fact]
-    public void Delete_NonExistentRow_ReturnsNull()
-    {
-        var col = CreateCollection();
-        Assert.Null(col.Delete("ghost"));
-    }
-
-    [Fact]
-    public void Delete_ThenGetRowId_ReturnsNull()
-    {
-        var col = CreateCollection();
-        var r = col.Upsert(new Dictionary<string, string?> { ["id"] = "r1" });
-        col.Delete("r1");
-        Assert.Null(col.GetRowId(r.Index));
-    }
-
-
-    [Fact]
-    public void GetRow_ReturnsAllFields()
-    {
-        var col = CreateCollection();
-        var r = col.Upsert(new Dictionary<string, string?> { ["id"] = "r1", ["name"] = "Alice", ["score"] = "42" });
-        var row = col.GetRow(r.Index);
-
-        Assert.Equal("r1", row["id"]);
-        Assert.Equal("Alice", row["name"]);
-        Assert.Equal("42", row["score"]);
-    }
-
-    [Fact]
-    public void IsLive_ReturnsTrueForInsertedRow()
-    {
-        var col = CreateCollection();
-        var r = col.Upsert(new Dictionary<string, string?> { ["id"] = "r1" });
-        Assert.True(col.IsLive(r.Index));
-    }
-
-    [Fact]
-    public void IsLive_ReturnsFalseAfterDelete()
-    {
-        var col = CreateCollection();
-        var r = col.Upsert(new Dictionary<string, string?> { ["id"] = "r1" });
-        col.Delete("r1");
-        Assert.False(col.IsLive(r.Index));
-    }
-
-
-    [Fact]
-    public void GetAllLiveIndexes_ReturnsOnlyLiveRows()
-    {
-        var col = CreateCollection();
-        col.Upsert(new Dictionary<string, string?> { ["id"] = "r1" });
-        col.Upsert(new Dictionary<string, string?> { ["id"] = "r2" });
+        col.AddOrUpdate("r1", new Dictionary<string, string?> { ["name"] = "Alice" });
+        col.AddOrUpdate("r2", new Dictionary<string, string?> { ["name"] = "Bob" });
         col.Delete("r1");
 
         var live = col.GetAllLiveIndexes();
+
         Assert.Single(live);
         Assert.Equal("r2", live[0].rowId);
     }
 
-
     [Fact]
-    public void TryGetIndex_FindsInsertedRow()
+    public void GetRow_ReturnsAllSchemaFields()
     {
         var col = CreateCollection();
-        var r = col.Upsert(new Dictionary<string, string?> { ["id"] = "r1" });
-        Assert.True(col.TryGetIndex("r1", out var index));
-        Assert.Equal(r.Index, index);
-    }
+        var row = col.AddOrUpdate("r1", new Dictionary<string, string?> { ["name"] = "Alice", ["score"] = "42" });
 
-    [Fact]
-    public void TryGetIndex_ReturnsFalseAfterDelete()
-    {
-        var col = CreateCollection();
-        col.Upsert(new Dictionary<string, string?> { ["id"] = "r1" });
-        col.Delete("r1");
-        Assert.False(col.TryGetIndex("r1", out _));
+        var values = col.GetRow(row.Index);
+
+        Assert.Equal("r1", values["key"]);
+        Assert.Equal("Alice", values["name"]);
+        Assert.Equal("42", values["score"]);
     }
 }

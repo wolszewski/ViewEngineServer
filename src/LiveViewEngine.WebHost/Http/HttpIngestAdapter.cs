@@ -51,7 +51,12 @@ public static class HttpIngestAdapter
         }
         else
         {
-            command = MapUpsertCommand(dto);
+            if (!TryMapUpsertCommand(dto, out var upsert, out var error))
+            {
+                return (IngestResult.Fail(error!), null);
+            }
+
+            command = upsert;
         }
 
         var result = await engine.IngestAsync(command, ct);
@@ -97,8 +102,12 @@ public static class HttpIngestAdapter
         return (result, null);
     }
 
-    private static UpsertRowCommand MapUpsertCommand(IngestRequestDto dto)
+    private static bool TryMapUpsertCommand(
+        IngestRequestDto dto,
+        out UpsertRowCommand command,
+        out string? error)
     {
+        error = null;
         var fields = new Dictionary<string, string?>();
         if (dto.Fields is not null)
         {
@@ -107,10 +116,29 @@ public static class HttpIngestAdapter
                 fields[key] = element.ValueKind == JsonValueKind.Null ? null : element.GetString() ?? element.GetRawText();
             }
         }
-        return new UpsertRowCommand
+
+        var rowKey = dto.PrimaryKeyValue;
+        if (string.IsNullOrWhiteSpace(rowKey))
+        {
+            if (!fields.TryGetValue("key", out rowKey) || string.IsNullOrWhiteSpace(rowKey))
+            {
+                fields.TryGetValue("id", out rowKey);
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(rowKey))
+        {
+            command = null!;
+            error = "'primaryKeyValue' is required for upsert when fields do not contain 'key'.";
+            return false;
+        }
+
+        command = new UpsertRowCommand
         {
             CollectionId = dto.CollectionId!,
+            Key = rowKey,
             Fields = fields
         };
+        return true;
     }
 }
