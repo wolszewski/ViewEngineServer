@@ -16,7 +16,7 @@ public sealed class CollectionStore : ICollectionStore
     public bool TryCreate(CollectionSchema schema)
     {
         var col = new RowCollection(schema);
-        return _collections.TryAdd(schema.CollectionId, col);
+        return _collections.TryAdd(schema.CollectionName, col);
     }
 
     public bool TryGet(string collectionId, out RowCollection? collection)

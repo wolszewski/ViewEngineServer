@@ -3,9 +3,6 @@ namespace LiveViewEngine.Core;
 public sealed class RowCollection
 {
     private readonly List<string?[]> _rows;
-    private readonly List<string?> _indexToRowId = new();
-    private readonly Dictionary<string, int> _rowIdToIndex = new();
-    private int _nextIndex;
     private int _liveCount;
     public CollectionSchema Schema { get; }
 
@@ -19,7 +16,7 @@ public sealed class RowCollection
 
     public MutationInfo Upsert(IReadOnlyDictionary<string, string?> fields)
     {
-        var pkName = Schema.PrimaryKeyField.Name;
+        var pkName = Schema.PrimaryKey.Name;
         if (!fields.TryGetValue(pkName, out var rowId) || rowId is null)
         {
             throw new ArgumentException($"Primary key field '{pkName}' is required.");
@@ -29,25 +26,16 @@ public sealed class RowCollection
         int index;
         string?[]? previousValues = null;
 
-        if (_rowIdToIndex.TryGetValue(rowId, out index))
+        if (Schema.TryGetIndex(rowId, out index))
         {
             isNew = false;
             previousValues = (string?[])_rows[index].Clone();
         }
         else
         {
-            if (_nextIndex >= Schema.Capacity)
-            {
-                throw new InvalidOperationException(
-                    $"Collection '{Schema.CollectionId}' is at capacity ({Schema.Capacity}). " +
-                    "Consider deleting stale rows or increasing the capacity when creating the collection.");
-            }
-
-            index = _nextIndex++;
+            index = Schema.AddRowId(rowId);
             isNew = true;
             _liveCount++;
-            _rowIdToIndex[rowId] = index;
-            _indexToRowId.Add(rowId);
             _rows.Add(new string?[Schema.Fields.Count]);
         }
 
@@ -66,7 +54,7 @@ public sealed class RowCollection
 
     public MutationInfo? Delete(string rowId)
     {
-        if (!_rowIdToIndex.TryGetValue(rowId, out var index))
+        if (!Schema.TryGetIndex(rowId, out var index))
         {
             return null;
         }
@@ -78,8 +66,7 @@ public sealed class RowCollection
             row[i] = null;
         }
 
-        _rowIdToIndex.Remove(rowId);
-        _indexToRowId[index] = null;
+        Schema.RemoveRowId(rowId, index);
         _liveCount--;
 
         return new MutationInfo(rowId, index, false, previousValues, null);
@@ -87,30 +74,16 @@ public sealed class RowCollection
 
     public string? GetValue(int index, int fieldIndex)
     {
-        return index >= 0 && index < _nextIndex ? _rows[index][fieldIndex] : null;
+        return index >= 0 && index < _rows.Count ? _rows[index][fieldIndex] : null;
     }
 
-    public bool IsLive(int index) =>
-        index >= 0 && index < _nextIndex && _indexToRowId[index] is not null;
+    public bool IsLive(int index) => Schema.IsLiveIndex(index);
 
-    public string? GetRowId(int index) =>
-        index < _nextIndex ? _indexToRowId[index] : null;
+    public string? GetRowId(int index) => Schema.GetRowId(index);
 
-    public bool TryGetIndex(string rowId, out int index) =>
-        _rowIdToIndex.TryGetValue(rowId, out index);
+    public bool TryGetIndex(string rowId, out int index) => Schema.TryGetIndex(rowId, out index);
 
-    public IReadOnlyList<(int index, string rowId)> GetAllLiveIndexes()
-    {
-        var list = new List<(int, string)>(_liveCount);
-        for (int i = 0; i < _nextIndex; i++)
-        {
-            if (_indexToRowId[i] is { } id)
-            {
-                list.Add((i, id));
-            }
-        }
-        return list;
-    }
+    public IReadOnlyList<(int index, string rowId)> GetAllLiveIndexes() => Schema.GetAllLiveIndexes();
 
     public IReadOnlyDictionary<string, string?> GetRow(int index)
     {

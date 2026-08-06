@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace ViewEngineServer.WebApp.Http;
+namespace ViewEngineServer.WebApp.Http.Dto;
 
 public sealed class IngestRequestDto
 {
