@@ -12,7 +12,7 @@ public sealed class RowCollection
         Schema = schema;
     }
 
-    public MutationInfo AddOrUpdate(string key, IReadOnlyCollection<KeyValuePair<string, string?>> fieldChanges)
+    public MutationInfo AddOrUpdate(string key, IReadOnlyDictionary<string, string?> fieldChanges)
     {
         if (string.IsNullOrWhiteSpace(key))
         {

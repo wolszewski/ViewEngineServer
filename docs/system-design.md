@@ -14,7 +14,8 @@ The design is inspired by [Lightstreamer](https://lightstreamer.com/): a server-
 ┌──────────────────────────────────────────────────────┐
 │                    ViewEngineServer                   │
 │                                                       │
-│  HTTP /ingest          WebSocket /ws                  │
+│  HTTP /collections/{collectionName}/ingest            │
+│                         WebSocket /ws                  │
 │       │                     │                         │
 │       ▼                     ▼                         │
 │  IViewEngine ◄──────── ViewEngine                     │
@@ -66,7 +67,7 @@ Orchestrates the full ingest-to-delta pipeline. Serialises per-collection mutati
 ### Ingest (upsert / delete)
 
 ```
-HTTP POST /ingest
+HTTP POST /collections/{collectionName}/ingest
   → HttpIngestAdapter (JSON → IngestCommand)
   → ViewEngine.IngestAsync
       → RowCollection.Upsert / Delete   (write lock)
@@ -102,6 +103,27 @@ WebSocket changeViewport message
 ---
 
 ## Wire format (current and intended)
+
+### Current ingest payload constraints
+
+`POST /collections/{collectionName}/ingest` currently supports only string fields:
+
+```json
+{
+  "operation": "upsert",
+  "primaryKeyValue": "o42",
+  "fields": {
+    "customer": "Alice",
+    "amount": "99.5",
+    "status": "open"
+  }
+}
+```
+
+- `collectionName` comes from route path parameter (`/collections/{collectionName}/ingest`).
+- `fields` must be `Dictionary<string, string?>` (`string` or `null` values only).
+- No numeric/boolean/object/array coercion is performed during ingest.
+- `primaryKeyValue` is preferred for row key; if omitted, `"key"`/`"id"` from `fields` is used.
 
 ### Current: JSON delta events
 

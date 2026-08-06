@@ -27,8 +27,7 @@ public sealed class ViewEngine(ICollectionStore store, IOutboundPublisher publis
                 CreateCollectionCommand create => HandleCreateCollection(create),
                 UpsertRowCommand upsert => await HandleUpsertAsync(upsert, ct),
                 DeleteRowCommand delete => await HandleDeleteAsync(delete, ct),
-                _ => IngestResult.Fail(
-                    $"Unknown command type '{command.GetType().Name}'.")
+                _ => IngestResult.Fail($"Unknown command type '{command.GetType().Name}'.")
             };
         }
         catch (Exception ex)

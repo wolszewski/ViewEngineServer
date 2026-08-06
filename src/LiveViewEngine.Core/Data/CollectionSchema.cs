@@ -40,16 +40,32 @@ public sealed class CollectionSchema
     }
     
     public IReadOnlyCollection<KeyValuePair<int, string?>> MapToColumnChanges(
-        IReadOnlyCollection<KeyValuePair<string, string?>> fieldValues)
+        IReadOnlyDictionary<string, string?> fieldValues)
     {
-        var mapped = new List<KeyValuePair<int, string?>>(fieldValues.Count);
+        if (fieldValues.Count == 0)
+        {
+            return Array.Empty<KeyValuePair<int, string?>>();
+        }
+
+        var mapped = new KeyValuePair<int, string?>[fieldValues.Count];
+        var index = 0;
         foreach (var (fieldName, value) in fieldValues)
         {
-            var fieldIndex = GetFieldIndex(fieldName);
-            if (fieldIndex >= 0)
+            if (!_fieldNameToIndex.TryGetValue(fieldName, out var fieldIndex))
             {
-                mapped.Add(new KeyValuePair<int, string?>(fieldIndex, value));
+                throw new ArgumentException(
+                    $"Unknown field '{fieldName}' for collection '{CollectionName}'.",
+                    nameof(fieldValues));
             }
+
+            if (fieldIndex == PrimaryKeyIndex)
+            {
+                throw new ArgumentException(
+                    $"Field '{fieldName}' is a primary key and cannot be updated.",
+                    nameof(fieldValues));
+            }
+
+            mapped[index++] = new KeyValuePair<int, string?>(fieldIndex, value);
         }
 
         return mapped;

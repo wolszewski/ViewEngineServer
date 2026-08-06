@@ -1,7 +1,6 @@
 using System.Text.Json;
 using LiveViewEngine.Core;
 using LiveViewEngine.Core.Data;
-using ViewEngineServer.WebApp.Http.Dto;
 
 namespace ViewEngineServer.WebApp.Http;
 
@@ -13,8 +12,13 @@ public static class HttpIngestAdapter
     };
 
     public static async Task<(IngestResult result, string? validationError)> HandleIngestAsync(
-        HttpRequest request, IViewEngine engine, CancellationToken ct)
+        string collectionName, HttpRequest request, IViewEngine engine, CancellationToken ct)
     {
+        if (string.IsNullOrWhiteSpace(collectionName))
+        {
+            return (IngestResult.Fail("'collectionName' route value is required."), null);
+        }
+
         IngestRequestDto? dto;
         try
         {
@@ -30,11 +34,6 @@ public static class HttpIngestAdapter
             return (IngestResult.Fail("Request body is required."), null);
         }
 
-        if (string.IsNullOrWhiteSpace(dto.CollectionId))
-        {
-            return (IngestResult.Fail("'collectionId' is required."), null);
-        }
-
         IngestCommand command;
         if (dto.Operation.Equals("delete", StringComparison.OrdinalIgnoreCase))
         {
@@ -45,13 +44,13 @@ public static class HttpIngestAdapter
 
             command = new DeleteRowCommand
             {
-                CollectionId = dto.CollectionId,
+                CollectionId = collectionName,
                 Key = dto.PrimaryKeyValue
             };
         }
         else
         {
-            if (!TryMapUpsertCommand(dto, out var upsert, out var error))
+            if (!TryMapUpsertCommand(collectionName, dto, out var upsert, out var error))
             {
                 return (IngestResult.Fail(error!), null);
             }
@@ -82,7 +81,7 @@ public static class HttpIngestAdapter
 
         if (string.IsNullOrWhiteSpace(request.CollectionName))
         {
-            return (IngestResult.Fail("'collectionId' is required."), null);
+            return (IngestResult.Fail("'collectionName' is required."), null);
         }
 
         if (request.Fields.Count == 0)
@@ -103,19 +102,15 @@ public static class HttpIngestAdapter
     }
 
     private static bool TryMapUpsertCommand(
+        string collectionName,
         IngestRequestDto dto,
         out UpsertRowCommand command,
         out string? error)
     {
         error = null;
-        var fields = new Dictionary<string, string?>();
-        if (dto.Fields is not null)
-        {
-            foreach (var (key, element) in dto.Fields)
-            {
-                fields[key] = element.ValueKind == JsonValueKind.Null ? null : element.GetString() ?? element.GetRawText();
-            }
-        }
+        var fields = dto.Fields is null
+            ? new Dictionary<string, string?>()
+            : new Dictionary<string, string?>(dto.Fields);
 
         var rowKey = dto.PrimaryKeyValue;
         if (string.IsNullOrWhiteSpace(rowKey))
@@ -133,9 +128,12 @@ public static class HttpIngestAdapter
             return false;
         }
 
+        fields.Remove("key");
+        fields.Remove("id");
+
         command = new UpsertRowCommand
         {
-            CollectionId = dto.CollectionId!,
+            CollectionId = collectionName,
             Key = rowKey,
             Fields = fields
         };
