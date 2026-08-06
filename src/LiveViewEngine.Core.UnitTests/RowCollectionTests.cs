@@ -68,19 +68,36 @@ public class RowCollectionTests
         var live = col.GetAllLiveIndexes();
 
         Assert.Single(live);
-        Assert.Equal("r2", live[0].rowId);
+        Assert.Contains(live, pair => pair.Key == "r2");
     }
 
     [Fact]
-    public void GetRow_ReturnsAllSchemaFields()
+    public void GetAllLiveIndexes_ReturnsAllLiveRows()
+    {
+        var col = CreateCollection();
+        col.AddOrUpdate("r1", new Dictionary<string, string?> { ["name"] = "Alice" });
+        col.AddOrUpdate("r2", new Dictionary<string, string?> { ["name"] = "Bob" });
+        col.Delete("r1");
+        col.AddOrUpdate("r3", new Dictionary<string, string?> { ["name"] = "Carol" });
+
+        var live = col.GetAllLiveIndexes();
+
+        Assert.Equal(2, live.Count);
+        var ids = live.Select(x => x.Key).ToHashSet();
+        Assert.Contains("r2", ids);
+        Assert.Contains("r3", ids);
+    }
+
+    [Fact]
+    public void GetRowValues_ReturnsStoredRowBuffer()
     {
         var col = CreateCollection();
         var row = col.AddOrUpdate("r1", new Dictionary<string, string?> { ["name"] = "Alice", ["score"] = "42" });
 
-        var values = col.GetRow(row.Index);
+        var values = col.GetRowValues(row.Index);
 
-        Assert.Equal("r1", values["key"]);
-        Assert.Equal("Alice", values["name"]);
-        Assert.Equal("42", values["score"]);
+        Assert.Equal("r1", values[0]);
+        Assert.Equal("Alice", values[1]);
+        Assert.Equal("42", values[2]);
     }
 }

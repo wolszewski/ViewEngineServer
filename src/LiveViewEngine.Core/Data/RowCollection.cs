@@ -1,16 +1,11 @@
 namespace LiveViewEngine.Core.Data;
 
-public sealed class RowCollection
+public sealed class RowCollection(CollectionSchema schema)
 {
     private readonly List<string?[]?> _rows = new();
     private readonly Dictionary<string, int> _rowKeyToIndex = new();
     private readonly Stack<int> _freeIndexes = new();
-    public CollectionSchema Schema { get; }
-
-    public RowCollection(CollectionSchema schema)
-    {
-        Schema = schema;
-    }
+    public CollectionSchema Schema { get; } = schema;
 
     public MutationInfo AddOrUpdate(string key, IReadOnlyDictionary<string, string?> fieldChanges)
     {
@@ -98,28 +93,14 @@ public sealed class RowCollection
         return _rows[index]?[CollectionSchema.PrimaryKeyIndex];
     }
 
-    public IReadOnlyList<(int index, string rowId)> GetAllLiveIndexes()
+    public ICollection<KeyValuePair<string, int>> GetAllLiveIndexes()
     {
-        var live = new List<(int, string)>(_rowKeyToIndex.Count);
-        for (int i = 0; i < _rows.Count; i++)
-        {
-            if (_rows[i]?[Schema.PrimaryKey.FieldIndex] is { } rowId)
-            {
-                live.Add((i, rowId));
-            }
-        }
-
-        return live;
+        return _rowKeyToIndex;
     }
 
-    public IReadOnlyDictionary<string, string?> GetRow(int index)
+    public string?[] GetRowValues(int index)
     {
-        var row = new Dictionary<string, string?>(Schema.Fields.Count);
-        for (int i = 0; i < Schema.Fields.Count; i++)
-        {
-            row[Schema.Fields[i].Name] = GetValue(index, i);
-        }
-
-        return row;
+        var source = _rows[index];
+        return source ?? throw new InvalidOperationException($"Row at index {index} is deleted.");
     }
 }

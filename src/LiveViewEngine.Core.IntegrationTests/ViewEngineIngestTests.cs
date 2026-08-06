@@ -1,5 +1,6 @@
 using LiveViewEngine.Core;
 using LiveViewEngine.Core.Data;
+using LiveViewEngine.Core.Output;
 using LiveViewEngine.Core.Views;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -11,8 +12,9 @@ public class ViewEngineIngestTests
     {
         var store = new CollectionStore();
         var publisher = new CapturingPublisher();
+        var rowOutputFormatter = new JsonDictionaryRowOutputFormatter();
         var logger = NullLogger<ViewEngine>.Instance;
-        var engine = new ViewEngine(store, publisher, logger);
+        var engine = new ViewEngine(store, publisher, rowOutputFormatter, logger);
         return (engine, publisher, store);
     }
 

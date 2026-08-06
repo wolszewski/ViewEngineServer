@@ -1,4 +1,5 @@
 using LiveViewEngine.Core.Data;
+using LiveViewEngine.Core.Output;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -9,6 +10,7 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddLiveViewEngineCore(this IServiceCollection services)
     {
         services.AddSingleton<ICollectionStore, CollectionStore>();
+        services.AddSingleton<IRowOutputFormatter, JsonDictionaryRowOutputFormatter>();
         services.AddSingleton<IViewEngine, ViewEngine>();
         return services;
     }

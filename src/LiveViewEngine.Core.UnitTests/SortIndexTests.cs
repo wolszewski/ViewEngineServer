@@ -98,4 +98,19 @@ public class SortIndexTests
 
         Assert.Equal(2, indexes.Length);
     }
+
+    [Fact]
+    public void GetPageIndexes_EqualValues_AreOrderedByIndex()
+    {
+        var (col, idx, scoreFieldIndex, _) = CreateSortedByScore(true);
+        Upsert(col, idx, scoreFieldIndex, "a", "10");
+        Upsert(col, idx, scoreFieldIndex, "b", "10");
+        Upsert(col, idx, scoreFieldIndex, "c", "10");
+
+        var indexes = idx.GetPageIndexes(0, 10);
+
+        Assert.Equal(3, indexes.Length);
+        Assert.True(indexes[0] < indexes[1]);
+        Assert.True(indexes[1] < indexes[2]);
+    }
 }

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using LiveViewEngine.Core.Data;
+using LiveViewEngine.Core.Output;
 using LiveViewEngine.Core.Views;
 using Microsoft.Extensions.Logging;
 
@@ -12,7 +13,11 @@ public interface IViewEngine
     Task<IReadOnlyList<DeltaEvent>> SubscribeAsync(SubscriptionCommand command, CancellationToken ct = default);
 }
 
-public sealed class ViewEngine(ICollectionStore store, IOutboundPublisher publisher, ILogger<ViewEngine> logger)
+public sealed class ViewEngine(
+    ICollectionStore store,
+    IOutboundPublisher publisher,
+    IRowOutputFormatter rowOutputFormatter,
+    ILogger<ViewEngine> logger)
     : IViewEngine
 {
     private readonly ConcurrentDictionary<ViewKey, SharedView> _sharedViews = new();
@@ -181,7 +186,7 @@ public sealed class ViewEngine(ICollectionStore store, IOutboundPublisher publis
                 {
                     ViewId = viewId,
                     Position = i,
-                    Row = collection.GetRow(newIndexes[i])
+                    Row = rowOutputFormatter.FormatRow(collection, newIndexes[i])
                 });
             }
         }
@@ -278,12 +283,12 @@ public sealed class ViewEngine(ICollectionStore store, IOutboundPublisher publis
         return rowIds;
     }
 
-    private static IReadOnlyList<IReadOnlyDictionary<string, string?>> BuildRows(RowCollection collection, int[] indexes)
+    private IReadOnlyList<IReadOnlyDictionary<string, string?>> BuildRows(RowCollection collection, int[] indexes)
     {
         var rows = new List<IReadOnlyDictionary<string, string?>>(indexes.Length);
         for (int i = 0; i < indexes.Length; i++)
         {
-            rows.Add(collection.GetRow(indexes[i]));
+            rows.Add(rowOutputFormatter.FormatRow(collection, indexes[i]));
         }
 
         return rows;

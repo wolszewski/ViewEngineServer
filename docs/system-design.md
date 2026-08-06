@@ -127,7 +127,8 @@ WebSocket changeViewport message
 
 ### Current: JSON delta events
 
-Delta events are JSON-serialised using `System.Text.Json` polymorphic dispatch over WebSocket. Each event carries a `type` discriminator.
+Delta events are JSON-serialised using `System.Text.Json` polymorphic dispatch over WebSocket. Each event carries a `type`
+discriminator. This JSON shape is primarily the current debug/inspection transport while the wire format evolves.
 
 **Snapshot** (sent on subscribe or viewport change):
 ```json
@@ -162,9 +163,9 @@ Delta events are JSON-serialised using `System.Text.Json` polymorphic dispatch o
 
 All field values are `string | null`. The server formats each value using the column's native type (e.g. `decimal` → invariant decimal string, `DateTime` → ISO 8601 `"O"` format, `bool` → `"true"` / `"false"`).
 
-### Intended: Lightstreamer-style pipe-delimited encoding
+### Target: Lightstreamer-style pipe-delimited encoding
 
-The intended wire optimisation (not yet implemented) is to send rows and updates as pipe-delimited strings, matching the Lightstreamer EXT format:
+The target wire format is to send rows and updates as pipe-delimited strings, matching the Lightstreamer EXT format:
 
 ```
 val1|val2||val4

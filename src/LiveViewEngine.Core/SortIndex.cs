@@ -21,8 +21,9 @@ public sealed class SortIndex
         _sortedIndexes = new List<int>(allRows.Count);
         _indexValues = new Dictionary<int, string?>(allRows.Count);
 
-        foreach (var (index, _) in allRows)
+        foreach (var liveRow in allRows)
         {
+            var index = liveRow.Value;
             var val = collection.GetValue(index, fieldIndex);
             _indexValues[index] = val;
             _sortedIndexes.Add(index);
@@ -167,8 +168,16 @@ public sealed class SortIndex
         return lo;
     }
 
-    private int CompareByIndex(int a, int b) =>
-        CompareValues(_indexValues[a], _indexValues[b]);
+    private int CompareByIndex(int a, int b)
+    {
+        var valueCompare = CompareValues(_indexValues[a], _indexValues[b]);
+        if (valueCompare != 0)
+        {
+            return valueCompare;
+        }
+
+        return a.CompareTo(b);
+    }
 
     private int CompareValues(string? a, string? b)
     {
