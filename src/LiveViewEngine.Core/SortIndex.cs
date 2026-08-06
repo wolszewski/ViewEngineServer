@@ -1,5 +1,8 @@
+using LiveViewEngine.Core.Data;
+
 namespace LiveViewEngine.Core;
 
+//TODO: rewrite to BTree or RBTree
 public sealed class SortIndex
 {
     private readonly RowCollection _collection;

@@ -1,3 +1,5 @@
+using LiveViewEngine.Core.Data;
+
 namespace LiveViewEngine.Core;
 
 
@@ -23,10 +25,11 @@ public sealed class CreateCollectionCommand : IngestCommand
 
 public sealed class UpsertRowCommand : IngestCommand
 {
+    public required string Key { get; init; }
     public required IReadOnlyDictionary<string, string?> Fields { get; init; }
 }
 
 public sealed class DeleteRowCommand : IngestCommand
 {
-    public required string PrimaryKeyValue { get; init; }
+    public required string Key { get; init; }
 }

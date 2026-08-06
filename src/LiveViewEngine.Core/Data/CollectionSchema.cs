@@ -1,74 +1,46 @@
-namespace LiveViewEngine.Core;
+using System.Collections.Frozen;
 
-public sealed record FieldDefinition(string Name, int Index);
+namespace LiveViewEngine.Core.Data;
+
+public sealed record FieldDefinition(string Name, int FieldIndex);
 
 public sealed class CollectionSchema
 {
-    private readonly List<string?> _indexToRowId = new();
-    private readonly Dictionary<string, int> _rowIdToIndex = new();
-    public string CollectionName { get; private set; }
+    private readonly FrozenDictionary<string, int> _fieldNameToIndex;
+
+    public string CollectionName { get; }
     public IReadOnlyList<FieldDefinition> Fields { get; private set; }
-    public FieldDefinition PrimaryKey { get; private set; }
-    
-    public CollectionSchema(string collectionName, IList<FieldDefinition> fields, string primaryKey)
+    public FieldDefinition PrimaryKey { get; }
+    public  const int PrimaryKeyIndex = 0;
+
+    public CollectionSchema(string collectionName, IList<string> fieldNames)
     {
         CollectionName = collectionName;
-        Fields = fields.ToList().AsReadOnly();
-        PrimaryKey = Fields.First(f => f.Name == primaryKey);
+        var fields = MapFieldDefinitions(fieldNames);
+        Fields = fields;
+        PrimaryKey = fields[0];
+        _fieldNameToIndex = Fields.ToFrozenDictionary(f => f.Name, f => f.FieldIndex);
+    }
+
+    private static FieldDefinition[] MapFieldDefinitions(IList<string> fieldNames)
+    {
+        var fields = new FieldDefinition[fieldNames.Count + 1];
+        fields[0] = new FieldDefinition("key", 0);
+        for (int i = 1; i <= fieldNames.Count; i++)
+        {
+            fields[i - 1] = new FieldDefinition(fieldNames[i - 1], i);
+        }
+
+        return fields;
     }
 
     public int GetFieldIndex(string name)
     {
-        for (int i = 0; i < Fields.Count; i++)
-        {
-            if (Fields[i].Name == name)
-            {
-                return i;
-            }
-        }
-
-        return -1;
+        return _fieldNameToIndex.GetValueOrDefault(name, -1);
     }
-
-    public bool TryGetIndex(string rowId, out int index)
-    {
-        return _rowIdToIndex.TryGetValue(rowId, out index);
-    }
-
-    public int AddRowId(string rowId)
-    {
-        var index = _indexToRowId.Count;
-        _indexToRowId.Add(rowId);
-        _rowIdToIndex[rowId] = index;
-        return index;
-    }
-
-    public void RemoveRowId(string rowId, int index)
-    {
-        _rowIdToIndex.Remove(rowId);
-        _indexToRowId[index] = null;
-    }
-
-    public string? GetRowId(int index)
-    {
-        return index >= 0 && index < _indexToRowId.Count ? _indexToRowId[index] : null;
-    }
-
-    public bool IsLiveIndex(int index)
-    {
-        return index >= 0 && index < _indexToRowId.Count && _indexToRowId[index] is not null;
-    }
-
-    public IReadOnlyList<(int index, string rowId)> GetAllLiveIndexes()
-    {
-        var list = new List<(int, string)>(_rowIdToIndex.Count);
-        for (int i = 0; i < _indexToRowId.Count; i++)
-        {
-            if (_indexToRowId[i] is { } rowId)
-            {
-                list.Add((i, rowId));
-            }
-        }
-        return list;
-    }
+    
+    public IReadOnlyCollection<KeyValuePair<int, string?>> MapToColumnChanges(IReadOnlyCollection<KeyValuePair<string, string?>> fieldValues) =>
+        fieldValues
+            .Select(x=> new KeyValuePair<int,string?>(GetFieldIndex(x.Key), x.Value))
+            .ToArray();
 }

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using LiveViewEngine.Core;
+using LiveViewEngine.Core.Data;
 using ViewEngineServer.WebApp.Http.Dto;
 
 namespace ViewEngineServer.WebApp.Http;
@@ -45,7 +46,7 @@ public static class HttpIngestAdapter
             command = new DeleteRowCommand
             {
                 CollectionId = dto.CollectionId,
-                PrimaryKeyValue = dto.PrimaryKeyValue
+                Key = dto.PrimaryKeyValue
             };
         }
         else
@@ -57,55 +58,42 @@ public static class HttpIngestAdapter
         return (result, null);
     }
 
-    public static async Task<(IngestResult result, string? validationError)> HandleCreateCollectionAsync(
-        HttpRequest request, IViewEngine engine, CancellationToken ct)
+    public static async Task<(IngestResult result, string? validationError)> HandleCreateCollectionAsync(HttpRequest httpRequest, IViewEngine engine, CancellationToken ct)
     {
-        CreateCollectionRequestDto? dto;
+        CreateCollectionRequest? request;
         try
         {
-            dto = await request.ReadFromJsonAsync<CreateCollectionRequestDto>(JsonOptions, ct);
+            request = await httpRequest.ReadFromJsonAsync<CreateCollectionRequest>(JsonOptions, ct);
         }
         catch (JsonException ex)
         {
             return (IngestResult.Fail("Invalid JSON body."), ex.Message);
         }
 
-        if (dto is null)
+        if (request is null)
         {
             return (IngestResult.Fail("Request body is required."), null);
         }
 
-        if (string.IsNullOrWhiteSpace(dto.CollectionId))
+        if (string.IsNullOrWhiteSpace(request.CollectionName))
         {
             return (IngestResult.Fail("'collectionId' is required."), null);
         }
 
-        if (dto.Fields.Count == 0)
+        if (request.Fields.Count == 0)
         {
             return (IngestResult.Fail("At least one field must be defined."), null);
         }
 
-        if (!dto.Fields.Any(f => f.IsPrimaryKey))
-        {
-            return (IngestResult.Fail("Exactly one field must be marked 'isPrimaryKey'."), null);
-        }
+        var schema = new CollectionSchema(request.CollectionName, request.Fields);
 
-        var schema = new CollectionSchema
+        var command = new CreateCollectionCommand
         {
-            CollectionId = dto.CollectionId,
-            Capacity = dto.Capacity,
-            Fields = dto.Fields.Select(f =>
-                new FieldDefinition(f.Name, f.Type, f.IsPrimaryKey, f.IsSortable, f.IsFilterable))
-                .ToList()
-        };
-
-        var cmd = new CreateCollectionCommand
-        {
-            CollectionId = dto.CollectionId,
+            CollectionId = request.CollectionName,
             Schema = schema
         };
 
-        var result = await engine.IngestAsync(cmd, ct);
+        var result = await engine.IngestAsync(command, ct);
         return (result, null);
     }
 

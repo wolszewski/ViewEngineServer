@@ -1,3 +1,5 @@
+using LiveViewEngine.Core.Data;
+
 namespace LiveViewEngine.Core.UnitTests;
 
 public class RowCollectionTests
@@ -5,7 +7,7 @@ public class RowCollectionTests
     private static RowCollection CreateCollection(int capacity = 100) =>
         new(new CollectionSchema
         {
-            CollectionId = "test",
+            CollectionName = "test",
             Capacity = capacity,
             Fields =
             [

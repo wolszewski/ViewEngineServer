@@ -1,3 +1,5 @@
+using LiveViewEngine.Core.Data;
+
 namespace LiveViewEngine.Core.UnitTests;
 
 public class SortIndexTests
@@ -6,7 +8,7 @@ public class SortIndexTests
     {
         var schema = new CollectionSchema
         {
-            CollectionId = "scores",
+            CollectionName = "scores",
             Fields =
             [
                 new FieldDefinition("id", FieldType.String, IsPrimaryKey: true),
@@ -118,7 +120,7 @@ public class SortIndexTests
     {
         var schema = new CollectionSchema
         {
-            CollectionId = "c",
+            CollectionName = "c",
             Fields =
             [
                 new FieldDefinition("id", FieldType.String, IsPrimaryKey: true),

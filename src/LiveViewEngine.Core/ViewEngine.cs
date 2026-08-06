@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using LiveViewEngine.Core.Data;
 using LiveViewEngine.Core.Views;
 using Microsoft.Extensions.Logging;
 
@@ -59,8 +60,8 @@ public sealed class ViewEngine(ICollectionStore store, IOutboundPublisher publis
                 $"Collection '{command.CollectionId}' already exists.");
         }
 
-        logger.LogInformation("Collection '{CollectionId}' created ({FieldCount} fields, capacity {Capacity}).",
-            command.CollectionId, command.Schema.Fields.Count, command.Schema.Capacity);
+        logger.LogInformation("Collection '{CollectionId}' created ({FieldCount} fields).",
+            command.CollectionId, command.Schema.Fields.Count);
         return IngestResult.Ok();
     }
 
@@ -71,7 +72,7 @@ public sealed class ViewEngine(ICollectionStore store, IOutboundPublisher publis
             return IngestResult.Fail($"Collection '{command.CollectionId}' not found.");
         }
 
-        var mutation = collection.Upsert(command.Fields);
+        var mutation = collection.AddOrUpdate(command.Key, command.Fields);
         await PropagateMutationAsync(collection, mutation, isDelete: false, ct);
         return IngestResult.Ok();
     }
@@ -83,7 +84,7 @@ public sealed class ViewEngine(ICollectionStore store, IOutboundPublisher publis
             return IngestResult.Fail($"Collection '{command.CollectionId}' not found.");
         }
 
-        var mutation = collection.Delete(command.PrimaryKeyValue);
+        var mutation = collection.Delete(command.Key);
         if (mutation is null)
         {
             return IngestResult.Ok();
@@ -96,10 +97,10 @@ public sealed class ViewEngine(ICollectionStore store, IOutboundPublisher publis
     private async Task PropagateMutationAsync(
         RowCollection collection, MutationInfo mutation, bool isDelete, CancellationToken ct)
     {
-        foreach (var kv in _sharedViews)
+        foreach (var entry in _sharedViews)
         {
-            var view = kv.Value;
-            if (view.Key.CollectionId != collection.Schema.CollectionId)
+            var view = entry.Value;
+            if (view.Key.CollectionId != collection.Schema.CollectionName)
             {
                 continue;
             }
@@ -121,40 +122,47 @@ public sealed class ViewEngine(ICollectionStore store, IOutboundPublisher publis
                     continue;
                 }
 
-                var events = BuildDeltas(view, collection, viewport, mutation, isDelete);
+                var newIndexes = view.GetPageIndexes(viewport.StartIndex, viewport.PageSize);
+                var newRowIds = BuildRowIds(newIndexes, collection);
+                var events = BuildDeltas(
+                    view.Key.Id,
+                    collection,
+                    viewport.CurrentRowIds,
+                    mutation,
+                    isDelete,
+                    newIndexes,
+                    newRowIds);
                 if (events.Count == 0)
                 {
                     continue;
                 }
 
-                viewport.CurrentRowIds = GetCurrentRowIds(view, viewport, collection);
+                viewport.CurrentRowIds = newRowIds;
                 await publisher.PublishAsync(connectionId, events, ct);
             }
         }
     }
 
     private IReadOnlyList<DeltaEvent> BuildDeltas(
-        SharedView view,
+        string viewId,
         RowCollection collection,
-        ViewportState viewport,
+        string[] oldRowIds,
         MutationInfo mutation,
-        bool isDelete)
+        bool isDelete,
+        int[] newIndexes,
+        string[] newRowIds)
     {
-        var newIndexes = view.GetPageIndexes(viewport.StartIndex, viewport.PageSize);
-        var newRowIds = newIndexes.Select(i => collection.GetRowId(i) ?? string.Empty).ToArray();
-        var oldRowIds = viewport.CurrentRowIds;
-
-        if (newRowIds.SequenceEqual(oldRowIds))
+        if (RowIdsEqual(newRowIds, oldRowIds))
         {
             if (isDelete)
             {
                 return [];
             }
 
-            return BuildFieldUpdateEvents(view.Key.Id, newIndexes, newRowIds, mutation, collection);
+            return BuildFieldUpdateEvents(viewId, newRowIds, mutation, collection);
         }
 
-        var events = new List<DeltaEvent>();
+        var events = new List<DeltaEvent>(newRowIds.Length + oldRowIds.Length);
         var newSet = new HashSet<string>(newRowIds);
         var oldSet = new HashSet<string>(oldRowIds);
 
@@ -162,7 +170,7 @@ public sealed class ViewEngine(ICollectionStore store, IOutboundPublisher publis
         {
             if (!newSet.Contains(oldRowIds[i]))
             {
-                events.Add(new RowRemoveEvent { ViewId = view.Key.Id, Position = i });
+                events.Add(new RowRemoveEvent { ViewId = viewId, Position = i });
             }
         }
 
@@ -172,14 +180,14 @@ public sealed class ViewEngine(ICollectionStore store, IOutboundPublisher publis
             {
                 events.Add(new RowInsertEvent
                 {
-                    ViewId = view.Key.Id,
+                    ViewId = viewId,
                     Position = i,
                     Row = collection.GetRow(newIndexes[i])
                 });
             }
         }
 
-        var fieldUpdates = BuildFieldUpdateEvents(view.Key.Id, newIndexes, newRowIds, mutation, collection);
+        var fieldUpdates = BuildFieldUpdateEvents(viewId, newRowIds, mutation, collection);
         events.AddRange(fieldUpdates);
 
         return events;
@@ -187,29 +195,40 @@ public sealed class ViewEngine(ICollectionStore store, IOutboundPublisher publis
 
     private static IReadOnlyList<DeltaEvent> BuildFieldUpdateEvents(
         string viewId,
-        int[] indexes,
         string[] rowIds,
         MutationInfo mutation,
         RowCollection collection)
     {
-        if (mutation.IsNew || mutation.PreviousValues is null || mutation.NewValues is null)
+        if (mutation.IsNew || mutation.ChangedColumns is not { Count: > 0 })
         {
             return [];
         }
 
-        int pos = Array.IndexOf(rowIds, mutation.RowId);
+        int pos = -1;
+        for (int i = 0; i < rowIds.Length; i++)
+        {
+            if (rowIds[i] == mutation.RowId)
+            {
+                pos = i;
+                break;
+            }
+        }
+
         if (pos < 0)
         {
             return [];
         }
 
-        var changed = new Dictionary<string, string?>();
-        for (int fi = 0; fi < collection.Schema.Fields.Count; fi++)
+        var fields = collection.Schema.Fields;
+        var changed = new Dictionary<string, string?>(mutation.ChangedColumns.Count);
+        foreach (var (fieldIndex, value) in mutation.ChangedColumns)
         {
-            if (!Equals(mutation.PreviousValues[fi], mutation.NewValues[fi]))
+            if (fieldIndex < 0 || fieldIndex >= fields.Count)
             {
-                changed[collection.Schema.Fields[fi].Name] = mutation.NewValues[fi];
+                continue;
             }
+
+            changed[fields[fieldIndex].Name] = value;
         }
 
         if (changed.Count == 0)
@@ -226,11 +245,49 @@ public sealed class ViewEngine(ICollectionStore store, IOutboundPublisher publis
         }];
     }
 
-    private static string[] GetCurrentRowIds(
-        SharedView view, ViewportState viewport, RowCollection collection)
+    private static bool RowIdsEqual(string[] first, string[] second)
     {
-        var indexes = view.GetPageIndexes(viewport.StartIndex, viewport.PageSize);
-        return indexes.Select(i => collection.GetRowId(i) ?? string.Empty).ToArray();
+        if (ReferenceEquals(first, second))
+        {
+            return true;
+        }
+
+        if (first.Length != second.Length)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < first.Length; i++)
+        {
+            if (first[i] != second[i])
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static string[] BuildRowIds(int[] indexes, RowCollection collection)
+    {
+        var rowIds = new string[indexes.Length];
+        for (int i = 0; i < indexes.Length; i++)
+        {
+            rowIds[i] = collection.GetRowId(indexes[i]) ?? string.Empty;
+        }
+
+        return rowIds;
+    }
+
+    private static IReadOnlyList<IReadOnlyDictionary<string, string?>> BuildRows(RowCollection collection, int[] indexes)
+    {
+        var rows = new List<IReadOnlyDictionary<string, string?>>(indexes.Length);
+        for (int i = 0; i < indexes.Length; i++)
+        {
+            rows.Add(collection.GetRow(indexes[i]));
+        }
+
+        return rows;
     }
 
 
@@ -257,9 +314,7 @@ public sealed class ViewEngine(ICollectionStore store, IOutboundPublisher publis
         _viewports[command.ConnectionId] = viewport;
 
         var indexes = view.GetPageIndexes(command.StartIndex, command.PageSize);
-        viewport.CurrentRowIds = indexes
-            .Select(i => collection.GetRowId(i) ?? string.Empty)
-            .ToArray();
+        viewport.CurrentRowIds = BuildRowIds(indexes, collection);
 
         logger.LogInformation(
             "Client '{ConnectionId}' subscribed to view '{ViewId}' (start={Start}, page={Page}).",
@@ -270,7 +325,7 @@ public sealed class ViewEngine(ICollectionStore store, IOutboundPublisher publis
             ViewId = key.Id,
             TotalCount = view.GetTotalCount(),
             StartIndex = command.StartIndex,
-            Rows = indexes.Select(i => collection.GetRow(i)).ToList()
+            Rows = BuildRows(collection, indexes)
         }];
     }
 
@@ -295,16 +350,14 @@ public sealed class ViewEngine(ICollectionStore store, IOutboundPublisher publis
         viewport.PageSize = command.PageSize;
 
         var indexes = view.GetPageIndexes(command.StartIndex, command.PageSize);
-        viewport.CurrentRowIds = indexes
-            .Select(i => collection.GetRowId(i) ?? string.Empty)
-            .ToArray();
+        viewport.CurrentRowIds = BuildRowIds(indexes, collection);
 
         return [new SnapshotEvent
         {
             ViewId = viewport.ViewKey.Id,
             TotalCount = view.GetTotalCount(),
             StartIndex = command.StartIndex,
-            Rows = indexes.Select(i => collection.GetRow(i)).ToList()
+            Rows = BuildRows(collection, indexes)
         }];
     }
 

@@ -1,3 +1,5 @@
+using LiveViewEngine.Core.Data;
+
 namespace LiveViewEngine.Core.UnitTests;
 
 public class CollectionStoreTests
@@ -5,7 +7,7 @@ public class CollectionStoreTests
     private static CollectionSchema MakeSchema(string id = "col1") =>
         new()
         {
-            CollectionId = id,
+            CollectionName = id,
             Fields = [new FieldDefinition("id", FieldType.String, IsPrimaryKey: true)]
         };
 

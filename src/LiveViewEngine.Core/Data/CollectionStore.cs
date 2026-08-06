@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
 
-namespace LiveViewEngine.Core;
+namespace LiveViewEngine.Core.Data;
 
 public interface ICollectionStore
 {
@@ -21,8 +21,8 @@ public sealed class CollectionStore : ICollectionStore
 
     public bool TryGet(string collectionId, out RowCollection? collection)
     {
-        var found = _collections.TryGetValue(collectionId, out var c);
-        collection = c;
+        var found = _collections.TryGetValue(collectionId, out var rowCollection);
+        collection = rowCollection;
         return found;
     }
 

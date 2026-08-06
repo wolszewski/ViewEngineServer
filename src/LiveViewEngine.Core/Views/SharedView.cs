@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using LiveViewEngine.Core.Data;
 
 namespace LiveViewEngine.Core.Views;
 
@@ -24,7 +25,7 @@ public sealed class SharedView
             : -1;
         if (_sortFieldIndex < 0)
         {
-            _sortFieldIndex = collection.Schema.PrimaryKeyIndex;
+            _sortFieldIndex = collection.Schema.PrimaryKey.FieldIndex;
         }
 
         _filterFieldIndexes = key.Filters.Count > 0

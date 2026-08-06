@@ -1,4 +1,5 @@
 using LiveViewEngine.Core;
+using LiveViewEngine.Core.Data;
 using LiveViewEngine.Core.Views;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -20,7 +21,7 @@ public class ViewEngineIngestTests
     private static CollectionSchema OrdersSchema() =>
         new()
         {
-            CollectionId = "orders",
+            CollectionName = "orders",
             Fields =
             [
                 new FieldDefinition("id", FieldType.String, IsPrimaryKey: true),
