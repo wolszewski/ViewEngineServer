@@ -43,7 +43,7 @@ public class ServiceCollectionExtensionsTests
     {
         public ValueTask PublishAsync(
             string connectionId,
-            IReadOnlyList<DeltaEvent> events,
+            IReadOnlyList<ViewDelta> deltas,
             CancellationToken ct = default)
         {
             return ValueTask.CompletedTask;

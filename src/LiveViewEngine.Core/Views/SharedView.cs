@@ -10,8 +10,7 @@ public sealed class SharedView
     private readonly RowCollection _collection;
     private readonly int _sortFieldIndex;
     private readonly int[] _filterFieldIndexes;
-
-    public SortIndex SortIndex { get; }
+    private readonly SortIndex _sortIndex;
 
     private readonly ConcurrentDictionary<string, bool> _subscribers = new();
 
@@ -32,7 +31,7 @@ public sealed class SharedView
             ? key.Filters.Select(f => collection.Schema.GetFieldIndex(f.FieldName)).ToArray()
             : [];
 
-        SortIndex = new SortIndex(collection, _sortFieldIndex, key.SortAscending);
+        _sortIndex = new SortIndex(collection, _sortFieldIndex, key.SortAscending);
     }
 
     public int SortFieldIndex => _sortFieldIndex;
@@ -45,17 +44,38 @@ public sealed class SharedView
     public bool RemoveSubscriber(string connectionId) =>
         _subscribers.TryRemove(connectionId, out _);
 
-
     public int[] GetPageIndexes(int startIndex, int pageSize) =>
-        SortIndex.GetPageIndexes(startIndex, pageSize, Key.Filters, _filterFieldIndexes);
+        _sortIndex.GetPageIndexes(startIndex, pageSize, Key.Filters, _filterFieldIndexes);
 
     public int GetTotalCount() =>
-        SortIndex.GetCount(Key.Filters, _filterFieldIndexes);
-
+        _sortIndex.GetCount(Key.Filters, _filterFieldIndexes);
 
     public void NotifyUpsert(int index, string? newSortValue) =>
-        SortIndex.OnUpsert(index, newSortValue);
+        _sortIndex.OnUpsert(index, newSortValue);
 
     public void NotifyDelete(int index) =>
-        SortIndex.OnDelete(index);
+        _sortIndex.OnDelete(index);
+
+    public bool SortFieldTouched(IReadOnlyCollection<KeyValuePair<int, string?>>? changedColumns)
+    {
+        if (changedColumns is null) { return false; }
+        foreach (var (col, _) in changedColumns)
+        {
+            if (col == _sortFieldIndex) { return true; }
+        }
+        return false;
+    }
+
+    public bool FilterFieldTouched(IReadOnlyCollection<KeyValuePair<int, string?>>? changedColumns)
+    {
+        if (changedColumns is null || _filterFieldIndexes.Length == 0) { return false; }
+        foreach (var (col, _) in changedColumns)
+        {
+            foreach (var fi in _filterFieldIndexes)
+            {
+                if (col == fi) { return true; }
+            }
+        }
+        return false;
+    }
 }

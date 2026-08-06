@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using LiveViewEngine.Core.Data;
-using LiveViewEngine.Core.Output;
 using LiveViewEngine.Core.Views;
 using Microsoft.Extensions.Logging;
 
@@ -10,17 +9,16 @@ namespace LiveViewEngine.Core;
 public interface IViewEngine
 {
     Task<IngestResult> IngestAsync(IngestCommand command, CancellationToken ct = default);
-    Task<IReadOnlyList<DeltaEvent>> SubscribeAsync(SubscriptionCommand command, CancellationToken ct = default);
+    Task<IReadOnlyList<ViewDelta>> SubscribeAsync(SubscriptionCommand command, CancellationToken ct = default);
 }
 
 public sealed class ViewEngine(
     ICollectionStore store,
     IOutboundPublisher publisher,
-    IRowOutputFormatter rowOutputFormatter,
     ILogger<ViewEngine> logger)
     : IViewEngine
 {
-    private readonly ConcurrentDictionary<ViewKey, SharedView> _sharedViews = new();
+    private readonly ConcurrentDictionary<string, ConcurrentDictionary<ViewKey, SharedView>> _sharedViewsByCollection = new();
     private readonly ConcurrentDictionary<string, ViewportState> _viewports = new();
 
     public async Task<IngestResult> IngestAsync(IngestCommand command, CancellationToken ct = default)
@@ -43,10 +41,10 @@ public sealed class ViewEngine(
         }
     }
 
-    public Task<IReadOnlyList<DeltaEvent>> SubscribeAsync(
+    public Task<IReadOnlyList<ViewDelta>> SubscribeAsync(
         SubscriptionCommand command, CancellationToken ct = default)
     {
-        IReadOnlyList<DeltaEvent> result = command switch
+        IReadOnlyList<ViewDelta> result = command switch
         {
             SubscribeCommand sub => HandleSubscribe(sub),
             ChangeViewportCommand change => HandleChangeViewport(change),
@@ -101,23 +99,67 @@ public sealed class ViewEngine(
     private async Task PropagateMutationAsync(
         RowCollection collection, MutationInfo mutation, bool isDelete, CancellationToken ct)
     {
-        foreach (var entry in _sharedViews)
+        if (!_sharedViewsByCollection.TryGetValue(collection.Schema.CollectionName, out var collectionViews))
+        {
+            return;
+        }
+
+        List<(string ConnectionId, IReadOnlyList<ViewDelta> Deltas)>? pendingPublishes = null;
+        foreach (var entry in collectionViews)
         {
             var view = entry.Value;
-            if (view.Key.CollectionId != collection.Schema.CollectionName)
-            {
-                continue;
-            }
+
+            bool sortFieldChanged = mutation.IsNew || view.SortFieldTouched(mutation.ChangedColumns);
+            bool filterFieldChanged = view.FilterFieldTouched(mutation.ChangedColumns);
+            bool needsFullRecompute = isDelete || mutation.IsNew || sortFieldChanged || filterFieldChanged;
 
             if (isDelete)
             {
                 view.NotifyDelete(mutation.Index);
             }
-            else
+            else if (sortFieldChanged)
             {
                 var sortValue = collection.GetValue(mutation.Index, view.SortFieldIndex);
                 view.NotifyUpsert(mutation.Index, sortValue);
             }
+
+            if (!needsFullRecompute)
+            {
+                // Fast path: sort and filter are unaffected — emit RowUpdate only for subscribers
+                // whose viewport already contains this row handle.
+                if (mutation.ChangedColumns is not { Count: > 0 })
+                {
+                    continue;
+                }
+
+                foreach (var connectionId in view.Subscribers)
+                {
+                    if (!_viewports.TryGetValue(connectionId, out var viewport))
+                    {
+                        continue;
+                    }
+
+                    int pos = IndexOfHandle(viewport.CurrentHandles, mutation.Index);
+                    if (pos < 0)
+                    {
+                        continue;
+                    }
+
+                    pendingPublishes ??= [];
+                    pendingPublishes.Add((connectionId, [new RowUpdateDelta
+                    {
+                        ViewId = view.Key.Id,
+                        Schema = collection.Schema,
+                        RowId = mutation.RowId,
+                        Position = pos,
+                        ChangedColumns = mutation.ChangedColumns!
+                    }]));
+                }
+
+                continue;
+            }
+
+            var pageCache = new Dictionary<(int, int), int[]>(4);
 
             foreach (var connectionId in view.Subscribers)
             {
@@ -126,80 +168,101 @@ public sealed class ViewEngine(
                     continue;
                 }
 
-                var newIndexes = view.GetPageIndexes(viewport.StartIndex, viewport.PageSize);
-                var newRowIds = BuildRowIds(newIndexes, collection);
-                var events = BuildDeltas(
-                    view.Key.Id,
-                    collection,
-                    viewport.CurrentRowIds,
-                    mutation,
-                    isDelete,
-                    newIndexes,
-                    newRowIds);
+                var cacheKey = (viewport.StartIndex, viewport.PageSize);
+                if (!pageCache.TryGetValue(cacheKey, out var newHandles))
+                {
+                    newHandles = view.GetPageIndexes(viewport.StartIndex, viewport.PageSize);
+                    pageCache[cacheKey] = newHandles;
+                }
+
+                var events = BuildDeltas(view.Key.Id, collection, viewport.CurrentHandles, mutation, isDelete, newHandles);
                 if (events.Count == 0)
                 {
                     continue;
                 }
 
-                viewport.CurrentRowIds = newRowIds;
-                await publisher.PublishAsync(connectionId, events, ct);
+                viewport.CurrentHandles = newHandles;
+                pendingPublishes ??= [];
+                pendingPublishes.Add((connectionId, events));
             }
+        }
+
+        await PublishAllAsync(pendingPublishes, ct);
+    }
+
+    private async Task PublishAllAsync(
+        List<(string ConnectionId, IReadOnlyList<ViewDelta> Deltas)>? publishes,
+        CancellationToken ct)
+    {
+        if (publishes is not { Count: > 0 })
+        {
+            return;
+        }
+
+        List<Task>? incomplete = null;
+        foreach (var (connectionId, deltas) in publishes)
+        {
+            var publish = publisher.PublishAsync(connectionId, deltas, ct);
+            if (!publish.IsCompletedSuccessfully)
+            {
+                incomplete ??= new List<Task>(publishes.Count);
+                incomplete.Add(publish.AsTask());
+            }
+        }
+
+        if (incomplete is { Count: > 0 })
+        {
+            await Task.WhenAll(incomplete);
         }
     }
 
-    private IReadOnlyList<DeltaEvent> BuildDeltas(
+    private IReadOnlyList<ViewDelta> BuildDeltas(
         string viewId,
         RowCollection collection,
-        string[] oldRowIds,
+        int[] oldHandles,
         MutationInfo mutation,
         bool isDelete,
-        int[] newIndexes,
-        string[] newRowIds)
+        int[] newHandles)
     {
-        if (RowIdsEqual(newRowIds, oldRowIds))
+        if (HandlesEqual(newHandles, oldHandles))
         {
-            if (isDelete)
-            {
-                return [];
-            }
-
-            return BuildFieldUpdateEvents(viewId, newRowIds, mutation, collection);
+            if (isDelete) { return []; }
+            return BuildFieldUpdateEvents(viewId, newHandles, mutation, collection);
         }
 
-        var events = new List<DeltaEvent>(newRowIds.Length + oldRowIds.Length);
-        var newSet = new HashSet<string>(newRowIds);
-        var oldSet = new HashSet<string>(oldRowIds);
+        var events = new List<ViewDelta>(newHandles.Length + oldHandles.Length);
 
-        for (int i = oldRowIds.Length - 1; i >= 0; i--)
+        for (int i = oldHandles.Length - 1; i >= 0; i--)
         {
-            if (!newSet.Contains(oldRowIds[i]))
+            if (!ContainsHandle(newHandles, oldHandles[i]))
             {
-                events.Add(new RowRemoveEvent { ViewId = viewId, Position = i });
+                events.Add(new RowRemoveDelta { ViewId = viewId, Position = i });
             }
         }
 
-        for (int i = 0; i < newRowIds.Length; i++)
+        for (int i = 0; i < newHandles.Length; i++)
         {
-            if (!oldSet.Contains(newRowIds[i]))
+            if (!ContainsHandle(oldHandles, newHandles[i]))
             {
-                events.Add(new RowInsertEvent
+                events.Add(new RowInsertDelta
                 {
                     ViewId = viewId,
                     Position = i,
-                    Row = rowOutputFormatter.FormatRow(collection, newIndexes[i])
+                    Schema = collection.Schema,
+                    Row = CopyRow(collection.GetRowValues(newHandles[i]))
                 });
             }
         }
 
-        var fieldUpdates = BuildFieldUpdateEvents(viewId, newRowIds, mutation, collection);
+        var fieldUpdates = BuildFieldUpdateEvents(viewId, newHandles, mutation, collection);
         events.AddRange(fieldUpdates);
 
         return events;
     }
 
-    private static IReadOnlyList<DeltaEvent> BuildFieldUpdateEvents(
+    private static IReadOnlyList<ViewDelta> BuildFieldUpdateEvents(
         string viewId,
-        string[] rowIds,
+        int[] handles,
         MutationInfo mutation,
         RowCollection collection)
     {
@@ -208,94 +271,59 @@ public sealed class ViewEngine(
             return [];
         }
 
-        int pos = -1;
-        for (int i = 0; i < rowIds.Length; i++)
-        {
-            if (rowIds[i] == mutation.RowId)
-            {
-                pos = i;
-                break;
-            }
-        }
+        int pos = IndexOfHandle(handles, mutation.Index);
+        if (pos < 0) { return []; }
 
-        if (pos < 0)
-        {
-            return [];
-        }
-
-        var fields = collection.Schema.Fields;
-        var changed = new Dictionary<string, string?>(mutation.ChangedColumns.Count);
-        foreach (var (fieldIndex, value) in mutation.ChangedColumns)
-        {
-            if (fieldIndex < 0 || fieldIndex >= fields.Count)
-            {
-                continue;
-            }
-
-            changed[fields[fieldIndex].Name] = value;
-        }
-
-        if (changed.Count == 0)
-        {
-            return [];
-        }
-
-        return [new RowUpdateEvent
+        return [new RowUpdateDelta
         {
             ViewId = viewId,
+            Schema = collection.Schema,
             RowId = mutation.RowId,
             Position = pos,
-            ChangedFields = changed
+            ChangedColumns = mutation.ChangedColumns
         }];
     }
 
-    private static bool RowIdsEqual(string[] first, string[] second)
+    private static bool HandlesEqual(int[] first, int[] second)
     {
-        if (ReferenceEquals(first, second))
-        {
-            return true;
-        }
-
-        if (first.Length != second.Length)
-        {
-            return false;
-        }
-
+        if (first.Length != second.Length) { return false; }
         for (int i = 0; i < first.Length; i++)
         {
-            if (first[i] != second[i])
-            {
-                return false;
-            }
+            if (first[i] != second[i]) { return false; }
         }
-
         return true;
     }
 
-    private static string[] BuildRowIds(int[] indexes, RowCollection collection)
+    private static int IndexOfHandle(int[] handles, int handle)
     {
-        var rowIds = new string[indexes.Length];
-        for (int i = 0; i < indexes.Length; i++)
+        for (int i = 0; i < handles.Length; i++)
         {
-            rowIds[i] = collection.GetRowId(indexes[i]) ?? string.Empty;
+            if (handles[i] == handle) { return i; }
         }
-
-        return rowIds;
+        return -1;
     }
 
-    private IReadOnlyList<IReadOnlyDictionary<string, string?>> BuildRows(RowCollection collection, int[] indexes)
+    private static bool ContainsHandle(int[] handles, int handle) =>
+        IndexOfHandle(handles, handle) >= 0;
+
+    private static IReadOnlyList<string?[]> BuildRows(RowCollection collection, int[] indexes)
     {
-        var rows = new List<IReadOnlyDictionary<string, string?>>(indexes.Length);
+        var rows = new string?[indexes.Length][];
         for (int i = 0; i < indexes.Length; i++)
         {
-            rows.Add(rowOutputFormatter.FormatRow(collection, indexes[i]));
+            rows[i] = CopyRow(collection.GetRowValues(indexes[i]));
         }
-
         return rows;
     }
 
+    private static string?[] CopyRow(string?[] source)
+    {
+        var copy = new string?[source.Length];
+        Array.Copy(source, copy, source.Length);
+        return copy;
+    }
 
-    private IReadOnlyList<DeltaEvent> HandleSubscribe(SubscribeCommand command)
+    private IReadOnlyList<ViewDelta> HandleSubscribe(SubscribeCommand command)
     {
         if (!store.TryGet(command.View.CollectionId, out var collection) || collection is null)
         {
@@ -305,7 +333,9 @@ public sealed class ViewEngine(
         }
 
         var key = ViewKey.From(command.View);
-        var view = _sharedViews.GetOrAdd(key, k => new SharedView(k, collection));
+        var collectionViews = _sharedViewsByCollection.GetOrAdd(
+            key.CollectionId, _ => new ConcurrentDictionary<ViewKey, SharedView>());
+        var view = collectionViews.GetOrAdd(key, k => new SharedView(k, collection));
         view.AddSubscriber(command.ConnectionId);
 
         var viewport = new ViewportState
@@ -318,29 +348,35 @@ public sealed class ViewEngine(
         _viewports[command.ConnectionId] = viewport;
 
         var indexes = view.GetPageIndexes(command.StartIndex, command.PageSize);
-        viewport.CurrentRowIds = BuildRowIds(indexes, collection);
+        viewport.CurrentHandles = indexes;
 
         logger.LogInformation(
             "Client '{ConnectionId}' subscribed to view '{ViewId}' (start={Start}, page={Page}).",
             command.ConnectionId, key.Id, command.StartIndex, command.PageSize);
 
-        return [new SnapshotEvent
+        return [new SnapshotDelta
         {
             ViewId = key.Id,
+            Schema = collection.Schema,
             TotalCount = view.GetTotalCount(),
             StartIndex = command.StartIndex,
             Rows = BuildRows(collection, indexes)
         }];
     }
 
-    private IReadOnlyList<DeltaEvent> HandleChangeViewport(ChangeViewportCommand command)
+    private IReadOnlyList<ViewDelta> HandleChangeViewport(ChangeViewportCommand command)
     {
         if (!_viewports.TryGetValue(command.ConnectionId, out var viewport))
         {
             return [];
         }
 
-        if (!_sharedViews.TryGetValue(viewport.ViewKey, out var view))
+        if (!_sharedViewsByCollection.TryGetValue(viewport.ViewKey.CollectionId, out var collectionViews))
+        {
+            return [];
+        }
+
+        if (!collectionViews.TryGetValue(viewport.ViewKey, out var view))
         {
             return [];
         }
@@ -354,30 +390,32 @@ public sealed class ViewEngine(
         viewport.PageSize = command.PageSize;
 
         var indexes = view.GetPageIndexes(command.StartIndex, command.PageSize);
-        viewport.CurrentRowIds = BuildRowIds(indexes, collection);
+        viewport.CurrentHandles = indexes;
 
-        return [new SnapshotEvent
+        return [new SnapshotDelta
         {
             ViewId = viewport.ViewKey.Id,
+            Schema = collection.Schema,
             TotalCount = view.GetTotalCount(),
             StartIndex = command.StartIndex,
             Rows = BuildRows(collection, indexes)
         }];
     }
 
-    private IReadOnlyList<DeltaEvent> HandleUnsubscribe(UnsubscribeCommand command)
+    private IReadOnlyList<ViewDelta> HandleUnsubscribe(UnsubscribeCommand command)
     {
         if (!_viewports.TryRemove(command.ConnectionId, out var viewport))
         {
             return [];
         }
 
-        if (_sharedViews.TryGetValue(viewport.ViewKey, out var view))
+        if (_sharedViewsByCollection.TryGetValue(viewport.ViewKey.CollectionId, out var collectionViews)
+            && collectionViews.TryGetValue(viewport.ViewKey, out var view))
         {
             view.RemoveSubscriber(command.ConnectionId);
             if (view.IsEmpty)
             {
-                _sharedViews.TryRemove(viewport.ViewKey, out _);
+                collectionViews.TryRemove(viewport.ViewKey, out _);
             }
         }
 

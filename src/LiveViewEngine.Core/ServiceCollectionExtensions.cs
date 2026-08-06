@@ -10,7 +10,7 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddLiveViewEngineCore(this IServiceCollection services)
     {
         services.AddSingleton<ICollectionStore, CollectionStore>();
-        services.AddSingleton<IRowOutputFormatter, JsonDictionaryRowOutputFormatter>();
+        services.AddSingleton<IOutboundEventFormatter, JsonOutboundEventFormatter>();
         services.AddSingleton<IViewEngine, ViewEngine>();
         return services;
     }

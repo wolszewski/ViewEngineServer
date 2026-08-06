@@ -76,8 +76,10 @@ HTTP POST /collections/{collectionName}/ingest
               → SortIndex.OnUpsert / OnDelete
               for each subscriber connection:
                   → BuildDeltas (compare old/new viewport row IDs)
+                  → ViewDelta (row arrays and changed column indexes)
                   → ViewportState.CurrentRowIds updated
-                  → IOutboundPublisher.PublishAsync (delta events)
+                  → IOutboundPublisher.PublishAsync
+                      → IOutboundEventFormatter (transport payload)
 ```
 
 ### Subscribe
@@ -87,7 +89,7 @@ WebSocket subscribe message
   → ViewEngine.SubscribeAsync
       → SharedView created or reused (shared SortIndex)
       → ViewportState created
-      → SnapshotEvent built from current page handles
+      → SnapshotDelta built from current page handles and row arrays
       → returned directly to WebSocket handler for immediate send
 ```
 
@@ -129,6 +131,10 @@ WebSocket changeViewport message
 
 Delta events are JSON-serialised using `System.Text.Json` polymorphic dispatch over WebSocket. Each event carries a `type`
 discriminator. This JSON shape is primarily the current debug/inspection transport while the wire format evolves.
+
+`ViewEngine` does not build field-name dictionaries. It emits internal `ViewDelta` objects containing positional row arrays and
+changed column indexes. `JsonOutboundEventFormatter` maps those internal deltas to the JSON DTOs below at the WebSocket publisher
+boundary. A pipe-delimited formatter can replace that mapping without changing view maintenance or delta calculation.
 
 **Snapshot** (sent on subscribe or viewport change):
 ```json
@@ -197,9 +203,9 @@ This format eliminates field-name repetition and JSON overhead. The `GetValue() 
 
 ## Threading model
 
-| Lock | Scope | Purpose |
-|---|---|---|
-| `ReaderWriterLockSlim` on `RowCollection` | per collection | Protects row storage reads and writes |
-| `SemaphoreSlim(1,1)` in `ViewEngine` | per collection | Serialises `PropagateMutationAsync` so deltas are published in write order |
-| `Lock` on `SortIndex` | per sort index | Protects sorted handle list during insert/remove |
-| `ConcurrentDictionary` | shared views, viewports, mutation locks | Lock-free lookup/registration |
+The current implementation uses concurrent dictionaries for collection, view, viewport, and subscriber lookup, but mutation of
+`RowCollection`, `SortIndex`, and viewport contents is not yet serialized.
+
+The intended model is a bounded channel and dedicated background processor per collection. That processor will provide
+single-writer ordering for row mutations, sort-index maintenance, viewport updates, and delta creation. Until it is implemented,
+callers must not invoke mutations concurrently for the same collection.

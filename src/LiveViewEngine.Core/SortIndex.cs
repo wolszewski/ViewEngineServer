@@ -1,8 +1,10 @@
+using System.Buffers;
 using LiveViewEngine.Core.Data;
 
 namespace LiveViewEngine.Core;
 
-//TODO: rewrite to BTree or RBTree
+// TODO: List<int>.Insert and List<int>.RemoveAt are O(N) — replace _sortedIndexes with a B-tree,
+//       red-black tree, or order-statistics tree to get O(log N) insert/remove.
 public sealed class SortIndex
 {
     private readonly RowCollection _collection;
@@ -59,25 +61,47 @@ public sealed class SortIndex
         IReadOnlyList<FilterSpec>? filters = null,
         int[]? filterFieldIndexes = null)
     {
+        if (startIndex < 0) { startIndex = 0; }
+        if (pageSize <= 0) { return []; }
+
         bool filtered = filters is { Count: > 0 };
-        var result = new List<int>(pageSize);
-        int skipped = 0;
 
-        foreach (var index in _sortedIndexes)
+        if (!filtered)
         {
-            if (filtered && !PassesFilters(index, filters!, filterFieldIndexes!))
+            int total = _sortedIndexes.Count;
+            if (startIndex >= total) { return []; }
+            int take = Math.Min(pageSize, total - startIndex);
+            var result = new int[take];
+            for (int i = 0; i < take; i++)
             {
-                continue;
+                result[i] = _sortedIndexes[startIndex + i];
             }
-
-            if (skipped < startIndex) { skipped++; continue; }
-            result.Add(index);
-            if (result.Count >= pageSize)
-            {
-                break;
-            }
+            return result;
         }
-        return [.. result];
+
+        int maxTake = Math.Min(pageSize, _sortedIndexes.Count);
+        if (maxTake == 0) { return []; }
+
+        var rented = ArrayPool<int>.Shared.Rent(maxTake);
+        try
+        {
+            int skipped = 0;
+            int count = 0;
+            foreach (var index in _sortedIndexes)
+            {
+                if (!PassesFilters(index, filters!, filterFieldIndexes!)) { continue; }
+                if (skipped < startIndex) { skipped++; continue; }
+                rented[count++] = index;
+                if (count >= pageSize) { break; }
+            }
+            var result = new int[count];
+            rented.AsSpan(0, count).CopyTo(result);
+            return result;
+        }
+        finally
+        {
+            ArrayPool<int>.Shared.Return(rented);
+        }
     }
 
     public int GetCount(IReadOnlyList<FilterSpec>? filters = null, int[]? filterFieldIndexes = null)

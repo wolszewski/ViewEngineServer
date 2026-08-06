@@ -113,4 +113,78 @@ public class SortIndexTests
         Assert.True(indexes[0] < indexes[1]);
         Assert.True(indexes[1] < indexes[2]);
     }
+
+    [Fact]
+    public void GetPageIndexes_WithStartIndex_SkipsCorrectRows()
+    {
+        var (col, idx, scoreFieldIndex, _) = CreateSortedByScore(true);
+        Upsert(col, idx, scoreFieldIndex, "a", "10");
+        Upsert(col, idx, scoreFieldIndex, "b", "20");
+        Upsert(col, idx, scoreFieldIndex, "c", "30");
+
+        var indexes = idx.GetPageIndexes(1, 10);
+        var scores = indexes.Select(i => col.GetValue(i, scoreFieldIndex)).ToList();
+
+        Assert.Equal(["20", "30"], scores);
+    }
+
+    [Fact]
+    public void GetPageIndexes_PageSmallerThanTotal_ReturnsExactCount()
+    {
+        var (col, idx, scoreFieldIndex, _) = CreateSortedByScore(true);
+        Upsert(col, idx, scoreFieldIndex, "a", "10");
+        Upsert(col, idx, scoreFieldIndex, "b", "20");
+        Upsert(col, idx, scoreFieldIndex, "c", "30");
+
+        var indexes = idx.GetPageIndexes(0, 2);
+        Assert.Equal(2, indexes.Length);
+    }
+
+    [Fact]
+    public void GetPageIndexes_NegativeStartIndex_TreatedAsZero()
+    {
+        var (col, idx, scoreFieldIndex, _) = CreateSortedByScore(true);
+        Upsert(col, idx, scoreFieldIndex, "a", "10");
+        Upsert(col, idx, scoreFieldIndex, "b", "20");
+
+        var indexes = idx.GetPageIndexes(-5, 10);
+        Assert.Equal(2, indexes.Length);
+        Assert.Equal("10", col.GetValue(indexes[0], scoreFieldIndex));
+    }
+
+    [Fact]
+    public void GetPageIndexes_ZeroPageSize_ReturnsEmpty()
+    {
+        var (col, idx, scoreFieldIndex, _) = CreateSortedByScore(true);
+        Upsert(col, idx, scoreFieldIndex, "a", "10");
+
+        var indexes = idx.GetPageIndexes(0, 0);
+        Assert.Empty(indexes);
+    }
+
+    [Fact]
+    public void GetPageIndexes_StartIndexBeyondEnd_ReturnsEmpty()
+    {
+        var (col, idx, scoreFieldIndex, _) = CreateSortedByScore(true);
+        Upsert(col, idx, scoreFieldIndex, "a", "10");
+
+        var indexes = idx.GetPageIndexes(5, 10);
+        Assert.Empty(indexes);
+    }
+
+    [Fact]
+    public void GetPageIndexes_FilteredWithStartIndex_SkipsFilteredRows()
+    {
+        var (col, idx, scoreFieldIndex, activeFieldIndex) = CreateSortedByScore(true);
+        Upsert(col, idx, scoreFieldIndex, "a", "10", "true");
+        Upsert(col, idx, scoreFieldIndex, "b", "20", "true");
+        Upsert(col, idx, scoreFieldIndex, "c", "30", "true");
+        Upsert(col, idx, scoreFieldIndex, "d", "40", "false");
+
+        var filter = new FilterSpec("active", FilterOperator.Eq, "true");
+        var indexes = idx.GetPageIndexes(1, 10, [filter], [activeFieldIndex]);
+        var scores = indexes.Select(i => col.GetValue(i, scoreFieldIndex)).ToList();
+
+        Assert.Equal(["20", "30"], scores);
+    }
 }

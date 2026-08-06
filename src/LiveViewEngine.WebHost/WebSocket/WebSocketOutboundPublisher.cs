@@ -2,10 +2,13 @@ using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using System.Text.Json;
 using LiveViewEngine.Core;
+using LiveViewEngine.Core.Output;
 
 namespace ViewEngineServer.WebApp.WebSocket;
 
-public sealed class WebSocketOutboundPublisher(ILogger<WebSocketOutboundPublisher> logger) : IOutboundPublisher
+public sealed class WebSocketOutboundPublisher(
+    IOutboundEventFormatter formatter,
+    ILogger<WebSocketOutboundPublisher> logger) : IOutboundPublisher
 {
     private readonly ConcurrentDictionary<string, System.Net.WebSockets.WebSocket> _sockets = new();
 
@@ -20,7 +23,10 @@ public sealed class WebSocketOutboundPublisher(ILogger<WebSocketOutboundPublishe
     public void Unregister(string connectionId) =>
         _sockets.TryRemove(connectionId, out _);
 
-    public async ValueTask PublishAsync(string connectionId, IReadOnlyList<DeltaEvent> events, CancellationToken ct = default)
+    public async ValueTask PublishAsync(
+        string connectionId,
+        IReadOnlyList<ViewDelta> deltas,
+        CancellationToken ct = default)
     {
         if (!_sockets.TryGetValue(connectionId, out var socket))
         {
@@ -35,6 +41,7 @@ public sealed class WebSocketOutboundPublisher(ILogger<WebSocketOutboundPublishe
         byte[] payload;
         try
         {
+            var events = formatter.Format(deltas);
             payload = JsonSerializer.SerializeToUtf8Bytes(events, JsonOptions);
         }
         catch (Exception ex)
