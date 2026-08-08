@@ -11,5 +11,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\LiveViewEngine.Core\LiveViewEngine.Core.csproj" />
+    <ProjectReference Include="..\LiveViewEngine.Collections\LiveViewEngine.Collections.csproj" />
   </ItemGroup>
 </Project>

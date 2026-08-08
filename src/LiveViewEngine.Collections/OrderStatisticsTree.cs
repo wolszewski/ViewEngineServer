@@ -1,16 +1,22 @@
+using System.Collections.Generic;
+using System.Runtime.CompilerServices;
+
 namespace LiveViewEngine.Core;
 
 // Left-Leaning Red-Black tree augmented with subtree sizes (order-statistics tree).
 // Guarantees O(log n) for Insert, Delete, GetByIndex, and IndexOf.
 // Based on Sedgewick's LLRB algorithm: https://sedgewick.io/wp-content/themes/sedgewick/papers/2008LLRB.pdf
-public sealed class OrderStatisticsTree
+//
+// TComparer is specialised at JIT time: when it is a struct the comparison call is devirtualised
+// and inlined, eliminating delegate-dispatch overhead on every tree operation.
+public sealed class OrderStatisticsTree<TComparer> where TComparer : IComparer<int>
 {
     private Node? _root;
-    private readonly Comparison<int> _compare;
+    private TComparer _comparer;
 
-    public OrderStatisticsTree(Comparison<int> compare)
+    public OrderStatisticsTree(TComparer comparer)
     {
-        _compare = compare;
+        _comparer = comparer;
     }
 
     public int Count { get; private set; }
@@ -31,7 +37,19 @@ public sealed class OrderStatisticsTree
         Count--;
     }
 
-    public bool Contains(int key) => IndexOf(key) >= 0;
+    // O(log n) search without rank accumulation — faster than IndexOf when rank is not needed.
+    public bool Contains(int key)
+    {
+        var node = _root;
+        while (node != null)
+        {
+            int cmp = _comparer.Compare(key, node.Key);
+            if (cmp < 0) { node = node.Left; }
+            else if (cmp > 0) { node = node.Right; }
+            else { return true; }
+        }
+        return false;
+    }
 
     // Returns the key at 0-based sort-order position. O(log n).
     public int GetByIndex(int index)
@@ -40,7 +58,14 @@ public sealed class OrderStatisticsTree
         {
             throw new ArgumentOutOfRangeException(nameof(index));
         }
-        return GetByIndex(_root!, index);
+        var h = _root!;
+        while (true)
+        {
+            int leftSize = Size(h.Left);
+            if (index < leftSize) { h = h.Left!; }
+            else if (index == leftSize) { return h.Key; }
+            else { index -= leftSize + 1; h = h.Right!; }
+        }
     }
 
     // Returns the 0-based sort-order position of key, or -1 if not found. O(log n).
@@ -50,7 +75,7 @@ public sealed class OrderStatisticsTree
         int rank = 0;
         while (node != null)
         {
-            int cmp = _compare(key, node.Key);
+            int cmp = _comparer.Compare(key, node.Key);
             if (cmp < 0)
             {
                 node = node.Left;
@@ -83,7 +108,7 @@ public sealed class OrderStatisticsTree
     {
         if (h == null) { return new Node(key); }
 
-        int cmp = _compare(key, h.Key);
+        int cmp = _comparer.Compare(key, h.Key);
         if (cmp < 0) { h.Left = Insert(h.Left, key); }
         else if (cmp > 0) { h.Right = Insert(h.Right, key); }
 
@@ -97,7 +122,7 @@ public sealed class OrderStatisticsTree
 
     private Node? Delete(Node h, int key)
     {
-        if (_compare(key, h.Key) < 0)
+        if (_comparer.Compare(key, h.Key) < 0)
         {
             if (!IsRed(h.Left) && !IsRed(h.Left?.Left))
             {
@@ -108,12 +133,12 @@ public sealed class OrderStatisticsTree
         else
         {
             if (IsRed(h.Left)) { h = RotateRight(h); }
-            if (_compare(key, h.Key) == 0 && h.Right == null) { return null; }
+            if (_comparer.Compare(key, h.Key) == 0 && h.Right == null) { return null; }
             if (!IsRed(h.Right) && !IsRed(h.Right?.Left))
             {
                 h = MoveRedRight(h);
             }
-            if (_compare(key, h.Key) == 0)
+            if (_comparer.Compare(key, h.Key) == 0)
             {
                 var min = Min(h.Right!);
                 h.Key = min.Key;
@@ -167,7 +192,7 @@ public sealed class OrderStatisticsTree
     private static Node Balance(Node h)
     {
         if (IsRed(h.Right) && !IsRed(h.Left)) { h = RotateLeft(h); }
-        if (IsRed(h.Left) && IsRed(h.Left?.Left)) { h = RotateRight(h); }
+        if (IsRed(h.Left) && IsRed(h.Left!.Left)) { h = RotateRight(h); }
         if (IsRed(h.Left) && IsRed(h.Right)) { FlipColors(h); }
         h.Size = 1 + Size(h.Left) + Size(h.Right);
         return h;
@@ -204,16 +229,11 @@ public sealed class OrderStatisticsTree
         h.Right!.Red = !h.Right.Red;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool IsRed(Node? n) => n != null && n.Red;
-    private static int Size(Node? n) => n?.Size ?? 0;
 
-    private static int GetByIndex(Node h, int index)
-    {
-        int leftSize = Size(h.Left);
-        if (index < leftSize) { return GetByIndex(h.Left!, index); }
-        if (index == leftSize) { return h.Key; }
-        return GetByIndex(h.Right!, index - leftSize - 1);
-    }
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static int Size(Node? n) => n?.Size ?? 0;
 
     // ── Node ───────────────────────────────────────────────────────────────────
 

@@ -7,14 +7,24 @@ public class OrderStatisticsTreeTests
 {
     // ── helpers ──────────────────────────────────────────────────────────────
 
-    private static OrderStatisticsTree Make(params int[] keys)
+    private readonly struct AscIntComparer : IComparer<int>
     {
-        var tree = new OrderStatisticsTree(Comparer<int>.Default.Compare);
+        public int Compare(int x, int y) => x.CompareTo(y);
+    }
+
+    private readonly struct DescIntComparer : IComparer<int>
+    {
+        public int Compare(int x, int y) => y.CompareTo(x);
+    }
+
+    private static OrderStatisticsTree<AscIntComparer> Make(params int[] keys)
+    {
+        var tree = new OrderStatisticsTree<AscIntComparer>(default);
         foreach (var k in keys) { tree.Insert(k); }
         return tree;
     }
 
-    private static List<int> ToList(OrderStatisticsTree tree)
+    private static List<int> ToList<TComparer>(OrderStatisticsTree<TComparer> tree) where TComparer : IComparer<int>
     {
         var list = new List<int>(tree.Count);
         var cursor = tree.GetCursor(0);
@@ -182,7 +192,7 @@ public class OrderStatisticsTreeTests
     [Fact]
     public void GetByIndex_EmptyTree_Throws()
     {
-        var tree = new OrderStatisticsTree(Comparer<int>.Default.Compare);
+        var tree = new OrderStatisticsTree<AscIntComparer>(default);
         Assert.Throws<ArgumentOutOfRangeException>(() => tree.GetByIndex(0));
     }
 
@@ -225,7 +235,7 @@ public class OrderStatisticsTreeTests
     [Fact]
     public void IndexOf_EmptyTree_ReturnsNegativeOne()
     {
-        var tree = new OrderStatisticsTree(Comparer<int>.Default.Compare);
+        var tree = new OrderStatisticsTree<AscIntComparer>(default);
         Assert.Equal(-1, tree.IndexOf(1));
     }
 
@@ -289,7 +299,7 @@ public class OrderStatisticsTreeTests
     [Fact]
     public void Cursor_EmptyTree_IsEmpty()
     {
-        var tree = new OrderStatisticsTree(Comparer<int>.Default.Compare);
+        var tree = new OrderStatisticsTree<AscIntComparer>(default);
         var cursor = tree.GetCursor(0);
         Assert.False(cursor.MoveNext());
     }
@@ -339,8 +349,7 @@ public class OrderStatisticsTreeTests
     [Fact]
     public void CustomComparer_DescendingOrder_Respected()
     {
-        // reverse comparer — tree should yield descending
-        var tree = new OrderStatisticsTree((a, b) => b.CompareTo(a));
+        var tree = new OrderStatisticsTree<DescIntComparer>(default);
         foreach (var k in new[] { 3, 1, 4, 1, 5 }.Distinct()) { tree.Insert(k); }
         var result = ToList(tree);
         Assert.Equal([5, 4, 3, 1], result);
@@ -351,7 +360,7 @@ public class OrderStatisticsTreeTests
     [Fact]
     public void Count_InsertsAndDeletes_AlwaysConsistent()
     {
-        var tree = new OrderStatisticsTree(Comparer<int>.Default.Compare);
+        var tree = new OrderStatisticsTree<AscIntComparer>(default);
         for (int i = 1; i <= 10; i++) { tree.Insert(i); Assert.Equal(i, tree.Count); }
         for (int i = 1; i <= 10; i++) { tree.Delete(i); Assert.Equal(10 - i, tree.Count); }
     }
@@ -363,7 +372,7 @@ public class OrderStatisticsTreeTests
     {
         var rng = new Random(777);
         var inTree = new SortedSet<int>();
-        var tree = new OrderStatisticsTree(Comparer<int>.Default.Compare);
+        var tree = new OrderStatisticsTree<AscIntComparer>(default);
 
         for (int round = 0; round < 500; round++)
         {

@@ -3,26 +3,33 @@ using System.Collections.Generic;
 using System.Linq;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Configs;
-using LiveViewEngine.Core;
+using LiveViewEngine.Collections;
 
 namespace LiveViewEngine.Core.Benchmarks;
 
-// Compares OrderStatisticsTree against a sorted List<int> (the previous SortIndex backing structure).
-// Run with: dotnet run -c Release --project src/LiveViewEngine.Core.Benchmarks0
+// Compares OrderStatisticsTree (1-item-per-node LLRB) and NodeArrayTree (64-items-per-node WPF-style)
+// against a sorted List<int> (the previous SortIndex backing structure).
+// Run with: dotnet run -c Release --project src/LiveViewEngine.Core.Benchmarks
 [MemoryDiagnoser]
 [HideColumns("Error", "StdDev", "RatioSD")]
 [GroupBenchmarksBy(BenchmarkLogicalGroupRule.ByCategory)]
 [CategoriesColumn]
 public class SortIndexBenchmarks
 {
-    [Params(100, 1_000, 10_000)]
+    public readonly struct DefaultIntComparer : IComparer<int>
+    {
+        public int Compare(int x, int y) => x.CompareTo(y);
+    }
+
+    [Params(100, 1000, 10000, 100000)]
     public int N;
 
     private int[] _keys = [];
     private int[] _deleteKeys = [];
 
     // Pre-built structures for read/page benchmarks.
-    private OrderStatisticsTree _tree = null!;
+    private OrderStatisticsTree<DefaultIntComparer> _tree = null!;
+    private NodeArrayTree<DefaultIntComparer> _naTree = null!;
     private List<int> _list = [];
 
     [GlobalSetup]
@@ -32,8 +39,8 @@ public class SortIndexBenchmarks
         _keys = Enumerable.Range(0, N).Select(_ => rng.Next()).Distinct().Take(N).ToArray();
         _deleteKeys = _keys.Take(N / 2).ToArray();
 
-        // Build a pre-populated tree and list for read benchmarks.
         _tree = BuildTree(_keys);
+        _naTree = BuildNaTree(_keys);
         _list = BuildList(_keys);
     }
 
@@ -41,17 +48,15 @@ public class SortIndexBenchmarks
 
     [Benchmark(Baseline = true)]
     [BenchmarkCategory("Insert")]
-    public List<int> List_Insert()
-    {
-        return BuildList(_keys);
-    }
+    public List<int> List_Insert() => BuildList(_keys);
 
     [Benchmark]
     [BenchmarkCategory("Insert")]
-    public OrderStatisticsTree Tree_Insert()
-    {
-        return BuildTree(_keys);
-    }
+    public OrderStatisticsTree<DefaultIntComparer> Tree_Insert() => BuildTree(_keys);
+
+    [Benchmark]
+    [BenchmarkCategory("Insert")]
+    public NodeArrayTree<DefaultIntComparer> NATree_Insert() => BuildNaTree(_keys);
 
     // ── Delete ───────────────────────────────────────────────────────────────
 
@@ -62,7 +67,7 @@ public class SortIndexBenchmarks
         var list = BuildList(_keys);
         foreach (var key in _deleteKeys)
         {
-            int idx = ListBinarySearch(list, key);
+            int idx = list.BinarySearch(key);
             if (idx >= 0) { list.RemoveAt(idx); }
         }
     }
@@ -72,10 +77,15 @@ public class SortIndexBenchmarks
     public void Tree_Delete()
     {
         var tree = BuildTree(_keys);
-        foreach (var key in _deleteKeys)
-        {
-            tree.Delete(key);
-        }
+        foreach (var key in _deleteKeys) { tree.Delete(key); }
+    }
+
+    [Benchmark]
+    [BenchmarkCategory("Delete")]
+    public void NATree_Delete()
+    {
+        var tree = BuildNaTree(_keys);
+        foreach (var key in _deleteKeys) { tree.Delete(key); }
     }
 
     // ── GetPage (unfiltered) ──────────────────────────────────────────────────
@@ -99,11 +109,20 @@ public class SortIndexBenchmarks
         if (pageSize <= 0) { return []; }
         var result = new int[pageSize];
         var cursor = _tree.GetCursor(startIndex);
-        for (int i = 0; i < pageSize; i++)
-        {
-            cursor.MoveNext();
-            result[i] = cursor.Current;
-        }
+        for (int i = 0; i < pageSize; i++) { cursor.MoveNext(); result[i] = cursor.Current; }
+        return result;
+    }
+
+    [Benchmark]
+    [BenchmarkCategory("GetPage")]
+    public int[] NATree_GetPage()
+    {
+        int startIndex = N / 3;
+        int pageSize = Math.Min(50, N - startIndex);
+        if (pageSize <= 0) { return []; }
+        var result = new int[pageSize];
+        var cursor = _naTree.GetCursor(startIndex);
+        for (int i = 0; i < pageSize; i++) { cursor.MoveNext(); result[i] = cursor.Current; }
         return result;
     }
 
@@ -117,16 +136,13 @@ public class SortIndexBenchmarks
         var rng = new Random(1);
         for (int i = 0; i < N / 4; i++)
         {
-            // delete a random element
             int pos = rng.Next(list.Count);
             list.RemoveAt(pos);
-            // insert a new one
             int newKey = rng.Next();
             int idx = ~list.BinarySearch(newKey);
             if (idx < 0) { idx = ~idx; }
             list.Insert(idx, newKey);
         }
-        // page read
         if (list.Count > 50) { _ = list.GetRange(0, 50); }
     }
 
@@ -138,14 +154,10 @@ public class SortIndexBenchmarks
         var rng = new Random(1);
         for (int i = 0; i < N / 4; i++)
         {
-            // delete element at random position
-            int pos = rng.Next(tree.Count);
-            int key = tree.GetByIndex(pos);
+            int key = tree.GetByIndex(rng.Next(tree.Count));
             tree.Delete(key);
-            // insert a new one
             tree.Insert(rng.Next());
         }
-        // page read
         if (tree.Count > 50)
         {
             var cursor = tree.GetCursor(0);
@@ -153,15 +165,36 @@ public class SortIndexBenchmarks
         }
     }
 
-    // ── IndexOf / position lookup ─────────────────────────────────────────────
+    [Benchmark]
+    [BenchmarkCategory("Mixed")]
+    public void NATree_Mixed()
+    {
+        var tree = BuildNaTree(_keys);
+        var rng = new Random(1);
+        for (int i = 0; i < N / 4; i++)
+        {
+            int key = tree.GetByIndex(rng.Next(tree.Count));
+            tree.Delete(key);
+            tree.Insert(rng.Next());
+        }
+        if (tree.Count > 50)
+        {
+            var cursor = tree.GetCursor(0);
+            for (int i = 0; i < 50; i++) { cursor.MoveNext(); }
+        }
+    }
+
+    // ── IndexOf / global rank lookup ─────────────────────────────────────────────
+    // Both structures support O(log n) rank lookup. List uses BinarySearch on a maintained
+    // sorted array; tree uses subtree-size augmentation. Measures the cost of answering
+    // "what is this key's 0-based position in sorted order?", not page membership.
 
     [Benchmark(Baseline = true)]
     [BenchmarkCategory("IndexOf")]
     public int List_IndexOf()
     {
-        // simulate checking if a row is on the current page
         int target = _list[N / 2];
-        return ListBinarySearch(_list, target);
+        return _list.BinarySearch(target);
     }
 
     [Benchmark]
@@ -170,6 +203,14 @@ public class SortIndexBenchmarks
     {
         int target = _tree.GetByIndex(N / 2);
         return _tree.IndexOf(target);
+    }
+
+    [Benchmark]
+    [BenchmarkCategory("IndexOf")]
+    public int NATree_IndexOf()
+    {
+        int target = _naTree.GetByIndex(N / 2);
+        return _naTree.IndexOf(target);
     }
 
     // ── helpers ───────────────────────────────────────────────────────────────
@@ -185,15 +226,18 @@ public class SortIndexBenchmarks
         return list;
     }
 
-    private static OrderStatisticsTree BuildTree(int[] keys)
+    private static OrderStatisticsTree<DefaultIntComparer> BuildTree(int[] keys)
     {
-        var tree = new OrderStatisticsTree(Comparer<int>.Default.Compare);
+        var tree = new OrderStatisticsTree<DefaultIntComparer>(default);
         foreach (var key in keys) { tree.Insert(key); }
         return tree;
     }
 
-    private static int ListBinarySearch(List<int> list, int key)
+    private static NodeArrayTree<DefaultIntComparer> BuildNaTree(int[] keys)
     {
-        return list.BinarySearch(key);
+        var tree = new NodeArrayTree<DefaultIntComparer>(default);
+        foreach (var key in keys) { tree.Insert(key); }
+        return tree;
     }
 }
+
