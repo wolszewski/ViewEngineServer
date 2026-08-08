@@ -36,7 +36,7 @@ public sealed class MutationPropagator(IOutboundPublisher publisher)
 
     private static MutationImpact AnalyzeMutationImpact(SharedView view, MutationInfo mutation, bool isDelete)
     {
-        var (sortFieldTouched, filterFieldChanged) = view.TouchedFields(mutation.ChangedColumns);
+        var (sortFieldTouched, filterFieldChanged) = view.TouchedFields(mutation.ChangedMask);
         bool sortFieldChanged = mutation.IsNew || sortFieldTouched;
         bool needsFullRecompute = isDelete || mutation.IsNew || sortFieldChanged || filterFieldChanged;
         return new MutationImpact(sortFieldChanged, needsFullRecompute);
@@ -107,7 +107,7 @@ public sealed class MutationPropagator(IOutboundPublisher publisher)
         bool isDelete,
         ref List<(string ConnectionId, IReadOnlyList<ViewDelta> Deltas)>? pendingPublishes)
     {
-        var pageCache = new Dictionary<(int StartIndex, int PageSize), int[]>(4);
+        var pageCache = new Dictionary<(int StartIndex, int? PageSize), int[]>(4);
         foreach (var connectionId in view.Subscribers)
         {
             if (!viewports.TryGetValue(connectionId, out var viewport))

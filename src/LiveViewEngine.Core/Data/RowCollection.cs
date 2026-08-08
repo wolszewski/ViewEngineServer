@@ -17,13 +17,13 @@ public sealed class RowCollection(CollectionSchema schema)
 
         var row = GetOrAddRow(key, out var rowIndex, out var isNew);
         var columnChanges = Schema.MapToColumnChanges(fieldChanges);
-       
+
         foreach (var updatedField in columnChanges)
         {
             row[updatedField.Key] = updatedField.Value;
         }
 
-        return new MutationInfo(key, rowIndex, isNew, columnChanges);
+        return new MutationInfo(key, rowIndex, isNew, columnChanges, FieldMask.From(columnChanges));
     }
 
     private string?[] GetOrAddRow(string rowKey, out int rowIndex, out bool isNew)
@@ -60,7 +60,7 @@ public sealed class RowCollection(CollectionSchema schema)
         _rowKeyToIndex.Remove(rowId);
         _rows.RemoveAt(index);
 
-        return new MutationInfo(rowId, index, false, null);
+        return new MutationInfo(rowId, index, false, null, default);
     }
 
     public string? GetValue(int index, int fieldIndex)

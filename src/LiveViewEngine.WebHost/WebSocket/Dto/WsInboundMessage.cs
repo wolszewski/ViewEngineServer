@@ -9,5 +9,5 @@ public sealed class WsInboundMessage
     public bool SortAscending { get; set; } = true;
     public List<WsFilterDto>? Filters { get; set; }
     public int StartIndex { get; set; }
-    public int PageSize { get; set; } = 50;
+    public int? PageSize { get; set; }
 }

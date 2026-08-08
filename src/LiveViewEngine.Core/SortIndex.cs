@@ -57,12 +57,12 @@ public sealed class SortIndex
     }
 
 
-    public int[] GetPageIndexes(int startIndex, int pageSize,
+    public int[] GetPageIndexes(int startIndex, int? pageSize,
         IReadOnlyList<FilterSpec>? filters = null,
         int[]? filterFieldIndexes = null)
     {
         if (startIndex < 0) { startIndex = 0; }
-        if (pageSize <= 0) { return []; }
+        if (pageSize.HasValue && pageSize.Value <= 0) { return []; }
 
         bool filtered = filters is { Count: > 0 };
 
@@ -70,7 +70,7 @@ public sealed class SortIndex
         {
             int total = _sortedIndexes.Count;
             if (startIndex >= total) { return []; }
-            int take = Math.Min(pageSize, total - startIndex);
+            int take = pageSize.HasValue ? Math.Min(pageSize.Value, total - startIndex) : total - startIndex;
             var result = new int[take];
             for (int i = 0; i < take; i++)
             {
@@ -79,7 +79,7 @@ public sealed class SortIndex
             return result;
         }
 
-        int maxTake = Math.Min(pageSize, _sortedIndexes.Count);
+        int maxTake = pageSize.HasValue ? Math.Min(pageSize.Value, _sortedIndexes.Count) : _sortedIndexes.Count;
         if (maxTake == 0) { return []; }
 
         var rented = ArrayPool<int>.Shared.Rent(maxTake);
@@ -92,7 +92,7 @@ public sealed class SortIndex
                 if (!PassesFilters(index, filters!, filterFieldIndexes!)) { continue; }
                 if (skipped < startIndex) { skipped++; continue; }
                 rented[count++] = index;
-                if (count >= pageSize) { break; }
+                if (pageSize.HasValue && count >= pageSize.Value) { break; }
             }
             var result = new int[count];
             rented.AsSpan(0, count).CopyTo(result);
