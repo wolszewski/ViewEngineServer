@@ -1,4 +1,3 @@
-using System.Buffers;
 using LiveViewEngine.Core.Data;
 
 namespace LiveViewEngine.Core;
@@ -10,7 +9,7 @@ public sealed class SortIndex
     private readonly RowCollection _collection;
     private readonly int _fieldIndex;
     private readonly bool _ascending;
-    private readonly List<int> _sortedIndexes;
+    private readonly OrderStatisticsTree _tree;
     private readonly Dictionary<int, string?> _indexValues;
 
     public SortIndex(RowCollection collection, int fieldIndex, bool ascending = true)
@@ -20,206 +19,85 @@ public sealed class SortIndex
         _ascending = ascending;
 
         var allRows = collection.GetAllLiveIndexes();
-        _sortedIndexes = new List<int>(allRows.Count);
         _indexValues = new Dictionary<int, string?>(allRows.Count);
+        _tree = new OrderStatisticsTree(CompareByIndex);
 
         foreach (var liveRow in allRows)
         {
             var index = liveRow.Value;
-            var val = collection.GetValue(index, fieldIndex);
-            _indexValues[index] = val;
-            _sortedIndexes.Add(index);
+            _indexValues[index] = collection.GetValue(index, fieldIndex);
         }
-        _sortedIndexes.Sort((a, b) => CompareByIndex(a, b));
+
+        // Insert in sorted order to minimise tree rotations during initial build.
+        var sorted = _indexValues.Keys.ToList();
+        sorted.Sort(CompareByIndex);
+        foreach (var index in sorted)
+        {
+            _tree.Insert(index);
+        }
     }
 
+    public int Count => _tree.Count;
+
+    // Valid only within the current synchronous call — do not store the span.
+    // Kept for callers that need a zero-allocation sorted snapshot (unfiltered fast path).
+    internal OrderStatisticsTree.TreeCursor GetCursor(int startIndex) => _tree.GetCursor(startIndex);
+
+    public IEnumerable<int> EnumerateFiltered(IReadOnlyList<FilterSpec> filters, int[] filterFieldIndexes)
+    {
+        var cursor = _tree.GetCursor(0);
+        while (cursor.MoveNext())
+        {
+            int index = cursor.Current;
+            if (PassesFilters(index, filters, filterFieldIndexes))
+            {
+                yield return index;
+            }
+        }
+    }
+
+    public int CountFiltered(IReadOnlyList<FilterSpec> filters, int[] filterFieldIndexes)
+    {
+        int count = 0;
+        var cursor = _tree.GetCursor(0);
+        while (cursor.MoveNext())
+        {
+            if (PassesFilters(cursor.Current, filters, filterFieldIndexes))
+            {
+                count++;
+            }
+        }
+        return count;
+    }
 
     public void OnUpsert(int index, string? newSortValue)
     {
         if (_indexValues.ContainsKey(index))
         {
-            RemoveIndex(index);
+            _tree.Delete(index); // must delete before updating _indexValues (comparison uses old value)
         }
-
         _indexValues[index] = newSortValue;
-        InsertIndex(index);
+        _tree.Insert(index);
     }
 
     public void OnDelete(int index)
     {
-        if (!_indexValues.ContainsKey(index))
-        {
-            return;
-        }
-
-        RemoveIndex(index);
+        if (!_indexValues.ContainsKey(index)) { return; }
+        _tree.Delete(index);
         _indexValues.Remove(index);
-    }
-
-
-    public int[] GetPageIndexes(int startIndex, int? pageSize,
-        IReadOnlyList<FilterSpec>? filters = null,
-        int[]? filterFieldIndexes = null)
-    {
-        if (startIndex < 0) { startIndex = 0; }
-        if (pageSize.HasValue && pageSize.Value <= 0) { return []; }
-
-        bool filtered = filters is { Count: > 0 };
-
-        if (!filtered)
-        {
-            int total = _sortedIndexes.Count;
-            if (startIndex >= total) { return []; }
-            int take = pageSize.HasValue ? Math.Min(pageSize.Value, total - startIndex) : total - startIndex;
-            var result = new int[take];
-            for (int i = 0; i < take; i++)
-            {
-                result[i] = _sortedIndexes[startIndex + i];
-            }
-            return result;
-        }
-
-        int maxTake = pageSize.HasValue ? Math.Min(pageSize.Value, _sortedIndexes.Count) : _sortedIndexes.Count;
-        if (maxTake == 0) { return []; }
-
-        var rented = ArrayPool<int>.Shared.Rent(maxTake);
-        try
-        {
-            int skipped = 0;
-            int count = 0;
-            foreach (var index in _sortedIndexes)
-            {
-                if (!PassesFilters(index, filters!, filterFieldIndexes!)) { continue; }
-                if (skipped < startIndex) { skipped++; continue; }
-                rented[count++] = index;
-                if (pageSize.HasValue && count >= pageSize.Value) { break; }
-            }
-            var result = new int[count];
-            rented.AsSpan(0, count).CopyTo(result);
-            return result;
-        }
-        finally
-        {
-            ArrayPool<int>.Shared.Return(rented);
-        }
-    }
-
-    public int GetCount(IReadOnlyList<FilterSpec>? filters = null, int[]? filterFieldIndexes = null)
-    {
-        if (filters is not { Count: > 0 })
-        {
-            return _sortedIndexes.Count;
-        }
-
-        int count = 0;
-        foreach (var index in _sortedIndexes)
-        {
-            if (PassesFilters(index, filters, filterFieldIndexes!))
-            {
-                count++;
-            }
-        }
-
-        return count;
-    }
-
-
-    private void InsertIndex(int index)
-    {
-        int lo = 0, hi = _sortedIndexes.Count;
-        while (lo < hi)
-        {
-            int mid = (lo + hi) >> 1;
-            if (CompareByIndex(_sortedIndexes[mid], index) < 0)
-            {
-                lo = mid + 1;
-            }
-            else
-            {
-                hi = mid;
-            }
-        }
-        _sortedIndexes.Insert(lo, index);
-    }
-
-    private void RemoveIndex(int index)
-    {
-        var val = _indexValues[index];
-        int lo = LowerBound(val), hi = UpperBound(val);
-        for (int i = lo; i < hi; i++)
-        {
-            if (_sortedIndexes[i] == index)
-            {
-                _sortedIndexes.RemoveAt(i);
-                return;
-            }
-        }
-    }
-
-    private int LowerBound(string? value)
-    {
-        int lo = 0, hi = _sortedIndexes.Count;
-        while (lo < hi)
-        {
-            int mid = (lo + hi) >> 1;
-            if (CompareValues(_indexValues[_sortedIndexes[mid]], value) < 0)
-            {
-                lo = mid + 1;
-            }
-            else
-            {
-                hi = mid;
-            }
-        }
-        return lo;
-    }
-
-    private int UpperBound(string? value)
-    {
-        int lo = 0, hi = _sortedIndexes.Count;
-        while (lo < hi)
-        {
-            int mid = (lo + hi) >> 1;
-            if (CompareValues(_indexValues[_sortedIndexes[mid]], value) <= 0)
-            {
-                lo = mid + 1;
-            }
-            else
-            {
-                hi = mid;
-            }
-        }
-        return lo;
     }
 
     private int CompareByIndex(int a, int b)
     {
-        var valueCompare = CompareValues(_indexValues[a], _indexValues[b]);
-        if (valueCompare != 0)
-        {
-            return valueCompare;
-        }
-
-        return a.CompareTo(b);
+        int valueCompare = CompareValues(_indexValues[a], _indexValues[b]);
+        return valueCompare != 0 ? valueCompare : a.CompareTo(b);
     }
 
     private int CompareValues(string? a, string? b)
     {
-        if (a is null && b is null)
-        {
-            return 0;
-        }
-
-        if (a is null)
-        {
-            return _ascending ? -1 : 1;
-        }
-
-        if (b is null)
-        {
-            return _ascending ? 1 : -1;
-        }
-
+        if (a is null && b is null) { return 0; }
+        if (a is null) { return _ascending ? -1 : 1; }
+        if (b is null) { return _ascending ? 1 : -1; }
         int cmp = string.Compare(a, b, StringComparison.Ordinal);
         return _ascending ? cmp : -cmp;
     }
@@ -229,17 +107,12 @@ public sealed class SortIndex
         for (int i = 0; i < filters.Count; i++)
         {
             int fi = fieldIndexes[i];
-            if (fi < 0)
-            {
-                continue;
-            }
-
+            if (fi < 0) { continue; }
             var val = _collection.GetValue(index, fi);
-            if (!FilterEvaluator.Matches(val, filters[i]))
-            {
-                return false;
-            }
+            if (!FilterEvaluator.Matches(val, filters[i])) { return false; }
         }
         return true;
     }
 }
+
+

@@ -216,7 +216,7 @@ public class ViewEngineIngestTests
         });
 
         var published = publisher.EventsFor("client1").ToList();
-        Assert.Single(published, e => e is RowUpdateEvent u && u.RowId == "o1");
+        Assert.Single(published, e => e is RowUpdateEvent { RowId: "o1" });
         Assert.DoesNotContain(published, e => e is RowInsertEvent);
         Assert.DoesNotContain(published, e => e is RowRemoveEvent);
     }

@@ -1,12 +1,17 @@
 <Solution>
+  <Folder Name="/benchmarks/">
+    <Project Path="src/LiveViewEngine.Core.Benchmarks/LiveViewEngine.Core.Benchmarks.csproj" />
+  </Folder>
   <Folder Name="/docs/">
     <File Path="docs\system-design.md" />
   </Folder>
   <Folder Name="/src/">
+    <Project Path="src/LiveViewEngine.Collections/LiveViewEngine.Collections.csproj" />
     <Project Path="src/LiveViewEngine.Core/LiveViewEngine.Core.csproj" />
     <Project Path="src/LiveViewEngine.WebHost/LiveViewEngine.WebHost.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="LiveViewEngine.Collections.UnitTests/LiveViewEngine.Collections.UnitTests.csproj" />
     <Project Path="src/LiveViewEngine.Core.IntegrationTests/LiveViewEngine.Core.IntegrationTests.csproj" />
     <Project Path="src/LiveViewEngine.Core.UnitTests/LiveViewEngine.Core.UnitTests.csproj" />
   </Folder>

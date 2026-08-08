@@ -36,10 +36,11 @@ public sealed class MutationPropagator(IOutboundPublisher publisher)
 
     private static MutationImpact AnalyzeMutationImpact(SharedView view, MutationInfo mutation, bool isDelete)
     {
+        if (isDelete) { return new MutationImpact(SortFieldChanged: false, NeedsFullRecompute: true); }
+        if (mutation.IsNew) { return new MutationImpact(SortFieldChanged: true, NeedsFullRecompute: true); }
+
         var (sortFieldTouched, filterFieldChanged) = view.TouchedFields(mutation.ChangedMask);
-        bool sortFieldChanged = mutation.IsNew || sortFieldTouched;
-        bool needsFullRecompute = isDelete || mutation.IsNew || sortFieldChanged || filterFieldChanged;
-        return new MutationImpact(sortFieldChanged, needsFullRecompute);
+        return new MutationImpact(SortFieldChanged: sortFieldTouched, NeedsFullRecompute: sortFieldTouched || filterFieldChanged);
     }
 
     private static void ApplyIndexMutation(
@@ -81,7 +82,7 @@ public sealed class MutationPropagator(IOutboundPublisher publisher)
                 continue;
             }
 
-            int position = IndexOfHandle(viewport.CurrentHandles, mutation.RowIndex);
+            int position = IndexOfHandle(viewport.CurrentRowIndexes, mutation.RowIndex);
             if (position < 0)
             {
                 continue;
@@ -122,13 +123,13 @@ public sealed class MutationPropagator(IOutboundPublisher publisher)
                 pageCache[cacheKey] = newHandles;
             }
 
-            var deltas = BuildDeltas(view.Key.Id, collection, viewport.CurrentHandles, mutation, isDelete, newHandles);
+            var deltas = BuildDeltas(view.Key.Id, collection, viewport.CurrentRowIndexes, mutation, isDelete, newHandles);
             if (deltas.Count == 0)
             {
                 continue;
             }
 
-            viewport.CurrentHandles = newHandles;
+            viewport.CurrentRowIndexes = newHandles;
             pendingPublishes ??= [];
             pendingPublishes.Add((connectionId, deltas));
         }

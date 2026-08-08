@@ -10,7 +10,7 @@ public sealed class ViewportState
     public int StartIndex { get; set; }
     public int? PageSize { get; set; }
 
-    public int[] CurrentHandles { get; set; } = [];
+    public int[] CurrentRowIndexes { get; set; } = [];
 }
 
 
