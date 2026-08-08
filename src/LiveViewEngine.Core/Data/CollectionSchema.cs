@@ -58,13 +58,6 @@ public sealed class CollectionSchema
                     nameof(fieldValues));
             }
 
-            if (fieldIndex == PrimaryKeyIndex)
-            {
-                throw new ArgumentException(
-                    $"Field '{fieldName}' is a primary key and cannot be updated.",
-                    nameof(fieldValues));
-            }
-
             mapped[index++] = new KeyValuePair<int, string?>(fieldIndex, value);
         }
 
