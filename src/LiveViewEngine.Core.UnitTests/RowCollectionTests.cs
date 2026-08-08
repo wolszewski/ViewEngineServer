@@ -33,8 +33,8 @@ public class RowCollectionTests
         var second = col.AddOrUpdate("r1", new Dictionary<string, string?> { ["name"] = "Bob" });
 
         Assert.False(second.IsNew);
-        Assert.Equal(first.Index, second.Index);
-        Assert.Equal("Bob", col.GetValue(second.Index, col.Schema.GetFieldIndex("name")));
+        Assert.Equal(first.RowIndex, second.RowIndex);
+        Assert.Equal("Bob", col.GetValue(second.RowIndex, col.Schema.GetFieldIndex("name")));
     }
 
     [Fact]
@@ -47,7 +47,7 @@ public class RowCollectionTests
 
         Assert.NotNull(deleted);
         Assert.Equal("r1", deleted!.RowId);
-        Assert.Null(col.GetRowId(row.Index));
+        Assert.Null(col.GetRowId(row.RowIndex));
     }
 
     [Fact]
@@ -94,7 +94,7 @@ public class RowCollectionTests
         var col = CreateCollection();
         var row = col.AddOrUpdate("r1", new Dictionary<string, string?> { ["name"] = "Alice", ["score"] = "42" });
 
-        var values = col.GetRowValues(row.Index);
+        var values = col.GetRowValues(row.RowIndex);
 
         Assert.Equal("r1", values[0]);
         Assert.Equal("Alice", values[1]);

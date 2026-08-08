@@ -2,9 +2,10 @@ namespace LiveViewEngine.Core.Data;
 
 public sealed class RowCollection(CollectionSchema schema)
 {
-    private readonly List<string?[]?> _rows = new();
     private readonly Dictionary<string, int> _rowKeyToIndex = new();
-    private readonly Stack<int> _freeIndexes = new();
+    
+    private readonly SlotList<string?[]> _rows = new();
+    
     public CollectionSchema Schema { get; } = schema;
 
     public MutationInfo AddOrUpdate(string key, IReadOnlyDictionary<string, string?> fieldChanges)
@@ -36,16 +37,7 @@ public sealed class RowCollection(CollectionSchema schema)
         
         var newRow = new string?[Schema.Fields.Count];
 
-        if (_freeIndexes.Count > 0)
-        {
-            rowIndex = _freeIndexes.Pop();
-            _rows[rowIndex] = newRow;
-        }
-        else
-        {
-            rowIndex = _rows.Count;
-            _rows.Add(newRow);
-        }
+        rowIndex = _rows.Add(newRow);
 
         newRow[0] = rowKey;
         _rowKeyToIndex[rowKey] = rowIndex;
@@ -66,30 +58,19 @@ public sealed class RowCollection(CollectionSchema schema)
         }
 
         _rowKeyToIndex.Remove(rowId);
-        _rows[index] = null;
-        _freeIndexes.Push(index);
+        _rows.RemoveAt(index);
 
         return new MutationInfo(rowId, index, false, null);
     }
 
     public string? GetValue(int index, int fieldIndex)
     {
-        if (index < 0 || index >= _rows.Count)
-        {
-            return null;
-        }
-
         var row = _rows[index];
         return row?[fieldIndex];
     }
 
     public string? GetRowId(int index)
     {
-        if (index < 0 || index >= _rows.Count)
-        {
-            return null;
-        }
-
         return _rows[index]?[CollectionSchema.PrimaryKeyIndex];
     }
 

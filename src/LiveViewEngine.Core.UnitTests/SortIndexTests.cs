@@ -24,7 +24,7 @@ public class SortIndexTests
         string active = "true")
     {
         var mutation = col.AddOrUpdate(key, new Dictionary<string, string?> { ["score"] = score, ["active"] = active });
-        idx.OnUpsert(mutation.Index, col.GetValue(mutation.Index, scoreFieldIndex));
+        idx.OnUpsert(mutation.RowIndex, col.GetValue(mutation.RowIndex, scoreFieldIndex));
     }
 
     [Fact]
@@ -63,7 +63,7 @@ public class SortIndexTests
         Upsert(col, idx, scoreFieldIndex, "b", "4");
 
         var mutation = col.AddOrUpdate("b", new Dictionary<string, string?> { ["score"] = "1" });
-        idx.OnUpsert(mutation.Index, col.GetValue(mutation.Index, scoreFieldIndex));
+        idx.OnUpsert(mutation.RowIndex, col.GetValue(mutation.RowIndex, scoreFieldIndex));
 
         var indexes = idx.GetPageIndexes(0, 10);
         Assert.Equal("1", col.GetValue(indexes[0], scoreFieldIndex));
@@ -78,7 +78,7 @@ public class SortIndexTests
         Upsert(col, idx, scoreFieldIndex, "b", "2");
 
         var deleted = col.Delete("a");
-        idx.OnDelete(deleted!.Index);
+        idx.OnDelete(deleted!.RowIndex);
 
         var indexes = idx.GetPageIndexes(0, 10);
         Assert.Single(indexes);

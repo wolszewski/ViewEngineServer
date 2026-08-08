@@ -10,6 +10,7 @@ public sealed class SharedView
     private readonly RowCollection _collection;
     private readonly int _sortFieldIndex;
     private readonly int[] _filterFieldIndexes;
+    private readonly HashSet<int> _filterFieldSet;
     private readonly SortIndex _sortIndex;
 
     private readonly ConcurrentDictionary<string, bool> _subscribers = new();
@@ -30,6 +31,7 @@ public sealed class SharedView
         _filterFieldIndexes = key.Filters.Count > 0
             ? key.Filters.Select(f => collection.Schema.GetFieldIndex(f.FieldName)).ToArray()
             : [];
+        _filterFieldSet = [.._filterFieldIndexes];
 
         _sortIndex = new SortIndex(collection, _sortFieldIndex, key.SortAscending);
     }
@@ -68,14 +70,26 @@ public sealed class SharedView
 
     public bool FilterFieldTouched(IReadOnlyCollection<KeyValuePair<int, string?>>? changedColumns)
     {
-        if (changedColumns is null || _filterFieldIndexes.Length == 0) { return false; }
+        if (changedColumns is null || _filterFieldSet.Count == 0) { return false; }
         foreach (var (col, _) in changedColumns)
         {
-            foreach (var fi in _filterFieldIndexes)
-            {
-                if (col == fi) { return true; }
-            }
+            if (_filterFieldSet.Contains(col)) { return true; }
         }
         return false;
+    }
+
+    public (bool SortFieldChanged, bool FilterFieldChanged) TouchedFields(
+        IReadOnlyCollection<KeyValuePair<int, string?>>? changedColumns)
+    {
+        if (changedColumns is null) { return (false, false); }
+        bool sortTouched = false;
+        bool filterTouched = false;
+        foreach (var (col, _) in changedColumns)
+        {
+            if (!sortTouched && col == _sortFieldIndex) { sortTouched = true; }
+            if (!filterTouched && _filterFieldSet.Contains(col)) { filterTouched = true; }
+            if (sortTouched && filterTouched) { break; }
+        }
+        return (sortTouched, filterTouched);
     }
 }

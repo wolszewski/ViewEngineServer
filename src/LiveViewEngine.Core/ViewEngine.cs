@@ -20,6 +20,7 @@ public sealed class ViewEngine(
 {
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<ViewKey, SharedView>> _sharedViewsByCollection = new();
     private readonly ConcurrentDictionary<string, ViewportState> _viewports = new();
+    private readonly MutationPropagator _mutationPropagator = new(publisher);
 
     public async Task<IngestResult> IngestAsync(IngestCommand command, CancellationToken ct = default)
     {
@@ -75,7 +76,16 @@ public sealed class ViewEngine(
         }
 
         var mutation = collection.AddOrUpdate(command.Key, command.Fields);
-        await PropagateMutationAsync(collection, mutation, isDelete: false, ct);
+        if (_sharedViewsByCollection.TryGetValue(collection.Schema.CollectionName, out var collectionViews))
+        {
+            await _mutationPropagator.PropagateAsync(
+                collection,
+                collectionViews,
+                _viewports,
+                mutation,
+                isDelete: false,
+                ct);
+        }
         return IngestResult.Ok();
     }
 
@@ -92,219 +102,18 @@ public sealed class ViewEngine(
             return IngestResult.Ok();
         }
 
-        await PropagateMutationAsync(collection, mutation, isDelete: true, ct);
+        if (_sharedViewsByCollection.TryGetValue(collection.Schema.CollectionName, out var collectionViews))
+        {
+            await _mutationPropagator.PropagateAsync(
+                collection,
+                collectionViews,
+                _viewports,
+                mutation,
+                isDelete: true,
+                ct);
+        }
         return IngestResult.Ok();
     }
-
-    private async Task PropagateMutationAsync(
-        RowCollection collection, MutationInfo mutation, bool isDelete, CancellationToken ct)
-    {
-        if (!_sharedViewsByCollection.TryGetValue(collection.Schema.CollectionName, out var collectionViews))
-        {
-            return;
-        }
-
-        List<(string ConnectionId, IReadOnlyList<ViewDelta> Deltas)>? pendingPublishes = null;
-        foreach (var entry in collectionViews)
-        {
-            var view = entry.Value;
-
-            bool sortFieldChanged = mutation.IsNew || view.SortFieldTouched(mutation.ChangedColumns);
-            bool filterFieldChanged = view.FilterFieldTouched(mutation.ChangedColumns);
-            bool needsFullRecompute = isDelete || mutation.IsNew || sortFieldChanged || filterFieldChanged;
-
-            if (isDelete)
-            {
-                view.NotifyDelete(mutation.Index);
-            }
-            else if (sortFieldChanged)
-            {
-                var sortValue = collection.GetValue(mutation.Index, view.SortFieldIndex);
-                view.NotifyUpsert(mutation.Index, sortValue);
-            }
-
-            if (!needsFullRecompute)
-            {
-                // Fast path: sort and filter are unaffected — emit RowUpdate only for subscribers
-                // whose viewport already contains this row handle.
-                if (mutation.ChangedColumns is not { Count: > 0 })
-                {
-                    continue;
-                }
-
-                foreach (var connectionId in view.Subscribers)
-                {
-                    if (!_viewports.TryGetValue(connectionId, out var viewport))
-                    {
-                        continue;
-                    }
-
-                    int pos = IndexOfHandle(viewport.CurrentHandles, mutation.Index);
-                    if (pos < 0)
-                    {
-                        continue;
-                    }
-
-                    pendingPublishes ??= [];
-                    pendingPublishes.Add((connectionId, [new RowUpdateDelta
-                    {
-                        ViewId = view.Key.Id,
-                        Schema = collection.Schema,
-                        RowId = mutation.RowId,
-                        Position = pos,
-                        ChangedColumns = mutation.ChangedColumns!
-                    }]));
-                }
-
-                continue;
-            }
-
-            var pageCache = new Dictionary<(int, int), int[]>(4);
-
-            foreach (var connectionId in view.Subscribers)
-            {
-                if (!_viewports.TryGetValue(connectionId, out var viewport))
-                {
-                    continue;
-                }
-
-                var cacheKey = (viewport.StartIndex, viewport.PageSize);
-                if (!pageCache.TryGetValue(cacheKey, out var newHandles))
-                {
-                    newHandles = view.GetPageIndexes(viewport.StartIndex, viewport.PageSize);
-                    pageCache[cacheKey] = newHandles;
-                }
-
-                var events = BuildDeltas(view.Key.Id, collection, viewport.CurrentHandles, mutation, isDelete, newHandles);
-                if (events.Count == 0)
-                {
-                    continue;
-                }
-
-                viewport.CurrentHandles = newHandles;
-                pendingPublishes ??= [];
-                pendingPublishes.Add((connectionId, events));
-            }
-        }
-
-        await PublishAllAsync(pendingPublishes, ct);
-    }
-
-    private async Task PublishAllAsync(
-        List<(string ConnectionId, IReadOnlyList<ViewDelta> Deltas)>? publishes,
-        CancellationToken ct)
-    {
-        if (publishes is not { Count: > 0 })
-        {
-            return;
-        }
-
-        List<Task>? incomplete = null;
-        foreach (var (connectionId, deltas) in publishes)
-        {
-            var publish = publisher.PublishAsync(connectionId, deltas, ct);
-            if (!publish.IsCompletedSuccessfully)
-            {
-                incomplete ??= new List<Task>(publishes.Count);
-                incomplete.Add(publish.AsTask());
-            }
-        }
-
-        if (incomplete is { Count: > 0 })
-        {
-            await Task.WhenAll(incomplete);
-        }
-    }
-
-    private IReadOnlyList<ViewDelta> BuildDeltas(
-        string viewId,
-        RowCollection collection,
-        int[] oldHandles,
-        MutationInfo mutation,
-        bool isDelete,
-        int[] newHandles)
-    {
-        if (HandlesEqual(newHandles, oldHandles))
-        {
-            if (isDelete) { return []; }
-            return BuildFieldUpdateEvents(viewId, newHandles, mutation, collection);
-        }
-
-        var events = new List<ViewDelta>(newHandles.Length + oldHandles.Length);
-
-        for (int i = oldHandles.Length - 1; i >= 0; i--)
-        {
-            if (!ContainsHandle(newHandles, oldHandles[i]))
-            {
-                events.Add(new RowRemoveDelta { ViewId = viewId, Position = i });
-            }
-        }
-
-        for (int i = 0; i < newHandles.Length; i++)
-        {
-            if (!ContainsHandle(oldHandles, newHandles[i]))
-            {
-                events.Add(new RowInsertDelta
-                {
-                    ViewId = viewId,
-                    Position = i,
-                    Schema = collection.Schema,
-                    Row = CopyRow(collection.GetRowValues(newHandles[i]))
-                });
-            }
-        }
-
-        var fieldUpdates = BuildFieldUpdateEvents(viewId, newHandles, mutation, collection);
-        events.AddRange(fieldUpdates);
-
-        return events;
-    }
-
-    private static IReadOnlyList<ViewDelta> BuildFieldUpdateEvents(
-        string viewId,
-        int[] handles,
-        MutationInfo mutation,
-        RowCollection collection)
-    {
-        if (mutation.IsNew || mutation.ChangedColumns is not { Count: > 0 })
-        {
-            return [];
-        }
-
-        int pos = IndexOfHandle(handles, mutation.Index);
-        if (pos < 0) { return []; }
-
-        return [new RowUpdateDelta
-        {
-            ViewId = viewId,
-            Schema = collection.Schema,
-            RowId = mutation.RowId,
-            Position = pos,
-            ChangedColumns = mutation.ChangedColumns
-        }];
-    }
-
-    private static bool HandlesEqual(int[] first, int[] second)
-    {
-        if (first.Length != second.Length) { return false; }
-        for (int i = 0; i < first.Length; i++)
-        {
-            if (first[i] != second[i]) { return false; }
-        }
-        return true;
-    }
-
-    private static int IndexOfHandle(int[] handles, int handle)
-    {
-        for (int i = 0; i < handles.Length; i++)
-        {
-            if (handles[i] == handle) { return i; }
-        }
-        return -1;
-    }
-
-    private static bool ContainsHandle(int[] handles, int handle) =>
-        IndexOfHandle(handles, handle) >= 0;
 
     private static IReadOnlyList<string?[]> BuildRows(RowCollection collection, int[] indexes)
     {

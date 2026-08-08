@@ -1,16 +1,18 @@
 namespace LiveViewEngine.Core.Data;
 
-public class SlotList<T>
+public sealed class SlotList<T>
+    where T : class
 {
     private readonly Stack<int> _freeIndexes = new();
-    private readonly List<T> _data = new();
-    
-    public T this[int index]
+    private readonly List<T?> _data = new();
+
+    public T? this[int index]
     {
         get => _data[index];
     }
-    
-    public  int Count => _data.Count;
+
+    public int Capacity => _data.Count;
+    public int LiveCount => _data.Count - _freeIndexes.Count;
 
     public int Add(T item)
     {
@@ -30,7 +32,17 @@ public class SlotList<T>
 
     public void RemoveAt(int index)
     {
-        _data[index] = default!;
+        if (index < 0 || index >= _data.Count)
+        {
+            throw new ArgumentOutOfRangeException(nameof(index));
+        }
+
+        if (_data[index] is null)
+        {
+            throw new InvalidOperationException($"Slot at index {index} is already empty.");
+        }
+
+        _data[index] = null;
         _freeIndexes.Push(index);
     }
 }
