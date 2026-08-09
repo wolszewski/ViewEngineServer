@@ -6,13 +6,11 @@ namespace LiveViewEngine.Core.Views;
 public sealed class SharedView
 {
     public ViewKey Key { get; }
-
     private readonly RowCollection _collection;
-    private readonly int _sortFieldIndex;
-    private readonly int[] _filterFieldIndexes;
-    private readonly FieldMask _filterFields;
     private readonly SortIndex _sortIndex;
+    private readonly FilterSet _filters;
     private readonly FilteredDataIndex? _filteredIndex;
+    private readonly IRowIndex _activeIndex;
     private readonly ConcurrentDictionary<string, bool> _subscribers = new();
 
     public SharedView(ViewKey key, RowCollection collection, SortIndex sortIndex)
@@ -20,29 +18,22 @@ public sealed class SharedView
         Key = key;
         _collection = collection;
         _sortIndex = sortIndex;
-        _sortFieldIndex = sortIndex.FieldIndex;
 
-        _filterFieldIndexes = key.Filters.Count > 0
-            ? key.Filters.Select(f => collection.Schema.GetFieldIndex(f.FieldName)).ToArray()
-            : Array.Empty<int>();
-        _filterFields = FieldMask.From(_filterFieldIndexes.AsSpan());
-
-        if (_filterFieldIndexes.Length <= 0)
+        _filters = FilterSet.Create(key.Filters, collection.Schema);
+        if (_filters.HasFilters)
         {
-            return;
+            _filteredIndex = new FilteredDataIndex(_sortIndex.GetComparer(), _sortIndex.EnumerateFiltered(_filters));
         }
-
-        _filteredIndex = new FilteredDataIndex(_sortIndex.GetComparer(), _sortIndex.EnumerateFiltered(key.Filters, _filterFieldIndexes));
+        _activeIndex = (IRowIndex?)_filteredIndex ?? sortIndex;
     }
 
-    public int SortFieldIndex => _sortFieldIndex;
     internal SortIndex SortIndex => _sortIndex;
 
     public IEnumerable<string> Subscribers => _subscribers.Keys;
 
     public bool IsEmpty => _subscribers.IsEmpty;
 
-    internal int FilteredCount => _filteredIndex?.Count ?? _sortIndex.Count;
+    internal int FilteredCount => _activeIndex.Count;
 
     public void AddSubscriber(string connectionId) => _subscribers[connectionId] = true;
 
@@ -61,7 +52,7 @@ public sealed class SharedView
             return [];
         }
 
-        int total = _filteredIndex?.Count ?? _sortIndex.Count;
+        int total = _activeIndex.Count;
         if (startIndex >= total)
         {
             return [];
@@ -69,36 +60,15 @@ public sealed class SharedView
 
         int take = pageSize.HasValue ? Math.Min(pageSize.Value, total - startIndex) : total - startIndex;
         var result = new int[take];
-
-        if (_filteredIndex != null)
-        {
-            var cursor = _filteredIndex.GetCursor(startIndex);
-            for (int i = 0; i < take; i++)
-            {
-                cursor.MoveNext();
-                result[i] = cursor.Current;
-            }
-
-            return result;
-        }
-
-        var unfilteredCursor = _sortIndex.GetCursor(startIndex);
-        for (int i = 0; i < take; i++)
-        {
-            unfilteredCursor.MoveNext();
-            result[i] = unfilteredCursor.Current;
-        }
-
+        _activeIndex.Take(startIndex, result);
         return result;
     }
 
-    public int GetTotalCount() => _filteredIndex?.Count ?? _sortIndex.Count;
+    public int GetTotalCount() => _activeIndex.Count;
 
-    internal int GetFilteredByIndex(int position) =>
-        _filteredIndex != null ? _filteredIndex.GetByIndex(position) : _sortIndex.GetByIndex(position);
+    internal int GetFilteredByIndex(int position) => _activeIndex.GetByIndex(position);
 
-    internal int FilteredIndexOf(int rowIndex) =>
-        _filteredIndex != null ? _filteredIndex.IndexOf(rowIndex) : _sortIndex.IndexOf(rowIndex);
+    internal int FilteredIndexOf(int rowIndex) => _activeIndex.IndexOf(rowIndex);
 
     internal int PrepareUpsert(int rowIndex, bool isNew)
     {
@@ -131,28 +101,10 @@ public sealed class SharedView
 
     public (bool SortFieldChanged, bool FilterFieldChanged) TouchedFields(in FieldMask changedMask)
     {
-        bool sortTouched = changedMask[_sortFieldIndex];
-        bool filterTouched = _filterFields.Intersects(changedMask);
+        bool sortTouched = changedMask[_sortIndex.FieldIndex];
+        bool filterTouched = _filters.Mask.Intersects(changedMask);
         return (sortTouched, filterTouched);
     }
 
-    private bool PassesFilters(int index)
-    {
-        for (int i = 0; i < Key.Filters.Count; i++)
-        {
-            int fieldIndex = _filterFieldIndexes[i];
-            if (fieldIndex < 0)
-            {
-                continue;
-            }
-
-            var value = _collection.GetValue(index, fieldIndex);
-            if (!FilterEvaluator.Matches(value, Key.Filters[i]))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
+    private bool PassesFilters(int rowIndex) => _filters.Passes(_collection, rowIndex);
 }

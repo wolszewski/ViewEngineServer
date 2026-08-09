@@ -2,14 +2,9 @@ using LiveViewEngine.Collections;
 
 namespace LiveViewEngine.Core;
 
-internal sealed class FilteredDataIndex
+internal sealed class FilteredDataIndex : IRowIndex
 {
     private readonly NodeArrayTree<SortIndex.RowComparer> _index;
-
-    internal FilteredDataIndex(SortIndex.RowComparer comparer)
-    {
-        _index = new NodeArrayTree<SortIndex.RowComparer>(comparer);
-    }
 
     internal FilteredDataIndex(SortIndex.RowComparer comparer, IEnumerable<int> rows)
     {
@@ -20,17 +15,15 @@ internal sealed class FilteredDataIndex
         }
     }
 
-    internal int Count => _index.Count;
+    public int Count => _index.Count;
 
     internal int Insert(int rowIndex) => _index.Insert(rowIndex);
 
     internal int TryDelete(int rowIndex) => _index.TryDelete(rowIndex);
 
-    internal bool Contains(int rowIndex) => _index.Contains(rowIndex);
+    public int IndexOf(int rowIndex) => _index.IndexOf(rowIndex);
 
-    internal int IndexOf(int rowIndex) => _index.IndexOf(rowIndex);
+    public int GetByIndex(int k) => _index.GetByIndex(k);
 
-    internal int GetByIndex(int k) => _index.GetByIndex(k);
-
-    internal NodeArrayTree<SortIndex.RowComparer>.TreeCursor GetCursor(int startIndex) => _index.GetCursor(startIndex);
+    public void Take(int startIndex, Span<int> destination) => _index.Take(startIndex, destination);
 }

@@ -114,6 +114,18 @@ public sealed class NodeArrayTree<TComparer> where TComparer : IComparer<int>
         return finger.Found ? finger.Index : -1;
     }
 
+    public void Take(int startIndex, Span<int> destination)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(startIndex);
+
+        var cursor = GetCursor(startIndex);
+        for (int i = 0; i < destination.Length; i++)
+        {
+            cursor.MoveNext();
+            destination[i] = cursor.Current;
+        }
+    }
+
     public TreeCursor GetCursor(int startIndex)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(startIndex);

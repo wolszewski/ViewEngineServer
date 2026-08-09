@@ -3,7 +3,7 @@ using LiveViewEngine.Core.Data;
 
 namespace LiveViewEngine.Core;
 
-public sealed class SortIndex
+public sealed class SortIndex : IRowIndex
 {
     private readonly RowCollection _collection;
     private readonly int _fieldIndex;
@@ -31,30 +31,32 @@ public sealed class SortIndex
     public int Count => _tree.Count;
     public int FieldIndex => _fieldIndex;
 
+    public void Take(int startIndex, Span<int> destination) => _tree.Take(startIndex, destination);
+
     internal NodeArrayTree<RowComparer>.TreeCursor GetCursor(int startIndex) => _tree.GetCursor(startIndex);
 
     internal RowComparer GetComparer() => new(this, _ascending);
 
-    public IEnumerable<int> EnumerateFiltered(IReadOnlyList<FilterSpec> filters, int[] filterFieldIndexes)
+    internal IEnumerable<int> EnumerateFiltered(FilterSet filters)
     {
         var cursor = _tree.GetCursor(0);
         while (cursor.MoveNext())
         {
             int index = cursor.Current;
-            if (PassesFilters(index, filters, filterFieldIndexes))
+            if (filters.Passes(_collection, index))
             {
                 yield return index;
             }
         }
     }
 
-    public int CountFiltered(IReadOnlyList<FilterSpec> filters, int[] filterFieldIndexes)
+    internal int CountFiltered(FilterSet filters)
     {
         int count = 0;
         var cursor = _tree.GetCursor(0);
         while (cursor.MoveNext())
         {
-            if (PassesFilters(cursor.Current, filters, filterFieldIndexes))
+            if (filters.Passes(_collection, cursor.Current))
             {
                 count++;
             }
@@ -126,26 +128,6 @@ public sealed class SortIndex
     public int IndexOf(int index) => _tree.IndexOf(index);
 
     public int GetByIndex(int index) => _tree.GetByIndex(index);
-
-    private bool PassesFilters(int index, IReadOnlyList<FilterSpec> filters, int[] fieldIndexes)
-    {
-        for (int i = 0; i < filters.Count; i++)
-        {
-            int fi = fieldIndexes[i];
-            if (fi < 0)
-            {
-                continue;
-            }
-
-            var val = _collection.GetValue(index, fi);
-            if (!FilterEvaluator.Matches(val, filters[i]))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
 
     internal readonly struct RowComparer : IComparer<int>
     {

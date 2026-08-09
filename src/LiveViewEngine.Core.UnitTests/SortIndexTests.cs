@@ -33,20 +33,19 @@ public class SortIndexTests
     }
 
     // Mirrors the paging logic that now lives in SharedView, for testing SortIndex behaviour.
-    private static int[] GetPage(SortIndex idx, int startIndex, int? pageSize,
-        IReadOnlyList<FilterSpec>? filters = null, int[]? filterFieldIndexes = null)
+    private static int[] GetPage(SortIndex idx, int startIndex, int? pageSize, FilterSet? filters = null)
     {
         if (startIndex < 0) { startIndex = 0; }
         if (pageSize is 0) { return []; }
 
-        if (filters is { Count: > 0 })
+        if (filters is { HasFilters: true })
         {
             int capacity = pageSize ?? idx.Count;
             var rented = ArrayPool<int>.Shared.Rent(capacity);
             try
             {
                 int skipped = 0, count = 0;
-                foreach (var rowIndex in idx.EnumerateFiltered(filters, filterFieldIndexes!))
+                foreach (var rowIndex in idx.EnumerateFiltered(filters))
                 {
                     if (skipped < startIndex) { skipped++; continue; }
                     rented[count++] = rowIndex;
@@ -139,7 +138,7 @@ public class SortIndexTests
         Upsert(col, idx, "c", "30", "true");
 
         var filter = new FilterSpec("active", FilterOperator.Eq, "true");
-        var indexes = GetPage(idx, 0, 10, [filter], [activeFieldIndex]);
+        var indexes = GetPage(idx, 0, 10, new FilterSet([filter], [activeFieldIndex]));
 
         Assert.Equal(2, indexes.Length);
     }
@@ -227,7 +226,7 @@ public class SortIndexTests
         Upsert(col, idx, "d", "40", "false");
 
         var filter = new FilterSpec("active", FilterOperator.Eq, "true");
-        var indexes = GetPage(idx, 1, 10, [filter], [activeFieldIndex]);
+        var indexes = GetPage(idx, 1, 10, new FilterSet([filter], [activeFieldIndex]));
         var scores = indexes.Select(i => col.GetValue(i, scoreFieldIndex)).ToList();
 
         Assert.Equal(["20", "30"], scores);
