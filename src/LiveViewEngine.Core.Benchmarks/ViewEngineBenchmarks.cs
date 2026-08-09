@@ -155,6 +155,12 @@ public class ViewEngineBenchmarks
         foreach (var command in _commands) { await engine.IngestAsync(command); }
     }
 
+    [Benchmark] public async Task Insert10k_SameSort_DifferentFilters_4Subscribers()
+    {
+        var engine = CreateEngine(BuildSameSortDifferentFilterViews(4));
+        foreach (var command in _commands) { await engine.IngestAsync(command); }
+    }
+
     // Generates N unique ViewDefinitions with distinct sort columns and filters.
     internal static ViewDefinition[] BuildDistinctViews(int count)
     {
@@ -169,6 +175,23 @@ public class ViewEngineBenchmarks
                 SortColumn = sortColumns[i % sortColumns.Length],
                 SortAscending = i % 2 == 0,
                 Filters = [new FilterSpec("category", FilterOperator.Eq, filterCategories[i % filterCategories.Length])]
+            };
+        }
+        return views;
+    }
+
+    internal static ViewDefinition[] BuildSameSortDifferentFilterViews(int count)
+    {
+        string[] categories = ["category1", "category2", "category3", "category4"];
+        var views = new ViewDefinition[count];
+        for (int i = 0; i < count; i++)
+        {
+            views[i] = new ViewDefinition
+            {
+                CollectionId = CollectionId,
+                SortColumn = "date",
+                SortAscending = false,
+                Filters = [new FilterSpec("category", FilterOperator.Eq, categories[i % categories.Length])]
             };
         }
         return views;
@@ -230,6 +253,7 @@ public class ViewEngineModifyBenchmarks
     private ViewEngine _engineFiltered1 = null!;
     private ViewEngine _engineFiltered2 = null!;
     private ViewEngine _engineFiltered10 = null!;
+    private ViewEngine _engineSameSort4 = null!;
     private ViewEngine _engineDiff2 = null!;
     private ViewEngine _engineDiff10 = null!;
 
@@ -276,6 +300,9 @@ public class ViewEngineModifyBenchmarks
         _engineFiltered1    = Populate(ViewEngineBenchmarks.CreateEngine([filteredView]), inserts);
         _engineFiltered2    = Populate(ViewEngineBenchmarks.CreateEngine([filteredView, filteredView]), inserts);
         _engineFiltered10   = Populate(ViewEngineBenchmarks.CreateEngine(Enumerable.Repeat(filteredView, 10).ToArray()), inserts);
+        _engineSameSort4    = Populate(
+            ViewEngineBenchmarks.CreateEngine(ViewEngineBenchmarks.BuildSameSortDifferentFilterViews(4)),
+            inserts);
         _engineDiff2        = Populate(ViewEngineBenchmarks.CreateEngine(ViewEngineBenchmarks.BuildDistinctViews(2)), inserts);
         _engineDiff10       = Populate(ViewEngineBenchmarks.CreateEngine(ViewEngineBenchmarks.BuildDistinctViews(10)), inserts);
     }
@@ -334,6 +361,11 @@ public class ViewEngineModifyBenchmarks
     [Benchmark] public async Task Modify10k_SortedAndFiltered_10Subscribers()
     {
         foreach (var cmd in _modifyCommands) { await _engineFiltered10.IngestAsync(cmd); }
+    }
+
+    [Benchmark] public async Task Modify10k_SameSort_DifferentFilters_4Subscribers()
+    {
+        foreach (var cmd in _modifyCommands) { await _engineSameSort4.IngestAsync(cmd); }
     }
 
     [Benchmark] public async Task Modify10k_DifferentViews_2Subscribers()

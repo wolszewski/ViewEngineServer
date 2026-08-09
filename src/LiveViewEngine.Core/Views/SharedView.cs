@@ -15,25 +15,18 @@ public sealed class SharedView
     private readonly FilteredSortIndex? _filteredIndex;
     private readonly ConcurrentDictionary<string, bool> _subscribers = new();
 
-    public SharedView(ViewKey key, RowCollection collection)
+    public SharedView(ViewKey key, RowCollection collection, SortIndex sortIndex)
     {
         Key = key;
         _collection = collection;
-
-        _sortFieldIndex = key.SortColumn is not null
-            ? collection.Schema.GetFieldIndex(key.SortColumn)
-            : -1;
-        if (_sortFieldIndex < 0)
-        {
-            _sortFieldIndex = collection.Schema.PrimaryKey.FieldIndex;
-        }
+        _sortIndex = sortIndex;
+        _sortFieldIndex = sortIndex.FieldIndex;
 
         _filterFieldIndexes = key.Filters.Count > 0
             ? key.Filters.Select(f => collection.Schema.GetFieldIndex(f.FieldName)).ToArray()
             : [];
         _filterFields = FieldMask.From(_filterFieldIndexes.AsSpan());
 
-        _sortIndex = new SortIndex(collection, _sortFieldIndex, key.SortAscending);
         if (_filterFieldIndexes.Length > 0)
         {
             _filteredIndex = new FilteredSortIndex(_sortIndex.GetComparer());
@@ -50,6 +43,7 @@ public sealed class SharedView
     }
 
     public int SortFieldIndex => _sortFieldIndex;
+    internal SortIndex SortIndex => _sortIndex;
 
     public IEnumerable<string> Subscribers => _subscribers.Keys;
 
@@ -113,43 +107,33 @@ public sealed class SharedView
     internal int FilteredIndexOf(int rowIndex) =>
         _filteredIndex != null ? _filteredIndex.IndexOf(rowIndex) : _sortIndex.IndexOf(rowIndex);
 
-    public (int OldFilteredPos, int NewFilteredPos) NotifyUpsert(int index, string? newSortValue, bool isNew)
+    internal int PrepareUpsert(int rowIndex, bool isNew)
     {
-        int oldFilteredPos;
         if (isNew)
         {
-            oldFilteredPos = -1;
-        }
-        else
-        {
-            oldFilteredPos = _filteredIndex != null
-                ? _filteredIndex.TryDelete(index)
-                : _sortIndex.IndexOf(index);
+            return -1;
         }
 
-        _sortIndex.OnUpsert(index, newSortValue);
-
-        int newFilteredPos;
-        if (_filteredIndex != null)
-        {
-            newFilteredPos = PassesFilters(index) ? _filteredIndex.Insert(index) : -1;
-        }
-        else
-        {
-            newFilteredPos = _sortIndex.IndexOf(index);
-        }
-
-        return (oldFilteredPos, newFilteredPos);
+        return _filteredIndex != null
+            ? _filteredIndex.TryDelete(rowIndex)
+            : _sortIndex.IndexOf(rowIndex);
     }
 
-    public int NotifyDelete(int index)
+    internal int CompleteUpsert(int rowIndex)
     {
-        int oldFilteredPos = _filteredIndex != null
-            ? _filteredIndex.TryDelete(index)
-            : _sortIndex.IndexOf(index);
+        if (_filteredIndex != null)
+        {
+            return PassesFilters(rowIndex) ? _filteredIndex.Insert(rowIndex) : -1;
+        }
 
-        _sortIndex.OnDelete(index);
-        return oldFilteredPos;
+        return _sortIndex.IndexOf(rowIndex);
+    }
+
+    internal int PrepareDelete(int rowIndex)
+    {
+        return _filteredIndex != null
+            ? _filteredIndex.TryDelete(rowIndex)
+            : _sortIndex.IndexOf(rowIndex);
     }
 
     public (bool SortFieldChanged, bool FilterFieldChanged) TouchedFields(in FieldMask changedMask)

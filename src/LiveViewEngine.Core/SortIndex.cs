@@ -37,6 +37,7 @@ public sealed class SortIndex
     }
 
     public int Count => _tree.Count;
+    public int FieldIndex => _fieldIndex;
 
     internal NodeArrayTree<RowComparer>.TreeCursor GetCursor(int startIndex) => _tree.GetCursor(startIndex);
 

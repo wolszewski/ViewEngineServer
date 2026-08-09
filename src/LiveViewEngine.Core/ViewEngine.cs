@@ -20,6 +20,7 @@ public sealed class ViewEngine(
 {
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<ViewKey, SharedView>> _sharedViewsByCollection = new();
     private readonly ConcurrentDictionary<string, ViewportState> _viewports = new();
+    private readonly SortIndexRegistry _sortIndexRegistry = new();
     private readonly MutationPropagator _mutationPropagator = new(publisher);
 
     public async Task<IngestResult> IngestAsync(IngestCommand command, CancellationToken ct = default)
@@ -144,7 +145,9 @@ public sealed class ViewEngine(
         var key = ViewKey.From(command.View);
         var collectionViews = _sharedViewsByCollection.GetOrAdd(
             key.CollectionId, _ => new ConcurrentDictionary<ViewKey, SharedView>());
-        var view = collectionViews.GetOrAdd(key, k => new SharedView(k, collection));
+        var sortIndexKey = CreateSortIndexKey(collection, key);
+        var sortIndex = _sortIndexRegistry.GetOrCreate(sortIndexKey, collection);
+        var view = collectionViews.GetOrAdd(key, k => new SharedView(k, collection, sortIndex));
         view.AddSubscriber(command.ConnectionId);
 
         var viewport = new ViewportState
@@ -220,13 +223,34 @@ public sealed class ViewEngine(
             && collectionViews.TryGetValue(viewport.ViewKey, out var view))
         {
             view.RemoveSubscriber(command.ConnectionId);
-            if (view.IsEmpty)
+            if (view.IsEmpty && collectionViews.TryRemove(viewport.ViewKey, out _))
             {
-                collectionViews.TryRemove(viewport.ViewKey, out _);
+                var sortIndexKey = new SortIndexKey(
+                    viewport.ViewKey.CollectionId,
+                    view.SortIndex.FieldIndex,
+                    viewport.ViewKey.SortAscending);
+                bool stillUsed = collectionViews.Values.Any(candidate => ReferenceEquals(candidate.SortIndex, view.SortIndex));
+                if (!stillUsed)
+                {
+                    _sortIndexRegistry.Remove(sortIndexKey);
+                }
             }
         }
 
         logger.LogInformation("Client '{ConnectionId}' unsubscribed.", command.ConnectionId);
         return [];
+    }
+
+    private static SortIndexKey CreateSortIndexKey(RowCollection collection, ViewKey key)
+    {
+        int sortFieldIndex = key.SortColumn is not null
+            ? collection.Schema.GetFieldIndex(key.SortColumn)
+            : collection.Schema.PrimaryKey.FieldIndex;
+        if (sortFieldIndex < 0)
+        {
+            sortFieldIndex = collection.Schema.PrimaryKey.FieldIndex;
+        }
+
+        return new SortIndexKey(key.CollectionId, sortFieldIndex, key.SortAscending);
     }
 }

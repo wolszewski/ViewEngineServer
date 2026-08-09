@@ -14,31 +14,61 @@ public sealed class MutationPropagator(IOutboundPublisher publisher)
         CancellationToken ct = default)
     {
         List<(string ConnectionId, IReadOnlyList<ViewDelta> Deltas)>? pendingPublishes = null;
-        foreach (var entry in collectionViews)
-        {
-            var view = entry.Value;
-            var impact = AnalyzeMutationImpact(view, mutation, isDelete);
-            var (oldFilteredPos, newFilteredPos) = ApplyIndexMutation(
-                view,
-                collection,
-                mutation,
-                isDelete,
-                impact.NeedsFullRecompute);
 
-            if (!impact.NeedsFullRecompute)
+        var bySort = collectionViews.Values
+            .GroupBy(view => view.SortIndex, ReferenceEqualityComparer.Instance);
+
+        foreach (var group in bySort)
+        {
+            var sortIndex = (SortIndex)group.Key!;
+            var views = group.ToArray();
+            var impacts = new MutationImpact[views.Length];
+            for (int i = 0; i < views.Length; i++)
             {
-                CollectFastPathPublishes(collection, view, viewports, mutation, ref pendingPublishes);
-                continue;
+                impacts[i] = AnalyzeMutationImpact(views[i], mutation, isDelete);
             }
 
-            CollectPositionBasedPublishes(
-                collection,
-                view,
-                viewports,
-                mutation,
-                oldFilteredPos,
-                newFilteredPos,
-                ref pendingPublishes);
+            var oldPositions = new int[views.Length];
+            for (int i = 0; i < views.Length; i++)
+            {
+                if (!impacts[i].NeedsFullRecompute)
+                {
+                    continue;
+                }
+
+                oldPositions[i] = isDelete
+                    ? views[i].PrepareDelete(mutation.RowIndex)
+                    : views[i].PrepareUpsert(mutation.RowIndex, mutation.IsNew);
+            }
+            if (isDelete)
+            {
+                sortIndex.OnDelete(mutation.RowIndex);
+            }
+            else if (mutation.IsNew || impacts.Any(impact => impact.SortFieldTouched))
+            {
+                var sortValue = collection.GetValue(mutation.RowIndex, sortIndex.FieldIndex);
+                sortIndex.OnUpsert(mutation.RowIndex, sortValue);
+            }
+
+            for (int i = 0; i < views.Length; i++)
+            {
+                var view = views[i];
+                if (!impacts[i].NeedsFullRecompute)
+                {
+                    CollectFastPathPublishes(collection, view, viewports, mutation, ref pendingPublishes);
+                    continue;
+                }
+
+                int newFilteredPos = isDelete ? -1 : views[i].CompleteUpsert(mutation.RowIndex);
+                CollectPositionBasedPublishes(
+                    collection,
+                    view,
+                    viewports,
+                    mutation,
+                    oldPositions[i],
+                    newFilteredPos,
+                    ref pendingPublishes);
+            }
         }
 
         await PublishAllAsync(pendingPublishes, ct);
@@ -48,33 +78,13 @@ public sealed class MutationPropagator(IOutboundPublisher publisher)
     {
         if (isDelete || mutation.IsNew)
         {
-            return new MutationImpact(NeedsFullRecompute: true);
+            return new MutationImpact(NeedsFullRecompute: true, SortFieldTouched: true);
         }
 
         var (sortFieldTouched, filterFieldChanged) = view.TouchedFields(mutation.ChangedMask);
-        return new MutationImpact(NeedsFullRecompute: sortFieldTouched || filterFieldChanged);
-    }
-
-    private static (int OldFilteredPos, int NewFilteredPos) ApplyIndexMutation(
-        SharedView view,
-        RowCollection collection,
-        MutationInfo mutation,
-        bool isDelete,
-        bool needsFullRecompute)
-    {
-        if (isDelete)
-        {
-            int oldPos = view.NotifyDelete(mutation.RowIndex);
-            return (oldPos, -1);
-        }
-
-        if (!needsFullRecompute)
-        {
-            return (-1, -1);
-        }
-
-        var sortValue = collection.GetValue(mutation.RowIndex, view.SortFieldIndex);
-        return view.NotifyUpsert(mutation.RowIndex, sortValue, mutation.IsNew);
+        return new MutationImpact(
+            NeedsFullRecompute: sortFieldTouched || filterFieldChanged,
+            SortFieldTouched: sortFieldTouched);
     }
 
     private static void CollectFastPathPublishes(
@@ -376,5 +386,5 @@ public sealed class MutationPropagator(IOutboundPublisher publisher)
         return copy;
     }
 
-    private readonly record struct MutationImpact(bool NeedsFullRecompute);
+    private readonly record struct MutationImpact(bool NeedsFullRecompute, bool SortFieldTouched);
 }
