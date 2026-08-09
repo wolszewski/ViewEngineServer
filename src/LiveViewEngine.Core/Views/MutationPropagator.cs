@@ -1,10 +1,18 @@
 using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using LiveViewEngine.Core.Data;
 
 namespace LiveViewEngine.Core.Views;
 
 public sealed class MutationPropagator(IOutboundPublisher publisher)
 {
+    // Reusable per-propagation buffers — safe because PropagateAsync is called serially per collection.
+    private readonly Dictionary<SortIndex, List<SharedView>> _groupBuffer =
+        new(ReferenceEqualityComparer.Instance);
+    private readonly List<SharedView> _viewBuffer = [];
+    private readonly List<MutationImpact> _impactBuffer = [];
+    private readonly List<int> _oldPosBuffer = [];
+
     public async Task PropagateAsync(
         RowCollection collection,
         ConcurrentDictionary<ViewKey, SharedView> collectionViews,
@@ -15,45 +23,53 @@ public sealed class MutationPropagator(IOutboundPublisher publisher)
     {
         List<(string ConnectionId, IReadOnlyList<ViewDelta> Deltas)>? pendingPublishes = null;
 
-        var bySort = collectionViews.Values
-            .GroupBy(view => view.SortIndex, ReferenceEqualityComparer.Instance);
-
-        foreach (var group in bySort)
+        // Group views by shared SortIndex reference — reuse the dictionary to avoid per-call allocation.
+        foreach (var entry in collectionViews)
         {
-            var sortIndex = (SortIndex)group.Key!;
-            var views = group.ToArray();
-            var impacts = new MutationImpact[views.Length];
-            for (int i = 0; i < views.Length; i++)
+            var sortIndex = entry.Value.SortIndex;
+            if (!_groupBuffer.TryGetValue(sortIndex, out var list))
             {
-                impacts[i] = AnalyzeMutationImpact(views[i], mutation, isDelete);
+                list = [];
+                _groupBuffer[sortIndex] = list;
+            }
+            list.Add(entry.Value);
+        }
+
+        foreach (var (sortIndex, views) in _groupBuffer)
+        {
+            // Analyze impact for each view, storing into reusable buffers.
+            _impactBuffer.Clear();
+            _oldPosBuffer.Clear();
+            for (int i = 0; i < views.Count; i++)
+            {
+                _impactBuffer.Add(AnalyzeMutationImpact(views[i], mutation, isDelete));
+                _oldPosBuffer.Add(0);
             }
 
-            var oldPositions = new int[views.Length];
-            for (int i = 0; i < views.Length; i++)
+            // Phase 1: capture old filtered positions before _indexValues changes.
+            for (int i = 0; i < views.Count; i++)
             {
-                if (!impacts[i].NeedsFullRecompute)
-                {
-                    continue;
-                }
-
-                oldPositions[i] = isDelete
+                if (!_impactBuffer[i].NeedsFullRecompute) { continue; }
+                _oldPosBuffer[i] = isDelete
                     ? views[i].PrepareDelete(mutation.RowIndex)
                     : views[i].PrepareUpsert(mutation.RowIndex, mutation.IsNew);
             }
+
+            // Phase 2: update SortIndex once.
             if (isDelete)
             {
                 sortIndex.OnDelete(mutation.RowIndex);
             }
-            else if (mutation.IsNew || impacts.Any(impact => impact.SortFieldTouched))
+            else if (mutation.IsNew || AnySortFieldTouched(_impactBuffer))
             {
-                var sortValue = collection.GetValue(mutation.RowIndex, sortIndex.FieldIndex);
-                sortIndex.OnUpsert(mutation.RowIndex, sortValue);
+                sortIndex.OnUpsert(mutation.RowIndex, collection.GetValue(mutation.RowIndex, sortIndex.FieldIndex));
             }
 
-            for (int i = 0; i < views.Length; i++)
+            // Phase 3: complete filtered index updates and collect deltas.
+            for (int i = 0; i < views.Count; i++)
             {
                 var view = views[i];
-                if (!impacts[i].NeedsFullRecompute)
+                if (!_impactBuffer[i].NeedsFullRecompute)
                 {
                     CollectFastPathPublishes(collection, view, viewports, mutation, ref pendingPublishes);
                     continue;
@@ -61,17 +77,27 @@ public sealed class MutationPropagator(IOutboundPublisher publisher)
 
                 int newFilteredPos = isDelete ? -1 : views[i].CompleteUpsert(mutation.RowIndex);
                 CollectPositionBasedPublishes(
-                    collection,
-                    view,
-                    viewports,
-                    mutation,
-                    oldPositions[i],
-                    newFilteredPos,
+                    collection, view, viewports, mutation,
+                    _oldPosBuffer[i], newFilteredPos,
                     ref pendingPublishes);
             }
+
+            views.Clear();
         }
 
+        _groupBuffer.Clear();
+
         await PublishAllAsync(pendingPublishes, ct);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool AnySortFieldTouched(List<MutationImpact> impacts)
+    {
+        for (int i = 0; i < impacts.Count; i++)
+        {
+            if (impacts[i].SortFieldTouched) { return true; }
+        }
+        return false;
     }
 
     private static MutationImpact AnalyzeMutationImpact(SharedView view, MutationInfo mutation, bool isDelete)
