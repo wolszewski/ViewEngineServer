@@ -12,9 +12,8 @@ public sealed class SortIndex
     private bool _hasPending;
     private bool _pendingWasExisting;
     private string? _pendingOldValue;
-
-    internal int _overrideRowIndex = -1;
-    internal string? _overrideValue;
+    private int _overrideRowIndex = -1;
+    private string? _overrideValue;
 
     public SortIndex(RowCollection collection, int fieldIndex, bool ascending = true)
     {

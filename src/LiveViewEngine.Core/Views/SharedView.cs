@@ -12,7 +12,7 @@ public sealed class SharedView
     private readonly int[] _filterFieldIndexes;
     private readonly FieldMask _filterFields;
     private readonly SortIndex _sortIndex;
-    private readonly FilteredSortIndex? _filteredIndex;
+    private readonly FilteredDataIndex? _filteredIndex;
     private readonly ConcurrentDictionary<string, bool> _subscribers = new();
 
     public SharedView(ViewKey key, RowCollection collection, SortIndex sortIndex)
@@ -24,22 +24,15 @@ public sealed class SharedView
 
         _filterFieldIndexes = key.Filters.Count > 0
             ? key.Filters.Select(f => collection.Schema.GetFieldIndex(f.FieldName)).ToArray()
-            : [];
+            : Array.Empty<int>();
         _filterFields = FieldMask.From(_filterFieldIndexes.AsSpan());
 
-        if (_filterFieldIndexes.Length > 0)
+        if (_filterFieldIndexes.Length <= 0)
         {
-            _filteredIndex = new FilteredSortIndex(_sortIndex.GetComparer());
-            var cursor = _sortIndex.GetCursor(0);
-            while (cursor.MoveNext())
-            {
-                int index = cursor.Current;
-                if (PassesFilters(index))
-                {
-                    _filteredIndex.Insert(index);
-                }
-            }
+            return;
         }
+
+        _filteredIndex = new FilteredDataIndex(_sortIndex.GetComparer(), _sortIndex.EnumerateFiltered(key.Filters, _filterFieldIndexes));
     }
 
     public int SortFieldIndex => _sortFieldIndex;
