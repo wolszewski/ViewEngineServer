@@ -28,7 +28,6 @@ public sealed class SortIndex
             _indexValues[index] = collection.GetValue(index, fieldIndex);
         }
 
-        // Insert in sorted order to minimise tree rotations during initial build.
         var sorted = _indexValues.Keys.ToList();
         sorted.Sort(new RowComparer(_indexValues, ascending));
         foreach (var index in sorted)
@@ -39,9 +38,9 @@ public sealed class SortIndex
 
     public int Count => _tree.Count;
 
-    // Valid only within the current synchronous call — do not store the span.
-    // Kept for callers that need a zero-allocation sorted snapshot (unfiltered fast path).
     internal NodeArrayTree<RowComparer>.TreeCursor GetCursor(int startIndex) => _tree.GetCursor(startIndex);
+
+    internal RowComparer GetComparer() => new(_indexValues, _ascending);
 
     public IEnumerable<int> EnumerateFiltered(IReadOnlyList<FilterSpec> filters, int[] filterFieldIndexes)
     {
@@ -67,6 +66,7 @@ public sealed class SortIndex
                 count++;
             }
         }
+
         return count;
     }
 
@@ -74,28 +74,45 @@ public sealed class SortIndex
     {
         if (_indexValues.ContainsKey(index))
         {
-            _tree.Delete(index); // must delete before updating _indexValues (comparison uses old value)
+            _tree.Delete(index);
         }
+
         _indexValues[index] = newSortValue;
         _tree.Insert(index);
     }
 
     public void OnDelete(int index)
     {
-        if (!_indexValues.ContainsKey(index)) { return; }
+        if (!_indexValues.ContainsKey(index))
+        {
+            return;
+        }
+
         _tree.Delete(index);
         _indexValues.Remove(index);
     }
+
+    public int IndexOf(int index) => _tree.IndexOf(index);
+
+    public int GetByIndex(int index) => _tree.GetByIndex(index);
 
     private bool PassesFilters(int index, IReadOnlyList<FilterSpec> filters, int[] fieldIndexes)
     {
         for (int i = 0; i < filters.Count; i++)
         {
             int fi = fieldIndexes[i];
-            if (fi < 0) { continue; }
+            if (fi < 0)
+            {
+                continue;
+            }
+
             var val = _collection.GetValue(index, fi);
-            if (!FilterEvaluator.Matches(val, filters[i])) { return false; }
+            if (!FilterEvaluator.Matches(val, filters[i]))
+            {
+                return false;
+            }
         }
+
         return true;
     }
 
@@ -117,16 +134,26 @@ public sealed class SortIndex
             int cmp;
             if (va is null)
             {
-                if (vb is null) { return 0; }
+                if (vb is null)
+                {
+                    return 0;
+                }
+
                 return _ascending ? -1 : 1;
             }
-            if (vb is null) { return _ascending ? 1 : -1; }
+
+            if (vb is null)
+            {
+                return _ascending ? 1 : -1;
+            }
+
             cmp = string.Compare(va, vb, StringComparison.Ordinal);
-            if (!_ascending) { cmp = -cmp; }
+            if (!_ascending)
+            {
+                cmp = -cmp;
+            }
+
             return cmp != 0 ? cmp : a.CompareTo(b);
         }
     }
 }
-
-
-

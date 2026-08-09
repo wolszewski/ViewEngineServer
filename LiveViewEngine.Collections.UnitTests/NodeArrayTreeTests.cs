@@ -62,6 +62,17 @@ public class NodeArrayTreeTests
         Assert.Equal([1, 2, 3, 4, 5], ToList(tree));
     }
 
+    [Fact]
+    public void Insert_ReturnsInsertedPosition()
+    {
+        var tree = Make(10, 30);
+
+        int position = tree.Insert(20);
+
+        Assert.Equal(1, position);
+        Assert.Equal([10, 20, 30], ToList(tree));
+    }
+
     // Forces node split: MaxSize=64, insert 65+ unique values to verify splitting works.
     [Fact]
     public void Insert_BeyondNodeCapacity_StaysOrdered()
@@ -102,6 +113,28 @@ public class NodeArrayTreeTests
         var tree = Make(1, 2, 3, 4, 5);
         tree.Delete(3);
         Assert.Equal([1, 2, 4, 5], ToList(tree));
+    }
+
+    [Fact]
+    public void Delete_ReturnsDeletedPosition()
+    {
+        var tree = Make(1, 2, 3, 4, 5);
+
+        int position = tree.Delete(3);
+
+        Assert.Equal(2, position);
+        Assert.Equal([1, 2, 4, 5], ToList(tree));
+    }
+
+    [Fact]
+    public void TryDelete_MissingKey_ReturnsNegativeOne()
+    {
+        var tree = Make(1, 3, 5);
+
+        int position = tree.TryDelete(2);
+
+        Assert.Equal(-1, position);
+        Assert.Equal([1, 3, 5], ToList(tree));
     }
 
     [Fact]

@@ -157,7 +157,6 @@ public sealed class ViewEngine(
         _viewports[command.ConnectionId] = viewport;
 
         var indexes = view.GetPageIndexes(command.StartIndex, command.PageSize);
-        viewport.CurrentRowIndexes = indexes;
 
         logger.LogInformation(
             "Client '{ConnectionId}' subscribed to view '{ViewId}' (start={Start}, page={Page}).",
@@ -199,7 +198,6 @@ public sealed class ViewEngine(
         viewport.PageSize = command.PageSize;
 
         var indexes = view.GetPageIndexes(command.StartIndex, command.PageSize);
-        viewport.CurrentRowIndexes = indexes;
 
         return [new SnapshotDelta
         {

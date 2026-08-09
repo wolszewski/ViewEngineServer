@@ -1,4 +1,3 @@
-using System.Buffers;
 using System.Collections.Concurrent;
 using LiveViewEngine.Core.Data;
 
@@ -8,16 +7,18 @@ public sealed class SharedView
 {
     public ViewKey Key { get; }
 
+    private readonly RowCollection _collection;
     private readonly int _sortFieldIndex;
     private readonly int[] _filterFieldIndexes;
     private readonly FieldMask _filterFields;
     private readonly SortIndex _sortIndex;
-
+    private readonly FilteredSortIndex? _filteredIndex;
     private readonly ConcurrentDictionary<string, bool> _subscribers = new();
 
     public SharedView(ViewKey key, RowCollection collection)
     {
         Key = key;
+        _collection = collection;
 
         _sortFieldIndex = key.SortColumn is not null
             ? collection.Schema.GetFieldIndex(key.SortColumn)
@@ -33,12 +34,28 @@ public sealed class SharedView
         _filterFields = FieldMask.From(_filterFieldIndexes.AsSpan());
 
         _sortIndex = new SortIndex(collection, _sortFieldIndex, key.SortAscending);
+        if (_filterFieldIndexes.Length > 0)
+        {
+            _filteredIndex = new FilteredSortIndex(_sortIndex.GetComparer());
+            var cursor = _sortIndex.GetCursor(0);
+            while (cursor.MoveNext())
+            {
+                int index = cursor.Current;
+                if (PassesFilters(index))
+                {
+                    _filteredIndex.Insert(index);
+                }
+            }
+        }
     }
 
     public int SortFieldIndex => _sortFieldIndex;
 
     public IEnumerable<string> Subscribers => _subscribers.Keys;
+
     public bool IsEmpty => _subscribers.IsEmpty;
+
+    internal int FilteredCount => _filteredIndex?.Count ?? _sortIndex.Count;
 
     public void AddSubscriber(string connectionId) => _subscribers[connectionId] = true;
 
@@ -47,60 +64,118 @@ public sealed class SharedView
 
     public int[] GetPageIndexes(int startIndex, int? pageSize)
     {
-        if (startIndex < 0) { startIndex = 0; }
-        if (pageSize is <= 0) { return []; }
-
-        if (_filterFieldIndexes.Length == 0)
+        if (startIndex < 0)
         {
-            int total = _sortIndex.Count;
-            if (startIndex >= total) { return []; }
-            int take = pageSize.HasValue ? Math.Min(pageSize.Value, total - startIndex) : total - startIndex;
-            var result = new int[take];
-            var cursor = _sortIndex.GetCursor(startIndex);
+            startIndex = 0;
+        }
+
+        if (pageSize is <= 0)
+        {
+            return [];
+        }
+
+        int total = _filteredIndex?.Count ?? _sortIndex.Count;
+        if (startIndex >= total)
+        {
+            return [];
+        }
+
+        int take = pageSize.HasValue ? Math.Min(pageSize.Value, total - startIndex) : total - startIndex;
+        var result = new int[take];
+
+        if (_filteredIndex != null)
+        {
+            var cursor = _filteredIndex.GetCursor(startIndex);
             for (int i = 0; i < take; i++)
             {
                 cursor.MoveNext();
                 result[i] = cursor.Current;
             }
+
             return result;
         }
 
-        int capacity = pageSize ?? _sortIndex.Count;
-        var rented = ArrayPool<int>.Shared.Rent(capacity);
-        try
+        var unfilteredCursor = _sortIndex.GetCursor(startIndex);
+        for (int i = 0; i < take; i++)
         {
-            int skipped = 0, count = 0;
-            foreach (var rowIndex in _sortIndex.EnumerateFiltered(Key.Filters, _filterFieldIndexes))
-            {
-                if (skipped < startIndex) { skipped++; continue; }
-                rented[count++] = rowIndex;
-                if (pageSize.HasValue && count >= pageSize.Value) { break; }
-            }
-            var result = new int[count];
-            rented.AsSpan(0, count).CopyTo(result);
-            return result;
+            unfilteredCursor.MoveNext();
+            result[i] = unfilteredCursor.Current;
         }
-        finally
-        {
-            ArrayPool<int>.Shared.Return(rented);
-        }
+
+        return result;
     }
 
-    public int GetTotalCount() =>
-        _filterFieldIndexes.Length == 0
-            ? _sortIndex.Count
-            : _sortIndex.CountFiltered(Key.Filters, _filterFieldIndexes);
+    public int GetTotalCount() => _filteredIndex?.Count ?? _sortIndex.Count;
 
-    public void NotifyUpsert(int index, string? newSortValue) =>
+    internal int GetFilteredByIndex(int position) =>
+        _filteredIndex != null ? _filteredIndex.GetByIndex(position) : _sortIndex.GetByIndex(position);
+
+    internal int FilteredIndexOf(int rowIndex) =>
+        _filteredIndex != null ? _filteredIndex.IndexOf(rowIndex) : _sortIndex.IndexOf(rowIndex);
+
+    public (int OldFilteredPos, int NewFilteredPos) NotifyUpsert(int index, string? newSortValue, bool isNew)
+    {
+        int oldFilteredPos;
+        if (isNew)
+        {
+            oldFilteredPos = -1;
+        }
+        else
+        {
+            oldFilteredPos = _filteredIndex != null
+                ? _filteredIndex.TryDelete(index)
+                : _sortIndex.IndexOf(index);
+        }
+
         _sortIndex.OnUpsert(index, newSortValue);
 
-    public void NotifyDelete(int index) =>
+        int newFilteredPos;
+        if (_filteredIndex != null)
+        {
+            newFilteredPos = PassesFilters(index) ? _filteredIndex.Insert(index) : -1;
+        }
+        else
+        {
+            newFilteredPos = _sortIndex.IndexOf(index);
+        }
+
+        return (oldFilteredPos, newFilteredPos);
+    }
+
+    public int NotifyDelete(int index)
+    {
+        int oldFilteredPos = _filteredIndex != null
+            ? _filteredIndex.TryDelete(index)
+            : _sortIndex.IndexOf(index);
+
         _sortIndex.OnDelete(index);
+        return oldFilteredPos;
+    }
 
     public (bool SortFieldChanged, bool FilterFieldChanged) TouchedFields(in FieldMask changedMask)
     {
         bool sortTouched = changedMask[_sortFieldIndex];
         bool filterTouched = _filterFields.Intersects(changedMask);
         return (sortTouched, filterTouched);
+    }
+
+    private bool PassesFilters(int index)
+    {
+        for (int i = 0; i < Key.Filters.Count; i++)
+        {
+            int fieldIndex = _filterFieldIndexes[i];
+            if (fieldIndex < 0)
+            {
+                continue;
+            }
+
+            var value = _collection.GetValue(index, fieldIndex);
+            if (!FilterEvaluator.Matches(value, Key.Filters[i]))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

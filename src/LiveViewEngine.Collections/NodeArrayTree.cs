@@ -29,7 +29,7 @@ public sealed class NodeArrayTree<TComparer> where TComparer : IComparer<int>
 
     public int Count => _sentinel.LeftSize;
 
-    public void Insert(int key)
+    public int Insert(int key)
     {
         var finger = Find(key);
         var node = finger.Node;
@@ -60,13 +60,11 @@ public sealed class NodeArrayTree<TComparer> where TComparer : IComparer<int>
             node.InsertAt(finger.Offset, key, successor, succsucc);
         }
 
-        if (_sentinel.LeftChild != null)
-        {
-            _sentinel.LeftChild.IsRed = false;
-        }
+        _sentinel.LeftChild?.IsRed = false;
+        return finger.Index;
     }
 
-    public void Delete(int key)
+    public int Delete(int key)
     {
         var finger = Find(key);
         if (!finger.Found)
@@ -74,11 +72,24 @@ public sealed class NodeArrayTree<TComparer> where TComparer : IComparer<int>
             throw new KeyNotFoundException($"Key '{key}' was not found.");
         }
 
+        int position = finger.Index;
         finger.Node.RemoveAt(ref finger);
-        if (_sentinel.LeftChild != null)
+        _sentinel.LeftChild?.IsRed = false;
+        return position;
+    }
+
+    public int TryDelete(int key)
+    {
+        var finger = Find(key);
+        if (!finger.Found)
         {
-            _sentinel.LeftChild.IsRed = false;
+            return -1;
         }
+
+        int position = finger.Index;
+        finger.Node.RemoveAt(ref finger);
+        _sentinel.LeftChild?.IsRed = false;
+        return position;
     }
 
     public bool Contains(int key)
@@ -116,14 +127,14 @@ public sealed class NodeArrayTree<TComparer> where TComparer : IComparer<int>
         return new TreeCursor(finger.Node, finger.Offset);
     }
 
-    internal Node InsertNode(int index)
+    private Node InsertNode(int index)
     {
         _sentinel.LeftChild = Node.InsertNode(this, _sentinel, _sentinel.LeftChild, index, out var newNode);
         _sentinel.LeftChild!.Parent = _sentinel;
         return newNode;
     }
 
-    internal void RemoveNode(int index)
+    private void RemoveNode(int index)
     {
         if (_sentinel.LeftChild == null)
         {
