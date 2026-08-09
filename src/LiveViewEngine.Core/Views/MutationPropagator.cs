@@ -46,7 +46,7 @@ public sealed class MutationPropagator(IOutboundPublisher publisher)
                 _oldPosBuffer.Add(0);
             }
 
-            // Phase 1: capture old filtered positions before _indexValues changes.
+            // Phase 1: capture old filtered positions before the SortIndex tree mutates.
             for (int i = 0; i < views.Count; i++)
             {
                 if (!_impactBuffer[i].NeedsFullRecompute) { continue; }
@@ -62,7 +62,11 @@ public sealed class MutationPropagator(IOutboundPublisher publisher)
             }
             else if (mutation.IsNew || AnySortFieldTouched(_impactBuffer))
             {
-                sortIndex.OnUpsert(mutation.RowIndex, collection.GetValue(mutation.RowIndex, sortIndex.FieldIndex));
+                sortIndex.OnUpsert(mutation.RowIndex);
+            }
+            else
+            {
+                sortIndex.ResetPending();
             }
 
             // Phase 3: complete filtered index updates and collect deltas.

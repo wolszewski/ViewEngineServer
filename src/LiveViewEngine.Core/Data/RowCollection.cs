@@ -79,6 +79,9 @@ public sealed class RowCollection(CollectionSchema schema)
         return _rowKeyToIndex;
     }
 
+    public bool TryGetRowIndex(string key, out int rowIndex) =>
+        _rowKeyToIndex.TryGetValue(key, out rowIndex);
+
     public string?[] GetRowValues(int index)
     {
         var source = _rows[index];

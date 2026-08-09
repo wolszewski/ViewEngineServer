@@ -76,6 +76,14 @@ public sealed class ViewEngine(
             return IngestResult.Fail($"Collection '{command.CollectionId}' not found.");
         }
 
+        if (collection.TryGetRowIndex(command.Key, out int existingRowIndex))
+        {
+            foreach (var sortIndex in _sortIndexRegistry.GetAllForCollection(collection.Schema.CollectionName))
+            {
+                sortIndex.CaptureOldValue(existingRowIndex);
+            }
+        }
+
         var mutation = collection.AddOrUpdate(command.Key, command.Fields);
         if (_sharedViewsByCollection.TryGetValue(collection.Schema.CollectionName, out var collectionViews))
         {
@@ -95,6 +103,14 @@ public sealed class ViewEngine(
         if (!store.TryGet(command.CollectionId, out var collection) || collection is null)
         {
             return IngestResult.Fail($"Collection '{command.CollectionId}' not found.");
+        }
+
+        if (collection.TryGetRowIndex(command.Key, out int existingRowIndex))
+        {
+            foreach (var sortIndex in _sortIndexRegistry.GetAllForCollection(collection.Schema.CollectionName))
+            {
+                sortIndex.CaptureOldValue(existingRowIndex);
+            }
         }
 
         var mutation = collection.Delete(command.Key);
