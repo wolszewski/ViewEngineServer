@@ -5,9 +5,14 @@
   <Folder Name="/docs/">
     <File Path="docs\system-design.md" />
   </Folder>
+  <Folder Name="/poc/">
+    <Project Path="LiveViewEngine.Poc.AppHost/LiveViewEngine.Poc.AppHost.csproj" />
+    <Project Path="LiveViewEngine.Poc.DataProvider/LiveViewEngine.Poc.DataProvider.csproj" />
+  </Folder>
   <Folder Name="/src/">
     <Project Path="src/LiveViewEngine.Collections/LiveViewEngine.Collections.csproj" />
     <Project Path="src/LiveViewEngine.Core/LiveViewEngine.Core.csproj" />
+    <Project Path="src/LiveViewEngine.HttpClient/LiveViewEngine.HttpClient.csproj" />
     <Project Path="src/LiveViewEngine.WebHost/LiveViewEngine.WebHost.csproj" />
   </Folder>
   <Folder Name="/tests/">
@@ -15,4 +20,5 @@
     <Project Path="src/LiveViewEngine.Core.IntegrationTests/LiveViewEngine.Core.IntegrationTests.csproj" />
     <Project Path="src/LiveViewEngine.Core.UnitTests/LiveViewEngine.Core.UnitTests.csproj" />
   </Folder>
+  <Project Path="LiveViewEngine.Poc.Ui/LiveViewEngine.Poc.Ui.csproj" />
 </Solution>

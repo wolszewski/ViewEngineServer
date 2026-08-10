@@ -1,0 +1,17 @@
+<Project Sdk="Aspire.AppHost.Sdk/13.4.6">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net10.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <UserSecretsId>3724bed4-55cf-4953-8967-7941d63997cb</UserSecretsId>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\LiveViewEngine.Poc.DataProvider\LiveViewEngine.Poc.DataProvider.csproj" />
+        <ProjectReference Include="..\LiveViewEngine.Poc.Ui\LiveViewEngine.Poc.Ui.csproj" />
+        <ProjectReference Include="..\src\LiveViewEngine.WebHost\LiveViewEngine.WebHost.csproj" />
+    </ItemGroup>
+
+</Project>

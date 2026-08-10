@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LiveViewEngine PoC UI</title>
+    <script type="importmap">
+        {
+            "imports": {
+                "react": "https://esm.sh/react@19.1.1",
+                "react-dom": "https://esm.sh/react-dom@19.1.1",
+                "react-dom/client": "https://esm.sh/react-dom@19.1.1/client",
+                "ag-grid-react": "https://esm.sh/ag-grid-react@33.3.2?external=react,react-dom",
+                "ag-grid-community": "https://esm.sh/ag-grid-community@33.3.2"
+            }
+        }
+    </script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community@33.3.2/styles/ag-grid.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community@33.3.2/styles/ag-theme-balham.css" />
+</head>
+<body>
+    <div id="root"></div>
+    <script type="module" src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,78 @@
+@page "/"
+@rendermode InteractiveServer
+@using LiveViewEngine.Poc.DataProvider.Services
+@inject TradeGeneratorService TradeGenerator
+
+<PageTitle>Trade ingestion PoC</PageTitle>
+
+<div class="container py-4">
+    <h1>Trade ingestion PoC</h1>
+    <p class="text-muted">Configure an initial trade load and stream updates into the LiveViewEngine.WebHost endpoint.</p>
+
+    <div class="row g-3 mt-2">
+        <div class="col-md-4">
+            <label class="form-label">Initial trades</label>
+            <input class="form-control" type="number" @bind="_settings.InitialTradeCount" min="1" />
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">Fields updated per tick</label>
+            <input class="form-control" type="number" @bind="_settings.UpdateFieldCount" min="1" max="10" />
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">Update interval (ms)</label>
+            <input class="form-control" type="number" @bind="_settings.UpdateIntervalMs" min="1" />
+        </div>
+    </div>
+
+    <div class="mt-4 d-flex gap-2">
+        <button class="btn btn-primary" @onclick="StartGenerationAsync">Start</button>
+        <button class="btn btn-outline-secondary" @onclick="StopGeneration">Stop</button>
+    </div>
+
+    <div class="card mt-4">
+        <div class="card-body">
+            <h5 class="card-title">Status</h5>
+            <p class="mb-1"><strong>Running:</strong> @_status.IsRunning</p>
+            <p class="mb-1"><strong>Update mode:</strong> @_status.IsInUpdateMode</p>
+            <p class="mb-1"><strong>Trades generated:</strong> @_status.TradesGenerated</p>
+            <p class="mb-1"><strong>Updates sent:</strong> @_status.UpdatesSent</p>
+            <p class="mb-1"><strong>Message:</strong> @_status.StatusMessage</p>
+            @if (!string.IsNullOrWhiteSpace(_status.LastError))
+            {
+                <p class="text-danger mb-0"><strong>Last error:</strong> @_status.LastError</p>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private readonly TradeGenerationSettings _settings = new();
+    private TradeGenerationStatus _status = TradeGenerationStatus.Idle();
+
+    protected override void OnInitialized()
+    {
+        _status = TradeGenerator.Status;
+        TradeGenerator.StateChanged += HandleStatusChanged;
+    }
+
+    private Task StartGenerationAsync()
+    {
+        return TradeGenerator.StartGenerationAsync(_settings);
+    }
+
+    private void StopGeneration()
+    {
+        TradeGenerator.StopGeneration();
+    }
+
+    private void HandleStatusChanged()
+    {
+        _status = TradeGenerator.Status;
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        TradeGenerator.StateChanged -= HandleStatusChanged;
+    }
+}
