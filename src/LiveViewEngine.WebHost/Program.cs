@@ -1,9 +1,23 @@
 using LiveViewEngine.Core;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
 using ViewEngineServer.WebApp.Http;
 using ViewEngineServer.WebApp.WebSocket;
 
 var builder = WebApplication.CreateBuilder(args);
 var services = builder.Services;
+
+services.AddOpenTelemetry()
+    .ConfigureResource(resource => resource.AddService(builder.Environment.ApplicationName))
+    .WithMetrics(metrics =>
+    {
+        metrics
+            .AddAspNetCoreInstrumentation()
+            .AddRuntimeInstrumentation()
+            .AddProcessInstrumentation()
+            .AddOtlpExporter();
+    });
+
 services.AddLiveViewEngineCore();
 services.AddLiveViewEnginePublisher<WebSocketOutboundPublisher>();
 services.AddSingleton<WebSocketSessionManager>();

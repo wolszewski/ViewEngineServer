@@ -167,6 +167,52 @@ public class ViewEngineIngestTests
     }
 
     [Fact]
+    public async Task Subscribe_SameSortColumnWithDifferentDirections_ReturnsDifferentOrder()
+    {
+        var (engine, _, _) = CreateEngine();
+        await CreateOrders(engine);
+        await Upsert(engine, "o1", "Alice", "100");
+        await Upsert(engine, "o2", "Bob", "200");
+        await Upsert(engine, "o3", "Carol", "300");
+
+        var ascendingEvents = await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = "clientAsc",
+            View = new ViewDefinition
+            {
+                CollectionId = "orders",
+                SortColumn = "amount",
+                SortAscending = true
+            },
+            StartIndex = 0,
+            PageSize = 10
+        });
+
+        var descendingEvents = await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = "clientDesc",
+            View = new ViewDefinition
+            {
+                CollectionId = "orders",
+                SortColumn = "amount",
+                SortAscending = false
+            },
+            StartIndex = 0,
+            PageSize = 10
+        });
+
+        var ascendingSnapshot = Assert.IsType<SnapshotDelta>(ascendingEvents.Single());
+        var descendingSnapshot = Assert.IsType<SnapshotDelta>(descendingEvents.Single());
+        var amountIndex = ascendingSnapshot.Schema.GetFieldIndex("amount");
+
+        var ascendingAmounts = ascendingSnapshot.Rows.Select(row => row[amountIndex]).ToList();
+        var descendingAmounts = descendingSnapshot.Rows.Select(row => row[amountIndex]).ToList();
+
+        Assert.Equal(["100", "200", "300"], ascendingAmounts);
+        Assert.Equal(["300", "200", "100"], descendingAmounts);
+    }
+
+    [Fact]
     public async Task Subscribe_WithFilter_ReturnsMatchingRows()
     {
         var (engine, _, _) = CreateEngine();

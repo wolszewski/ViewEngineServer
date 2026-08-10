@@ -30,6 +30,7 @@ export type DeltaEvent = SnapshotEvent | RowUpdateEvent | RowInsertEvent | RowRe
 export interface SubscribeRequest {
     collectionId: string;
     sortColumn: string;
+    sortAscending: boolean;
     pageSize: number;
     startIndex: number;
 }
@@ -69,7 +70,8 @@ export class WebHostClient {
 
         socket.addEventListener('open', () => {
             this.callbacks.onStatus('Connected');
-            this.sendSubscribe(request);
+            const subscribe = this.lastSubscribe ?? request;
+            this.sendSubscribe(subscribe);
             this.startSubscribeRetry();
         });
 
@@ -80,6 +82,7 @@ export class WebHostClient {
                     this.hasReceivedSnapshot = true;
                     this.stopSubscribeRetry();
                     this.callbacks.onStatus('Connected');
+                    this.ensureSnapshotMatchesRequestedViewport(delta);
                 }
                 this.callbacks.onEvent(delta);
             }
@@ -96,15 +99,22 @@ export class WebHostClient {
     }
 
     public setViewport(startIndex: number, pageSize: number): void {
+        if (this.lastSubscribe) {
+            this.lastSubscribe = {
+                ...this.lastSubscribe,
+                startIndex,
+                pageSize
+            };
+        }
+
         if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
             return;
         }
 
-        this.socket.send(JSON.stringify({
-            type: 'setViewport',
-            startIndex,
-            pageSize
-        }));
+        if (this.lastSubscribe) {
+            this.sendSubscribe(this.lastSubscribe);
+            return;
+        }
     }
 
     public disconnect(): void {
@@ -127,11 +137,23 @@ export class WebHostClient {
             type: 'subscribe',
             collectionId: request.collectionId,
             sortColumn: request.sortColumn,
-            sortAscending: true,
+            sortAscending: request.sortAscending,
             startIndex: request.startIndex,
             pageSize: request.pageSize,
             filters: []
         }));
+    }
+
+    private ensureSnapshotMatchesRequestedViewport(snapshot: SnapshotEvent): void {
+        if (!this.lastSubscribe) {
+            return;
+        }
+
+        if (snapshot.startIndex === this.lastSubscribe.startIndex) {
+            return;
+        }
+
+        this.sendSubscribe(this.lastSubscribe);
     }
 
     private startSubscribeRetry(): void {

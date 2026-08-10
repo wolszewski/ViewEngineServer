@@ -8,8 +8,10 @@ public sealed class TradeGeneratorService(
     ILogger<TradeGeneratorService> logger)
 {
     private const string CollectionName = "trades";
+    private const string CreatedDateFieldName = "createdDate";
+    private const string UpdatedDateFieldName = "updatedDate";
     private readonly List<TradeFieldDefinition> _fieldDefinitions = CreateFieldDefinitions();
-    private readonly object _sync = new();
+    private readonly Lock _sync = new();
     private CancellationTokenSource? _activeRun;
     private TradeGenerationStatus _status = TradeGenerationStatus.Idle();
 
@@ -111,7 +113,7 @@ public sealed class TradeGeneratorService(
             status.StatusMessage = "Creating collection";
             status.InitialTradeCount = settings.InitialTradeCount;
             status.UpdateFieldCount = settings.UpdateFieldCount;
-            status.UpdateIntervalMs = settings.UpdateIntervalMs;
+            status.UpdateFrequencyHz = settings.UpdateFrequencyHz;
         });
 
         if (!await httpClient.CreateCollectionAsync(CollectionName, fieldNames, ct))
@@ -150,11 +152,12 @@ public sealed class TradeGeneratorService(
         });
 
         var nextTradeIndex = 0;
+        var updateDelay = TimeSpan.FromSeconds(1d / settings.UpdateFrequencyHz);
         while (!ct.IsCancellationRequested)
         {
             if (trades.Count == 0)
             {
-                await Task.Delay(settings.UpdateIntervalMs, ct);
+                await Task.Delay(updateDelay, ct);
                 continue;
             }
 
@@ -174,14 +177,15 @@ public sealed class TradeGeneratorService(
                 status.LastUpdatedUtc = DateTimeOffset.UtcNow;
             });
 
-            await Task.Delay(settings.UpdateIntervalMs, ct);
+            await Task.Delay(updateDelay, ct);
         }
     }
 
     private Dictionary<string, string?> ApplyUpdates(TradeEntity trade, TradeGenerationSettings settings)
     {
-        var fieldsToUpdate = Random.Shared.Next(1, Math.Min(settings.UpdateFieldCount, _fieldDefinitions.Count) + 1);
-        var selected = _fieldDefinitions.OrderBy(_ => Random.Shared.Next()).Take(fieldsToUpdate).ToList();
+        var updatableFields = _fieldDefinitions.Where(static field => field.IsUserUpdatable).ToList();
+        var fieldsToUpdate = Random.Shared.Next(1, Math.Min(settings.UpdateFieldCount, updatableFields.Count) + 1);
+        var selected = updatableFields.OrderBy(_ => Random.Shared.Next()).Take(fieldsToUpdate).ToList();
         var changedFields = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
         foreach (var field in selected)
         {
@@ -189,6 +193,10 @@ public sealed class TradeGeneratorService(
             trade.Fields[field.Name] = value;
             changedFields[field.Name] = value;
         }
+
+        var updatedDate = CreateTimestamp();
+        trade.Fields[UpdatedDateFieldName] = updatedDate;
+        changedFields[UpdatedDateFieldName] = updatedDate;
 
         return changedFields;
     }
@@ -200,6 +208,10 @@ public sealed class TradeGeneratorService(
         {
             values[field.Name] = field.InitialValueFactory(new TradeEntity(tradeId, new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)));
         }
+
+        var createdDate = CreateTimestamp();
+        values[CreatedDateFieldName] = createdDate;
+        values[UpdatedDateFieldName] = createdDate;
 
         return values;
     }
@@ -219,6 +231,8 @@ public sealed class TradeGeneratorService(
     {
         var definitions = new List<TradeFieldDefinition>();
         definitions.Add(new TradeFieldDefinition("tradeId", "string", trade => $"T{trade.Id:D6}", trade => $"T{trade.Id:D6}"));
+        definitions.Add(new TradeFieldDefinition(CreatedDateFieldName, "datetime", _ => CreateTimestamp(), trade => GetFieldOrDefault(trade.Fields, CreatedDateFieldName, CreateTimestamp()), isUserUpdatable: false));
+        definitions.Add(new TradeFieldDefinition(UpdatedDateFieldName, "datetime", _ => CreateTimestamp(), _ => CreateTimestamp(), isUserUpdatable: false));
         definitions.Add(new TradeFieldDefinition("accountId", "int", trade => ((trade.Id * 13) % 100000).ToString(), trade => ((trade.Id * 13 + 17) % 100000).ToString()));
         definitions.Add(new TradeFieldDefinition("quantity", "int", trade => ((trade.Id % 500) + 1).ToString(), trade => ((int.Parse(trade.Fields["quantity"] ?? "1") + 1) % 1000 + 1).ToString()));
         definitions.Add(new TradeFieldDefinition("price", "decimal", trade => ((trade.Id % 1000) / 100m + 100).ToString("0.00", CultureInfo.InvariantCulture), trade => (decimal.Parse(trade.Fields["price"] ?? "100.00", CultureInfo.InvariantCulture) + 0.01m).ToString("0.00", CultureInfo.InvariantCulture)));
@@ -297,16 +311,23 @@ public sealed class TradeGeneratorService(
         return defaultValue;
     }
 
+    private static string CreateTimestamp()
+    {
+        return DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
+    }
+
     private sealed class TradeFieldDefinition(
         string name,
         string type,
         Func<TradeEntity, string> initialValueFactory,
-        Func<TradeEntity, string> updateValueFactory)
+        Func<TradeEntity, string> updateValueFactory,
+        bool isUserUpdatable = true)
     {
         public string Name { get; } = name;
         public string Type { get; } = type;
         public Func<TradeEntity, string> InitialValueFactory { get; } = initialValueFactory;
         public Func<TradeEntity, string> UpdateValueFactory { get; } = updateValueFactory;
+        public bool IsUserUpdatable { get; } = isUserUpdatable;
     }
 
     private sealed record TradeEntity(int Id, Dictionary<string, string?> Fields)

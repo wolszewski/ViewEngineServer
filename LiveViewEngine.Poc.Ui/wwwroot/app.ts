@@ -20,6 +20,7 @@ function App(): React.ReactElement {
     const [status, setStatus] = useState('Disconnected');
     const [collectionId, setCollectionId] = useState('trades');
     const [sortColumn, setSortColumn] = useState('quantity');
+    const [sortAscending, setSortAscending] = useState(true);
     const [pageSize, setPageSize] = useState(50);
     const [pageIndex, setPageIndex] = useState(0);
     const [totalCount, setTotalCount] = useState<number | null>(null);
@@ -30,6 +31,7 @@ function App(): React.ReactElement {
 
     const gridApiRef = useRef<GridApi<RowData> | null>(null);
     const clientRef = useRef<WebHostClient | null>(null);
+    const handleDeltaEventRef = useRef<(event: DeltaEvent) => void>(() => {});
     const initialRowData = useMemo<RowData[]>(() => [], []);
     const rowsByIdRef = useRef<Map<string, RowData>>(new Map());
     const orderedIdsRef = useRef<string[]>([]);
@@ -179,6 +181,7 @@ function App(): React.ReactElement {
             applyRemove(event);
         }
     }, [applyInsert, applyRemove, applySnapshot, applyUpdate]);
+    handleDeltaEventRef.current = handleDeltaEvent;
 
     const connect = useCallback(() => {
         clearState();
@@ -186,10 +189,11 @@ function App(): React.ReactElement {
         clientRef.current?.connect({
             collectionId,
             sortColumn,
+            sortAscending,
             pageSize,
             startIndex
         });
-    }, [clearState, collectionId, pageIndex, pageSize, sortColumn]);
+    }, [clearState, collectionId, pageIndex, pageSize, sortAscending, sortColumn]);
 
     const disconnect = useCallback(() => {
         clientRef.current?.disconnect();
@@ -212,14 +216,14 @@ function App(): React.ReactElement {
     useEffect(() => {
         clientRef.current = new WebHostClient('ws://127.0.0.1:5100/ws', {
             onStatus: setStatus,
-            onEvent: handleDeltaEvent
+            onEvent: (event) => handleDeltaEventRef.current(event)
         });
 
         return () => {
             clientRef.current?.disconnect();
             clientRef.current = null;
         };
-    }, [handleDeltaEvent]);
+    }, []);
 
     return React.createElement(
         React.Fragment,
@@ -284,6 +288,20 @@ function App(): React.ReactElement {
                     value: sortColumn,
                     onChange: (e: Event) => setSortColumn((e.target as HTMLInputElement).value)
                 })
+            ),
+            React.createElement(
+                'label',
+                { className: 'control-label' },
+                'Sort direction',
+                React.createElement(
+                    'select',
+                    {
+                        value: sortAscending ? 'asc' : 'desc',
+                        onChange: (e: Event) => setSortAscending((e.target as HTMLSelectElement).value === 'asc')
+                    },
+                    React.createElement('option', { value: 'asc' }, 'Ascending'),
+                    React.createElement('option', { value: 'desc' }, 'Descending')
+                )
             ),
             React.createElement(
                 'label',
