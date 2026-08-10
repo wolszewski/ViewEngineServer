@@ -78,8 +78,8 @@ public sealed class SharedView
         }
 
         return _filteredIndex != null
-            ? _filteredIndex.TryDelete(rowIndex)
-            : _sortIndex.IndexOf(rowIndex);
+            ? _sortIndex.WithPendingOldValue(rowIndex, () => _filteredIndex.TryDelete(rowIndex))
+            : _sortIndex.IndexOfWithPendingOldValue(rowIndex);
     }
 
     internal int CompleteUpsert(int rowIndex)
@@ -95,8 +95,8 @@ public sealed class SharedView
     internal int PrepareDelete(int rowIndex)
     {
         return _filteredIndex != null
-            ? _filteredIndex.TryDelete(rowIndex)
-            : _sortIndex.IndexOf(rowIndex);
+            ? _sortIndex.WithPendingOldValue(rowIndex, () => _filteredIndex.TryDelete(rowIndex))
+            : _sortIndex.IndexOfWithPendingOldValue(rowIndex);
     }
 
     public (bool SortFieldChanged, bool FilterFieldChanged) TouchedFields(in FieldMask changedMask)

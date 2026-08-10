@@ -149,33 +149,30 @@ public sealed class TradeGeneratorService(
             status.IsInUpdateMode = true;
         });
 
+        var nextTradeIndex = 0;
         while (!ct.IsCancellationRequested)
         {
-            foreach (var trade in trades)
+            if (trades.Count == 0)
             {
-                if (ct.IsCancellationRequested)
-                {
-                    break;
-                }
-
-                var changedFields = ApplyUpdates(trade, settings);
-                var success = await httpClient.IngestAsync(CollectionName, trade.Key, changedFields, ct);
-                if (!success)
-                {
-                    logger.LogWarning("Update ingestion failed for trade {TradeId}.", trade.Id);
-                }
-
-                UpdateStatus(status =>
-                {
-                    status.UpdatesSent++;
-                    status.LastUpdatedUtc = DateTimeOffset.UtcNow;
-                });
+                await Task.Delay(settings.UpdateIntervalMs, ct);
+                continue;
             }
 
-            if (ct.IsCancellationRequested)
+            var trade = trades[nextTradeIndex];
+            nextTradeIndex = (nextTradeIndex + 1) % trades.Count;
+
+            var changedFields = ApplyUpdates(trade, settings);
+            var success = await httpClient.IngestAsync(CollectionName, trade.Key, changedFields, ct);
+            if (!success)
             {
-                break;
+                logger.LogWarning("Update ingestion failed for trade {TradeId}.", trade.Id);
             }
+
+            UpdateStatus(status =>
+            {
+                status.UpdatesSent++;
+                status.LastUpdatedUtc = DateTimeOffset.UtcNow;
+            });
 
             await Task.Delay(settings.UpdateIntervalMs, ct);
         }

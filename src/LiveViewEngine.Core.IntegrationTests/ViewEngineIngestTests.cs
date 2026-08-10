@@ -376,6 +376,49 @@ public class ViewEngineIngestTests
     }
 
     [Fact]
+    public async Task SortFieldChange_RowLeavesPagedViewport_EmitsRemoveAndBackfillInsert()
+    {
+        var (engine, publisher, _) = CreateEngine();
+        await CreateOrders(engine);
+
+        for (int i = 1; i <= 100; i++)
+        {
+            var key = $"o{i:D3}";
+            await Upsert(engine, key, $"Customer-{i:D3}", i.ToString("D3"));
+        }
+
+        await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = "client1",
+            View = new ViewDefinition
+            {
+                CollectionId = "orders",
+                SortColumn = "amount",
+                SortAscending = true
+            },
+            StartIndex = 0,
+            PageSize = 50
+        });
+
+        await engine.IngestAsync(new UpsertRowCommand
+        {
+            CollectionId = "orders",
+            Key = "o010",
+            Fields = new Dictionary<string, string?> { ["amount"] = "999" }
+        });
+
+        var events = publisher.EventsFor("client1").ToList();
+        Assert.Equal(2, events.Count);
+
+        var remove = Assert.IsType<RowRemoveEvent>(events[0]);
+        Assert.Equal(9, remove.Position);
+
+        var insert = Assert.IsType<RowInsertEvent>(events[1]);
+        Assert.Equal(49, insert.Position);
+        Assert.Equal("o051", insert.Row["key"]);
+    }
+
+    [Fact]
     public async Task RowOutsideViewport_NonSortNonFilterUpdate_NoEvent()
     {
         var (engine, publisher, _) = CreateEngine();

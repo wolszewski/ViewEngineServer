@@ -11,6 +11,7 @@ public sealed class SortIndex : IRowIndex
     private readonly NodeArrayTree<RowComparer> _tree;
     private bool _hasPending;
     private bool _pendingWasExisting;
+    private int _pendingRowIndex = -1;
     private string? _pendingOldValue;
     private int _overrideRowIndex = -1;
     private string? _overrideValue;
@@ -69,6 +70,7 @@ public sealed class SortIndex : IRowIndex
     {
         int pos = _tree.IndexOf(rowIndex);
         _pendingWasExisting = pos >= 0;
+        _pendingRowIndex = rowIndex;
         _pendingOldValue = _pendingWasExisting
             ? _collection.GetValue(rowIndex, _fieldIndex)
             : null;
@@ -79,7 +81,33 @@ public sealed class SortIndex : IRowIndex
     {
         _hasPending = false;
         _pendingWasExisting = false;
+        _pendingRowIndex = -1;
         _pendingOldValue = null;
+    }
+
+    internal int IndexOfWithPendingOldValue(int rowIndex)
+    {
+        return WithPendingOldValue(rowIndex, () => _tree.IndexOf(rowIndex));
+    }
+
+    internal TResult WithPendingOldValue<TResult>(int rowIndex, Func<TResult> action)
+    {
+        if (!_hasPending || !_pendingWasExisting || _pendingRowIndex != rowIndex)
+        {
+            return action();
+        }
+
+        try
+        {
+            _overrideRowIndex = rowIndex;
+            _overrideValue = _pendingOldValue;
+            return action();
+        }
+        finally
+        {
+            _overrideRowIndex = -1;
+            _overrideValue = null;
+        }
     }
 
     public void OnUpsert(int index)
