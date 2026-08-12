@@ -2,210 +2,302 @@
 
 ## Overview
 
-ViewEngineServer is a stateful, in-process real-time data engine. It accepts raw row mutations from producers (via HTTP) and delivers minimal, incremental delta events to consumers (via WebSocket). Consumers subscribe to *views* — named, sorted, filtered windows over named *collections*. Only the rows and fields that change, and only within a subscriber's current viewport, are sent.
+ViewEngineServer is an in-memory ASP.NET Core service that keeps named collections of rows and exposes both HTTP ingest and WebSocket subscription flows. In the current implementation, `IViewEngine` owns the ingest pipeline and the per-view subscription state. `ICollectionStore` keeps each collection alive in memory, and `IOutboundPublisher` pushes JSON delta events to a client connection.
 
-The design is inspired by [Lightstreamer](https://lightstreamer.com/): a server-side engine that maintains sorted, filtered virtual tables and pushes compressed cell-level updates to subscribing clients.
+This is a deliberately small, server-side data engine: create schemas, ingest row updates, maintain sorted and filtered indexes, and push only the rows currently in a subscriber's viewport.
+
+---
+
+## Current runtime shape
+
+The repo currently implements the following runtime flow:
+
+- `POST /collections` creates a `CollectionSchema`.
+- `POST /collections/{collectionName}/ingest` upserts or deletes a row.
+- `GET /ws` opens a WebSocket session.
+- The client sends JSON messages with a `type` of `subscribe`, `setviewport`, or `unsubscribe`.
+- `WebSocketSessionManager` maps inbound JSON into `SubscriptionCommand` objects.
+- `ViewEngine.SubscribeAsync` returns `ViewDelta` instances for the requesting connection.
+- `WebSocketOutboundPublisher` serializes them to JSON and sends them on the socket.
+
+The implementation is not yet a fully serialized, actor-based pipeline. It uses concurrent dictionaries and keeps mutation logic inline in `ViewEngine` and the collection/view indexes.
 
 ---
 
 ## Components
 
 ```
-┌──────────────────────────────────────────────────────┐
-│                    ViewEngineServer                   │
-│                                                       │
-│  HTTP /collections/{collectionName}/ingest            │
-│                         WebSocket /ws                  │
-│       │                     │                         │
-│       ▼                     ▼                         │
-│  IViewEngine ◄──────── ViewEngine                     │
-│       │                     │                         │
-│       │            ┌────────┴────────┐                │
-│       │            │                 │                │
-│       ▼            ▼                 ▼                │
-│  ICollectionStore  SharedView    ViewportState        │
-│       │            (per view key)   (per connection)  │
-│       ▼                 │                             │
-│  RowCollection          │                             │
-│  (typed List columns)   ▼                             │
-│                    SortIndex                          │
-│                    (sorted handle list)               │
-│                                                       │
-│                    IOutboundPublisher                  │
-│                    (WebSocket / test double)           │
-└──────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                     ViewEngineServer                         │
+│                                                            │
+│  HTTP /collections         HTTP /collections/{name}/ingest │
+│  WebSocket /ws                                             │
+│         │                              │                   │
+│         ▼                              ▼                   │
+│  WebSocketSessionManager ──► IViewEngine ──► ICollectionStore │
+│         │                                          │            │
+│         │                                          ▼            │
+│         │                                CollectionStore      │
+│         │                                          │            │
+│         └──────────────────────────────────────┼────────────┘
+│                                                │
+│                                                ▼
+│                                      RowCollection
+│                                        (Dictionary<string,int>
+│                                        + SlotList<string?[]>)
+│                                                │
+│                                                ▼
+│                                         SortIndexRegistry
+│                                                │
+│                                                ▼
+│                                          SortIndex
+│                                                │
+│                                                ▼
+│                                         SharedView
+│                                             + ViewKey
+│                                             + FilterSet
+│                                             + ViewportState
+│                                                │
+│                                                ▼
+│                                  MutationPropagator ──► IOutboundPublisher
+│                                              │
+│                                              ▼
+│                               WebSocketOutboundPublisher / JsonOutboundEventFormatter
+└──────────────────────────────────────────────────────────────┘
 ```
+
+### `CollectionStore`
+
+`CollectionStore` holds one `RowCollection` per collection name.
+
+- `TryCreate(CollectionSchema schema)` adds a new schema and row store.
+- `TryGet(string collectionId, out RowCollection? collection)` returns the live collection.
+- `CollectionIds` exposes the current collection names.
+
+### `CollectionSchema`
+
+`CollectionSchema` owns the field layout for a collection.
+
+- The first field is always the primary key (`key` at index 0).
+- Additional field names are appended in order from the create-collection request.
+- `MapToColumnChanges(...)` converts JSON field dictionaries into `(fieldIndex, value)` pairs used by `RowCollection`.
 
 ### `RowCollection`
 
-Stores all rows for one collection. Internally holds one `List<T?>` per schema field, indexed by a stable integer *handle* assigned on first insert. Lists grow on demand — no memory is pre-allocated for the full capacity.
+`RowCollection` is the actual storage backend for one collection.
 
-- `GetValue(handle, fieldIndex) → string?` — string representation of the stored value (output path).
-- `GetTypedValue(handle, fieldIndex) → object?` — native .NET value for sort/filter comparison (internal path).
-- `GetRow(handle) → IReadOnlyDictionary<string, string?>` — all fields as strings.
+- It keeps `_rowKeyToIndex: Dictionary<string, int>` for lookup by row key.
+- It keeps `_rows: SlotList<string?[]>` as the underlying row storage.
+- Each row is an array of `string?`, indexed by the schema field index.
+- `AddOrUpdate` writes field values back into the existing row; `Delete` removes a row and returns a `MutationInfo`.
+
+This is more compact than the historical typed-per-column design; the current implementation stores rows as string arrays and reuses a schema for field positions.
 
 ### `SortIndex`
 
-Maintains a sorted `List<int>` of row handles for a single (column, direction) sort key. Updated incrementally with binary-search insertion/removal on each mutation. Applies filter predicates at read time to serve paginated results.
+`SortIndex` is a per-collection, per-sort-field index built atop `NodeArrayTree<RowComparer>`.
+
+- It tracks the sorted order of row indices by a given field.
+- It supports `Take(startIndex, destination)` for page reads.
+- `CaptureOldValue` / `OnUpsert` / `OnDelete` coordinate updates during mutation propagation.
+- `FilteredDataIndex` and `FilterSet` are layered on top when a view has filters.
 
 ### `SharedView`
 
-Groups the `SortIndex` and the set of subscriber connection IDs for a given view key (`collectionId + sortColumn + sortAscending + filters`). Multiple connections with identical view parameters share one `SharedView`.
+`SharedView` groups the collection-level sort data with a set of subscriber connection IDs for a specific view definition.
+
+- `ViewKey` encodes `collectionId + sortColumn + sortAscending + filters`.
+- `SharedView` reuses a single `SortIndex` for identical view keys.
+- `GetPageIndexes` returns the visible indexes for a requested start position and page size.
+- `GetTotalCount` returns the filtered count for the current view.
 
 ### `ViewportState`
 
-Per-connection scroll position (`startIndex`, `pageSize`) and the row IDs currently in the client's window.
+`ViewportState` tracks the currently requested page for a single WebSocket connection.
+
+- `ConnectionId`
+- `ViewKey`
+- `StartIndex`
+- `PageSize`
+
+The viewport is not persisted across reconnects; it is rebuilt on the next subscribe or setviewport message.
 
 ### `ViewEngine`
 
-Orchestrates the full ingest-to-delta pipeline. Serialises per-collection mutations via a `SemaphoreSlim` so every subscriber observes deltas in write order.
+`ViewEngine` orchestrates the ingest pipeline and subscription lifecycle.
+
+- `IngestAsync` handles `CreateCollectionCommand`, `UpsertRowCommand`, and `DeleteRowCommand`.
+- `SubscribeAsync` handles `SubscribeCommand`, `ChangeViewportCommand`, and `UnsubscribeCommand`.
+- `HandleSubscribe` creates or reuses a `SharedView`, creates a `ViewportState`, and sends a `SnapshotDelta`.
+- `HandleChangeViewport` returns a new snapshot for the same view with a different page window.
+- `HandleUnsubscribe` removes the viewport and cleans up empty shared views if appropriate.
+
+### `MutationPropagator`
+
+`MutationPropagator` is the code path that applies row mutations to each active view and emits `ViewDelta` objects.
+
+- It compares the row's prior and new position in each active view.
+- It can emit row insert, row remove, row update, or snapshot events.
+- It finalizes the outgoing list and hands off to the outbound publisher.
 
 ---
 
-## Data flows
+## Data flow
+
+### Collection creation
+
+```
+POST /collections
+ → HttpEndpoints.MapPost("/collections")
+ → HttpIngestAdapter.HandleCreateCollectionAsync
+ → IViewEngine.IngestAsync(CreateCollectionCommand)
+ → ICollectionStore.TryCreate
+```
+
+The request body is a JSON object such as:
+
+```json
+{
+ "collectionName": "orders",
+ "fields": ["customer", "amount", "status"]
+}
+```
 
 ### Ingest (upsert / delete)
 
 ```
-HTTP POST /collections/{collectionName}/ingest
-  → HttpIngestAdapter (JSON → IngestCommand)
-  → ViewEngine.IngestAsync
-      → RowCollection.Upsert / Delete   (write lock)
-      → PropagateMutationAsync               (per-collection semaphore)
-          for each SharedView on this collection:
-              → SortIndex.OnUpsert / OnDelete
-              for each subscriber connection:
-                  → BuildDeltas (compare old/new viewport row IDs)
-                  → ViewDelta (row arrays and changed column indexes)
-                  → ViewportState.CurrentRowIds updated
-                  → IOutboundPublisher.PublishAsync
-                      → IOutboundEventFormatter (transport payload)
+POST /collections/{collectionName}/ingest
+ → HttpEndpoints.MapPost("/collections/{collectionName}/ingest")
+ → HttpIngestAdapter.HandleIngestAsync
+ → IViewEngine.IngestAsync
+     → RowCollection.AddOrUpdate / Delete
+     → MutationPropagator.PropagateAsync
+         for each SharedView in the collection:
+             → SortIndex captures old value / updates ordering
+             → ViewDelta objects are generated for affected subscribers
+             → IOutboundPublisher.PublishAsync
 ```
 
-### Subscribe
+The current request body is:
+
+```json
+{
+ "operation": "upsert",
+ "primaryKeyValue": "o42",
+ "fields": {
+   "customer": "Alice",
+   "amount": "99.5",
+   "status": "open"
+ }
+}
+```
+
+For delete requests, the server expects:
+
+```json
+{
+ "operation": "delete",
+ "primaryKeyValue": "o42"
+}
+```
+
+### WebSocket subscribe lifecycle
 
 ```
-WebSocket subscribe message
-  → ViewEngine.SubscribeAsync
-      → SharedView created or reused (shared SortIndex)
-      → ViewportState created
-      → SnapshotDelta built from current page handles and row arrays
-      → returned directly to WebSocket handler for immediate send
+GET /ws
+ → WebSocketEndpoints.MapWebSocketEndpoints
+ → WebSocketSessionManager.HandleConnectionAsync
+ → JSON message decoded to SubscribeCommand / ChangeViewportCommand / UnsubscribeCommand
+ → IViewEngine.SubscribeAsync
+ → SnapshotDelta or viewport delta sent back over the socket
 ```
 
-### Viewport change
+The current inbound message types are:
 
-```
-WebSocket changeViewport message
-  → ViewEngine.SubscribeAsync (ChangeViewportCommand)
-      → ViewportState updated
-      → SnapshotEvent built from new page handles
+```json
+{ "type": "subscribe", "collectionId": "orders", "sortColumn": "amount", "sortAscending": true, "startIndex": 0, "pageSize": 25 }
+{ "type": "setviewport", "startIndex": 50, "pageSize": 25 }
+{ "type": "unsubscribe" }
 ```
 
 ---
 
-## Wire format (current and intended)
+## Current wire format
 
-### Current ingest payload constraints
+The current implementation uses JSON events over WebSocket. The actual event model lives in `DeltaEvent`, `SnapshotEvent`, `RowUpdateEvent`, `RowInsertEvent`, and `RowRemoveEvent`, and `JsonOutboundEventFormatter` maps `ViewDelta` objects to these JSON DTOs.
 
-`POST /collections/{collectionName}/ingest` currently supports only string fields:
+### Snapshot event
 
 ```json
 {
-  "operation": "upsert",
-  "primaryKeyValue": "o42",
-  "fields": {
-    "customer": "Alice",
-    "amount": "99.5",
-    "status": "open"
-  }
+ "type": "snapshot",
+ "viewId": "orders|amount|asc|",
+ "totalCount": 1000,
+ "startIndex": 0,
+ "rows": [
+   { "key": "o1", "customer": "Alice", "amount": "99.5", "status": "open" },
+   { "key": "o2", "customer": "Bob", "amount": "120", "status": "closed" }
+ ]
 }
 ```
 
-- `collectionName` comes from route path parameter (`/collections/{collectionName}/ingest`).
-- `fields` must be `Dictionary<string, string?>` (`string` or `null` values only).
-- No numeric/boolean/object/array coercion is performed during ingest.
-- `primaryKeyValue` is preferred for row key; if omitted, `"key"`/`"id"` from `fields` is used.
+### Row insert event
 
-### Current: JSON delta events
-
-Delta events are JSON-serialised using `System.Text.Json` polymorphic dispatch over WebSocket. Each event carries a `type`
-discriminator. This JSON shape is primarily the current debug/inspection transport while the wire format evolves.
-
-`ViewEngine` does not build field-name dictionaries. It emits internal `ViewDelta` objects containing positional row arrays and
-changed column indexes. `JsonOutboundEventFormatter` maps those internal deltas to the JSON DTOs below at the WebSocket publisher
-boundary. A pipe-delimited formatter can replace that mapping without changing view maintenance or delta calculation.
-
-**Snapshot** (sent on subscribe or viewport change):
 ```json
 {
-  "type": "snapshot",
-  "viewId": "orders|amount|asc|",
-  "totalCount": 1000,
-  "startIndex": 0,
-  "rows": [
-    { "id": "o1", "customer": "Alice", "amount": "99.5", "status": "open" },
-    ...
-  ]
+ "type": "rowInsert",
+ "viewId": "orders|amount|asc|",
+ "position": 3,
+ "row": { "key": "o42", "customer": "Ivy", "amount": "150", "status": "open" }
 }
 ```
 
-**Row insert** (new row enters the viewport):
+### Row update event
+
 ```json
-{ "type": "rowInsert", "viewId": "...", "position": 3,
-  "row": { "id": "o42", "customer": "Bob", "amount": "120", "status": "open" } }
+{
+ "type": "rowUpdate",
+ "viewId": "orders|amount|asc|",
+ "rowId": "o42",
+ "position": 3,
+ "changedFields": { "amount": "135" }
+}
 ```
 
-**Row update** (field values changed for a row already in viewport):
+### Row remove event
+
 ```json
-{ "type": "rowUpdate", "viewId": "...", "rowId": "o42", "position": 3,
-  "changedFields": { "amount": "135" } }
+{
+ "type": "rowRemove",
+ "viewId": "orders|amount|asc|",
+ "position": 3
+}
 ```
 
-**Row remove** (row leaves the viewport):
-```json
-{ "type": "rowRemove", "viewId": "...", "position": 3 }
-```
-
-All field values are `string | null`. The server formats each value using the column's native type (e.g. `decimal` → invariant decimal string, `DateTime` → ISO 8601 `"O"` format, `bool` → `"true"` / `"false"`).
-
-### Target: Lightstreamer-style pipe-delimited encoding
-
-The target wire format is to send rows and updates as pipe-delimited strings, matching the Lightstreamer EXT format:
-
-```
-val1|val2||val4
-```
-
-- Fields are ordered by the client's subscription field list.
-- An empty segment (`||`) means the value is null or unchanged (in update context).
-- A snapshot sends all fields for each row.
-- An update sends only changed fields; unchanged fields are empty segments.
-
-This format eliminates field-name repetition and JSON overhead. The `GetValue() → string?` API on `RowCollection` is already shaped for this: values are strings at the storage boundary, and pipe-joining them is O(fields) with no further serialisation.
+Important: the server currently treats field values as `string?` at the storage boundary. It does not perform typed conversion on ingest, and it does not emit a Lightstreamer-style pipe-delimited payload today.
 
 ---
 
-## Column type reference
+## Planned direction (not yet implemented)
 
-| `FieldType` | .NET type | String format | Notes |
-|---|---|---|---|
-| `Int32` | `int?` | invariant integer | |
-| `Int64` | `long?` | invariant integer | |
-| `Decimal` | `decimal?` | invariant decimal | Use for monetary/fractional values |
-| `String` | `string?` | as-is | |
-| `Boolean` | `bool?` | `"true"` / `"false"` | lowercase |
-| `DateTime` | `DateTime?` | ISO 8601 round-trip | `"O"` format spec |
-| `DateOnly` | `DateOnly?` | `"yyyy-MM-dd"` | |
-| `Byte` | `byte?` | invariant integer | |
+The original design considered a Lightstreamer-like pipe-delimited transport and typed field conversion. That is still a direction for the project, but it is not the current runtime behavior.
+
+The current codebase is intentionally simpler:
+
+- `CollectionSchema` keeps string-based row arrays.
+- `SortIndex` and `FilterSet` compare values as strings.
+- `JsonOutboundEventFormatter` emits JSON DTOs instead of packed binary or pipe-delimited payloads.
+
+If the server later adopts a compact wire format, the `ViewDelta` generated by `ViewEngine` can still be transformed independently from the in-memory view logic.
 
 ---
 
 ## Threading model
 
-The current implementation uses concurrent dictionaries for collection, view, viewport, and subscriber lookup, but mutation of
-`RowCollection`, `SortIndex`, and viewport contents is not yet serialized.
+The current implementation is not fully serialized per collection. It uses concurrent dictionaries for collection, view, and viewport lookup, but it does not yet have a dedicated single-writer background processor for a collection's mutation pipeline.
 
-The intended model is a bounded channel and dedicated background processor per collection. That processor will provide
-single-writer ordering for row mutations, sort-index maintenance, viewport updates, and delta creation. Until it is implemented,
-callers must not invoke mutations concurrently for the same collection.
+At the current stage:
+
+- `RowCollection`, `SortIndex`, and `ViewportState` can be mutated from multiple callers.
+- The code relies on the fact that callers are effectively not mutating the same collection concurrently in normal usage.
+- A future background processor or channel-based queue would provide deterministic write ordering for all mutations, sort-index updates, and viewport recalculations.
