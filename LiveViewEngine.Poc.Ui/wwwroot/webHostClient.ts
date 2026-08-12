@@ -54,6 +54,10 @@ export class WebHostClient {
         this.callbacks = callbacks;
     }
 
+    public get isConnected(): boolean {
+        return this.socket?.readyState === WebSocket.OPEN;
+    }
+
     public connect(request: SubscribeRequest): void {
         if (this.socket && this.socket.readyState === WebSocket.OPEN) {
             this.sendSubscribe(request);

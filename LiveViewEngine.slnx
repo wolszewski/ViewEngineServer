@@ -5,7 +5,7 @@
   <Folder Name="/docs/">
     <File Path="docs\system-design.md" />
   </Folder>
-  <Folder Name="/poc/">
+  <Folder Name="/examples/">
     <Project Path="LiveViewEngine.Poc.AppHost/LiveViewEngine.Poc.AppHost.csproj" />
     <Project Path="LiveViewEngine.Poc.DataProvider/LiveViewEngine.Poc.DataProvider.csproj" />
   </Folder>

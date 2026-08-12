@@ -15,6 +15,144 @@ import {
 ModuleRegistry.registerModules([AllCommunityModule]);
 
 const defaultTotalCountAssumption = 10_000;
+const defaultPageSizes = [25, 50, 100];
+const knownTradeColumns = [
+    'tradeId',
+    'createdDate',
+    'updatedDate',
+    'accountId',
+    'quantity',
+    'price',
+    'side',
+    'status',
+    'notional',
+    ...Array.from({ length: 30 }, (_, index) => `stringField${index.toString().padStart(2, '0')}`),
+    ...Array.from({ length: 23 }, (_, index) => `intField${index.toString().padStart(2, '0')}`),
+    ...Array.from({ length: 20 }, (_, index) => `decimalField${index.toString().padStart(2, '0')}`),
+    ...Array.from({ length: 20 }, (_, index) => `enumField${index.toString().padStart(2, '0')}`)
+];
+
+interface SearchableDropdownProps {
+    id: string;
+    value: string;
+    options: string[];
+    onInputChange: (value: string) => void;
+    onCommit: (value: string) => void;
+    inputMode?: React.HTMLAttributes<HTMLInputElement>['inputMode'];
+}
+
+function SearchableDropdown({
+    id,
+    value,
+    options,
+    onInputChange,
+    onCommit,
+    inputMode
+}: SearchableDropdownProps): React.ReactElement {
+    const [isOpen, setIsOpen] = useState(false);
+    const wrapperRef = useRef<HTMLDivElement | null>(null);
+    const inputRef = useRef<HTMLInputElement | null>(null);
+
+    const filteredOptions = useMemo(() => {
+        const normalizedValue = value.trim().toLowerCase();
+        return options.filter((option) => option.toLowerCase().includes(normalizedValue));
+    }, [options, value]);
+
+    useEffect(() => {
+        const handlePointerDown = (event: PointerEvent) => {
+            if (!wrapperRef.current?.contains(event.target as Node)) {
+                setIsOpen(false);
+            }
+        };
+
+        document.addEventListener('pointerdown', handlePointerDown);
+        return () => document.removeEventListener('pointerdown', handlePointerDown);
+    }, []);
+
+    const commitValue = useCallback((nextValue: string) => {
+        onCommit(nextValue);
+        setIsOpen(false);
+    }, [onCommit]);
+
+    return React.createElement(
+        'div',
+        { className: 'searchable-dropdown', ref: wrapperRef },
+        React.createElement(
+            'div',
+            { className: 'searchable-dropdown-input' },
+            React.createElement('input', {
+                id,
+                ref: inputRef,
+                value,
+                inputMode,
+                onFocus: () => setIsOpen(true),
+                onClick: () => setIsOpen(true),
+                onChange: (e: Event) => {
+                    onInputChange((e.target as HTMLInputElement).value);
+                    setIsOpen(true);
+                },
+                onBlur: () => {
+                    window.setTimeout(() => {
+                        if (!wrapperRef.current?.contains(document.activeElement)) {
+                            commitValue(value);
+                        }
+                    }, 0);
+                },
+                onKeyDown: (e: KeyboardEvent) => {
+                    if (e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        setIsOpen(true);
+                        return;
+                    }
+
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        commitValue((e.target as HTMLInputElement).value);
+                        return;
+                    }
+
+                    if (e.key === 'Escape') {
+                        e.preventDefault();
+                        setIsOpen(false);
+                    }
+                }
+            }),
+            React.createElement(
+                'button',
+                {
+                    type: 'button',
+                    className: 'searchable-dropdown-toggle',
+                    onMouseDown: (e: MouseEvent) => e.preventDefault(),
+                    onClick: () => {
+                        setIsOpen((current) => !current);
+                        inputRef.current?.focus();
+                    }
+                },
+                '▾'
+            )
+        ),
+        isOpen && filteredOptions.length > 0
+            ? React.createElement(
+                'div',
+                { className: 'searchable-dropdown-menu' },
+                ...filteredOptions.map((option) => React.createElement(
+                    'button',
+                    {
+                        key: option,
+                        type: 'button',
+                        className: 'searchable-dropdown-option',
+                        onMouseDown: (e: MouseEvent) => e.preventDefault(),
+                        onClick: () => {
+                            onInputChange(option);
+                            commitValue(option);
+                        }
+                    },
+                    option
+                ))
+            )
+            : null
+    );
+}
 
 function App(): React.ReactElement {
     const [status, setStatus] = useState('Disconnected');
@@ -22,6 +160,7 @@ function App(): React.ReactElement {
     const [sortColumn, setSortColumn] = useState('quantity');
     const [sortAscending, setSortAscending] = useState(true);
     const [pageSize, setPageSize] = useState(50);
+    const [pageSizeInput, setPageSizeInput] = useState('50');
     const [pageIndex, setPageIndex] = useState(0);
     const [totalCount, setTotalCount] = useState<number | null>(null);
     const [columnDefs, setColumnDefs] = useState<ColDef<RowData>[]>([]);
@@ -208,10 +347,29 @@ function App(): React.ReactElement {
     }, [maxPageIndex, pageSize]);
 
     const onPageSizeChanged = useCallback((nextPageSize: number) => {
-        setPageSize(nextPageSize);
+        if (!Number.isFinite(nextPageSize) || nextPageSize < 1) {
+            return;
+        }
+
+        const normalizedPageSize = Math.floor(nextPageSize);
+        setPageSize(normalizedPageSize);
         setPageIndex(0);
-        clientRef.current?.setViewport(0, nextPageSize);
+        clientRef.current?.setViewport(0, normalizedPageSize);
     }, []);
+
+    const commitPageSize = useCallback((nextPageSize: string) => {
+        const normalizedPageSize = Number(nextPageSize.trim());
+        if (!Number.isFinite(normalizedPageSize) || normalizedPageSize < 1) {
+            setPageSizeInput(String(pageSize));
+            return;
+        }
+
+        const wholePageSize = Math.floor(normalizedPageSize);
+        setPageSizeInput(String(wholePageSize));
+        if (wholePageSize !== pageSize) {
+            onPageSizeChanged(wholePageSize);
+        }
+    }, [onPageSizeChanged, pageSize]);
 
     useEffect(() => {
         clientRef.current = new WebHostClient('ws://127.0.0.1:5100/ws', {
@@ -224,6 +382,25 @@ function App(): React.ReactElement {
             clientRef.current = null;
         };
     }, []);
+
+    useEffect(() => {
+        setPageSizeInput(String(pageSize));
+    }, [pageSize]);
+
+    useEffect(() => {
+        const client = clientRef.current;
+        if (!client?.isConnected) {
+            return;
+        }
+
+        client.connect({
+            collectionId,
+            sortColumn,
+            sortAscending,
+            pageSize,
+            startIndex: pageIndex * pageSize
+        });
+    }, [pageSize, sortAscending, sortColumn]);
 
     return React.createElement(
         React.Fragment,
@@ -248,6 +425,54 @@ function App(): React.ReactElement {
                 flex-direction: column;
                 gap: 0.25rem;
                 font-size: 0.95rem;
+            }
+            .searchable-dropdown {
+                position: relative;
+                min-width: 14rem;
+            }
+            .searchable-dropdown-input {
+                display: grid;
+                grid-template-columns: 1fr auto;
+            }
+            .searchable-dropdown-input input {
+                width: 100%;
+                box-sizing: border-box;
+                padding: 0.4rem 0.5rem;
+                border: 1px solid #c7ced8;
+                border-right: 0;
+                border-radius: 0.25rem 0 0 0.25rem;
+            }
+            .searchable-dropdown-toggle {
+                border: 1px solid #c7ced8;
+                border-radius: 0 0.25rem 0.25rem 0;
+                background: #f7f9fc;
+                padding: 0 0.75rem;
+                cursor: pointer;
+            }
+            .searchable-dropdown-menu {
+                position: absolute;
+                top: calc(100% + 0.25rem);
+                left: 0;
+                right: 0;
+                display: flex;
+                flex-direction: column;
+                max-height: 14rem;
+                overflow-y: auto;
+                background: white;
+                border: 1px solid #c7ced8;
+                border-radius: 0.25rem;
+                box-shadow: 0 0.4rem 1rem rgba(15, 23, 42, 0.12);
+                z-index: 10;
+            }
+            .searchable-dropdown-option {
+                border: 0;
+                background: white;
+                padding: 0.5rem 0.75rem;
+                text-align: left;
+                cursor: pointer;
+            }
+            .searchable-dropdown-option:hover {
+                background: #f0f6ff;
             }
             .status {
                 margin-bottom: 1rem;
@@ -284,10 +509,14 @@ function App(): React.ReactElement {
                 'label',
                 { className: 'control-label' },
                 'Sort column',
-                React.createElement('input', {
-                    value: sortColumn,
-                    onChange: (e: Event) => setSortColumn((e.target as HTMLInputElement).value)
-                })
+                React.createElement(
+                    'select',
+                    {
+                        value: sortColumn,
+                        onChange: (e: Event) => setSortColumn((e.target as HTMLSelectElement).value)
+                    },
+                    ...knownTradeColumns.map((column) => React.createElement('option', { key: column, value: column }, column))
+                )
             ),
             React.createElement(
                 'label',
@@ -307,16 +536,14 @@ function App(): React.ReactElement {
                 'label',
                 { className: 'control-label' },
                 'Page size',
-                React.createElement(
-                    'select',
-                    {
-                        value: pageSize,
-                        onChange: (e: Event) => onPageSizeChanged(Number((e.target as HTMLSelectElement).value))
-                    },
-                    React.createElement('option', { value: 25 }, '25'),
-                    React.createElement('option', { value: 50 }, '50'),
-                    React.createElement('option', { value: 100 }, '100')
-                )
+                React.createElement(SearchableDropdown, {
+                    id: 'page-size',
+                    value: pageSizeInput,
+                    options: defaultPageSizes.map((size) => String(size)),
+                    onInputChange: setPageSizeInput,
+                    onCommit: commitPageSize,
+                    inputMode: 'numeric'
+                })
             ),
             React.createElement('button', { onClick: connect }, 'Connect'),
             React.createElement('button', { onClick: disconnect }, 'Disconnect')

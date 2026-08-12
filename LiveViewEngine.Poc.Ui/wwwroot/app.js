@@ -1,7 +1,7 @@
 import ts from 'https://esm.sh/typescript@5.6.3';
 
 async function loadTypeScriptModule(path, replacements = []) {
-    const source = await fetch(path).then((response) => response.text());
+    const source = await fetch(path, { cache: 'no-store' }).then((response) => response.text());
     const adjustedSource = replacements.reduce(
         (text, [from, to]) => text.replaceAll(from, to),
         source
