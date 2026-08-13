@@ -27,12 +27,19 @@ export interface RowRemoveEvent {
 
 export type DeltaEvent = SnapshotEvent | RowUpdateEvent | RowInsertEvent | RowRemoveEvent;
 
+export interface FilterRequest {
+    field: string;
+    operator: string;
+    value: string;
+}
+
 export interface SubscribeRequest {
     collectionId: string;
     sortColumn: string;
     sortAscending: boolean;
     pageSize: number;
     startIndex: number;
+    filters: FilterRequest[];
 }
 
 interface ClientCallbacks {
@@ -144,7 +151,11 @@ export class WebHostClient {
             sortAscending: request.sortAscending,
             startIndex: request.startIndex,
             pageSize: request.pageSize,
-            filters: []
+            filters: (request.filters ?? []).map((filter) => ({
+                field: filter.field,
+                operator: filter.operator,
+                value: filter.value
+            }))
         }));
     }
 

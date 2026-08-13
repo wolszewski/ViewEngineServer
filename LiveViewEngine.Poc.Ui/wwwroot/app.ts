@@ -16,6 +16,15 @@ ModuleRegistry.registerModules([AllCommunityModule]);
 
 const defaultTotalCountAssumption = 10_000;
 const defaultPageSizes = [25, 50, 100];
+const filterOperators = [
+    { label: 'equals', value: 'eq' },
+    { label: 'not equals', value: 'notEq' },
+    { label: 'greater than', value: 'gt' },
+    { label: 'greater than or equal', value: 'gte' },
+    { label: 'less than', value: 'lt' },
+    { label: 'less than or equal', value: 'lte' },
+    { label: 'contains', value: 'contains' }
+] as const;
 const knownTradeColumns = [
     'tradeId',
     'createdDate',
@@ -162,6 +171,13 @@ function App(): React.ReactElement {
     const [pageSize, setPageSize] = useState(50);
     const [pageSizeInput, setPageSizeInput] = useState('50');
     const [pageIndex, setPageIndex] = useState(0);
+    const [filters, setFilters] = useState<Array<{ field: string; operator: string; value: string }>>([]);
+    const [isAddingFilter, setIsAddingFilter] = useState(false);
+    const [draftFilter, setDraftFilter] = useState({
+        field: knownTradeColumns[0],
+        operator: 'eq',
+        value: ''
+    });
     const [totalCount, setTotalCount] = useState<number | null>(null);
     const [columnDefs, setColumnDefs] = useState<ColDef<RowData>[]>([]);
 
@@ -322,6 +338,17 @@ function App(): React.ReactElement {
     }, [applyInsert, applyRemove, applySnapshot, applyUpdate]);
     handleDeltaEventRef.current = handleDeltaEvent;
 
+    const normalisedFilters = useMemo(
+        () => filters
+            .filter((filter) => filter.field && filter.field.trim().length > 0)
+            .map((filter) => ({
+                field: filter.field,
+                operator: filter.operator,
+                value: filter.value
+            })),
+        [filters]
+    );
+
     const connect = useCallback(() => {
         clearState();
         const startIndex = pageIndex * pageSize;
@@ -330,9 +357,10 @@ function App(): React.ReactElement {
             sortColumn,
             sortAscending,
             pageSize,
-            startIndex
+            startIndex,
+            filters: normalisedFilters
         });
-    }, [clearState, collectionId, pageIndex, pageSize, sortAscending, sortColumn]);
+    }, [clearState, collectionId, normalisedFilters, pageIndex, pageSize, sortAscending, sortColumn]);
 
     const disconnect = useCallback(() => {
         clientRef.current?.disconnect();
@@ -371,6 +399,43 @@ function App(): React.ReactElement {
         }
     }, [onPageSizeChanged, pageSize]);
 
+    const addFilter = useCallback(() => {
+        setIsAddingFilter(true);
+    }, []);
+
+    const commitFilter = useCallback(() => {
+        const nextFilter = {
+            field: draftFilter.field,
+            operator: draftFilter.operator,
+            value: draftFilter.value
+        };
+
+        if (!nextFilter.field || !nextFilter.field.trim()) {
+            return;
+        }
+
+        setFilters((current) => [...current, nextFilter]);
+        setDraftFilter({
+            field: knownTradeColumns[0],
+            operator: 'eq',
+            value: ''
+        });
+        setIsAddingFilter(false);
+    }, [draftFilter]);
+
+    const cancelFilter = useCallback(() => {
+        setIsAddingFilter(false);
+        setDraftFilter({
+            field: knownTradeColumns[0],
+            operator: 'eq',
+            value: ''
+        });
+    }, []);
+
+    const removeFilter = useCallback((index: number) => {
+        setFilters((current) => current.filter((_, currentIndex) => currentIndex !== index));
+    }, []);
+
     useEffect(() => {
         clientRef.current = new WebHostClient('ws://127.0.0.1:5100/ws', {
             onStatus: setStatus,
@@ -398,9 +463,10 @@ function App(): React.ReactElement {
             sortColumn,
             sortAscending,
             pageSize,
-            startIndex: pageIndex * pageSize
+            startIndex: pageIndex * pageSize,
+            filters: normalisedFilters
         });
-    }, [pageSize, sortAscending, sortColumn]);
+    }, [collectionId, filters, normalisedFilters, pageIndex, pageSize, sortAscending, sortColumn]);
 
     return React.createElement(
         React.Fragment,
@@ -486,6 +552,36 @@ function App(): React.ReactElement {
                 gap: 0.75rem;
                 margin-bottom: 1rem;
             }
+            .filters {
+                display: flex;
+                flex-direction: column;
+                gap: 0.75rem;
+                margin-bottom: 1rem;
+            }
+            .filter-row {
+                display: flex;
+                gap: 0.75rem;
+                align-items: end;
+                flex-wrap: wrap;
+                padding: 0.75rem;
+                border: 1px solid #dfe7f1;
+                border-radius: 0.5rem;
+                background: #f9fbff;
+            }
+            .filter-chip {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 0.75rem;
+                padding: 0.6rem 0.75rem;
+                border: 1px solid #cbd5e1;
+                border-radius: 999px;
+                background: #eef6ff;
+            }
+            .empty-filters {
+                color: #475569;
+                font-style: italic;
+            }
             .ag-theme-balham {
                 --ag-value-change-value-highlight-background-color: #b7f7b7;
             }
@@ -545,8 +641,64 @@ function App(): React.ReactElement {
                     inputMode: 'numeric'
                 })
             ),
-            React.createElement('button', { onClick: connect }, 'Connect'),
-            React.createElement('button', { onClick: disconnect }, 'Disconnect')
+            React.createElement('button', { type: 'button', onClick: addFilter }, 'Add filter'),
+            React.createElement('button', { type: 'button', onClick: connect }, 'Connect'),
+            React.createElement('button', { type: 'button', onClick: disconnect }, 'Disconnect')
+        ),
+        React.createElement(
+            'div',
+            { className: 'filters' },
+            isAddingFilter
+                ? React.createElement(
+                    'div',
+                    { className: 'filter-row' },
+                    React.createElement(
+                        'label',
+                        { className: 'control-label' },
+                        'Field',
+                        React.createElement(
+                            'select',
+                            {
+                                value: draftFilter.field,
+                                onChange: (e: Event) => setDraftFilter((current) => ({ ...current, field: (e.target as HTMLSelectElement).value }))
+                            },
+                            ...knownTradeColumns.map((column) => React.createElement('option', { key: column, value: column }, column))
+                        )
+                    ),
+                    React.createElement(
+                        'label',
+                        { className: 'control-label' },
+                        'Operator',
+                        React.createElement(
+                            'select',
+                            {
+                                value: draftFilter.operator,
+                                onChange: (e: Event) => setDraftFilter((current) => ({ ...current, operator: (e.target as HTMLSelectElement).value }))
+                            },
+                            ...filterOperators.map((operator) => React.createElement('option', { key: operator.value, value: operator.value }, operator.label))
+                        )
+                    ),
+                    React.createElement(
+                        'label',
+                        { className: 'control-label' },
+                        'Value',
+                        React.createElement('input', {
+                            value: draftFilter.value,
+                            onChange: (e: Event) => setDraftFilter((current) => ({ ...current, value: (e.target as HTMLInputElement).value }))
+                        })
+                    ),
+                    React.createElement('button', { type: 'button', onClick: commitFilter }, 'Add'),
+                    React.createElement('button', { type: 'button', onClick: cancelFilter }, 'Cancel')
+                )
+                : null,
+            filters.length === 0
+                ? React.createElement('div', { className: 'empty-filters' }, 'No filters added.')
+                : filters.map((filter, index) => React.createElement(
+                    'div',
+                    { key: `${filter.field}-${filter.operator}-${index}`, className: 'filter-chip' },
+                    React.createElement('span', null, `${filter.field} ${filterOperators.find((operator) => operator.value === filter.operator)?.label ?? filter.operator} ${filter.value}`),
+                    React.createElement('button', { type: 'button', onClick: () => removeFilter(index) }, 'Remove')
+                ))
         ),
         React.createElement(
             'div',
