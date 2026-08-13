@@ -1,0 +1,233 @@
+using System.Collections.Concurrent;
+using LiveViewEngine.Core;
+using LiveViewEngine.Core.Data;
+using LiveViewEngine.Core.Output;
+using LiveViewEngine.Core.Views;
+using Microsoft.Extensions.Logging.Abstractions;
+
+namespace LiveViewEngine.Core.IntegrationTests;
+
+public class ViewEngineConcurrencyTests
+{
+    private static (ViewEngine engine, ThreadSafeCapturingPublisher publisher) CreateEngine()
+    {
+        var store = new CollectionStore();
+        var publisher = new ThreadSafeCapturingPublisher();
+        var engine = new ViewEngine(store, publisher, NullLogger<ViewEngine>.Instance);
+        return (engine, publisher);
+    }
+
+    private static CollectionSchema TradesSchema() => new("trades", ["symbol", "price", "quantity"]);
+
+    private static Task<IngestResult> CreateTrades(ViewEngine engine) =>
+        engine.IngestAsync(new CreateCollectionCommand
+        {
+            CollectionId = "trades",
+            Schema = TradesSchema()
+        });
+
+    private static Task<IngestResult> UpsertTrade(ViewEngine engine, string key, string symbol, string price) =>
+        engine.IngestAsync(new UpsertRowCommand
+        {
+            CollectionId = "trades",
+            Key = key,
+            Fields = new Dictionary<string, string?> { ["symbol"] = symbol, ["price"] = price, ["quantity"] = "10" }
+        });
+
+    [Fact]
+    public async Task ConcurrentUpserts_AllRowsPresent()
+    {
+        var (engine, _) = CreateEngine();
+        await CreateTrades(engine);
+
+        const int tasks = 10;
+        const int rowsPerTask = 10;
+
+        var work = Enumerable.Range(0, tasks).Select(t => Task.Run(async () =>
+        {
+            for (int i = 0; i < rowsPerTask; i++)
+            {
+                var key = $"t{t:D3}-{i:D3}";
+                var result = await UpsertTrade(engine, key, $"SYM{t}", (t * rowsPerTask + i).ToString());
+                Assert.True(result.Success, result.Error);
+            }
+        }));
+
+        await Task.WhenAll(work);
+
+        var snapshot = await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = "verify",
+            View = new ViewDefinition { CollectionId = "trades" },
+            StartIndex = 0,
+            PageSize = tasks * rowsPerTask
+        });
+
+        var delta = Assert.IsType<SnapshotDelta>(snapshot.Single());
+        Assert.Equal(tasks * rowsPerTask, delta.TotalCount);
+    }
+
+    [Fact]
+    public async Task SubscribeDuringFastInsert_SnapshotIsConsistent()
+    {
+        var (engine, _) = CreateEngine();
+        await CreateTrades(engine);
+
+        const int totalRows = 200;
+
+        // Insert half the rows before subscribing starts.
+        for (int i = 0; i < totalRows / 2; i++)
+        {
+            await UpsertTrade(engine, $"t{i:D4}", "AAPL", i.ToString());
+        }
+
+        // Insert the second half concurrently with a subscribe.
+        var insertTask = Task.Run(async () =>
+        {
+            for (int i = totalRows / 2; i < totalRows; i++)
+            {
+                await UpsertTrade(engine, $"t{i:D4}", "AAPL", i.ToString());
+            }
+        });
+
+        var subscribeTask = Task.Run(async () =>
+        {
+            var result = await engine.SubscribeAsync(new SubscribeCommand
+            {
+                ConnectionId = "client1",
+                View = new ViewDefinition { CollectionId = "trades" },
+                StartIndex = 0,
+                PageSize = totalRows
+            });
+            return result;
+        });
+
+        await Task.WhenAll(insertTask, subscribeTask);
+
+        var deltas = await subscribeTask;
+        var snapshot = Assert.IsType<SnapshotDelta>(deltas.Single());
+
+        // Snapshot must be internally consistent: every row index it claimed must be valid.
+        Assert.True(snapshot.TotalCount >= totalRows / 2,
+            $"Expected at least {totalRows / 2} rows but got {snapshot.TotalCount}");
+        Assert.True(snapshot.Rows.Count <= snapshot.TotalCount,
+            "Returned more rows than TotalCount");
+        Assert.All(snapshot.Rows, row => Assert.NotNull(row[CollectionSchema.PrimaryKeyIndex]));
+    }
+
+    [Fact]
+    public async Task SubscribeBeforeInsert_ReceivesInsertEventsForAllRows()
+    {
+        var (engine, publisher) = CreateEngine();
+        await CreateTrades(engine);
+
+        await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = "client1",
+            View = new ViewDefinition { CollectionId = "trades" },
+            StartIndex = 0,
+            PageSize = 200
+        });
+
+        const int rowCount = 50;
+
+        await Task.WhenAll(Enumerable.Range(0, rowCount).Select(i =>
+            UpsertTrade(engine, $"t{i:D4}", "GOOG", i.ToString())));
+
+        var inserts = publisher.EventsFor("client1").OfType<RowInsertEvent>().ToList();
+        Assert.Equal(rowCount, inserts.Count);
+    }
+
+    [Fact]
+    public async Task ConcurrentSubscribers_AllReceiveInsertEvents()
+    {
+        var (engine, publisher) = CreateEngine();
+        await CreateTrades(engine);
+
+        const int subscribers = 5;
+        const int rowCount = 20;
+
+        // Subscribe all clients in parallel.
+        await Task.WhenAll(Enumerable.Range(0, subscribers).Select(s =>
+            engine.SubscribeAsync(new SubscribeCommand
+            {
+                ConnectionId = $"client{s}",
+                View = new ViewDefinition { CollectionId = "trades" },
+                StartIndex = 0,
+                PageSize = rowCount
+            })));
+
+        // Insert rows concurrently.
+        await Task.WhenAll(Enumerable.Range(0, rowCount).Select(i =>
+            UpsertTrade(engine, $"t{i:D4}", "MSFT", i.ToString())));
+
+        for (int s = 0; s < subscribers; s++)
+        {
+            var inserts = publisher.EventsFor($"client{s}").OfType<RowInsertEvent>().ToList();
+            Assert.Equal(rowCount, inserts.Count);
+        }
+    }
+
+    [Fact]
+    public async Task ConcurrentIngestAndSubscribe_NoExceptions()
+    {
+        var (engine, _) = CreateEngine();
+        await CreateTrades(engine);
+
+        const int iterations = 50;
+
+        var ingestTask = Task.Run(async () =>
+        {
+            for (int i = 0; i < iterations; i++)
+            {
+                var result = await UpsertTrade(engine, $"t{i:D4}", "IBM", i.ToString());
+                Assert.True(result.Success, result.Error);
+            }
+        });
+
+        var subscribeTask = Task.Run(async () =>
+        {
+            for (int i = 0; i < iterations; i++)
+            {
+                var result = await engine.SubscribeAsync(new SubscribeCommand
+                {
+                    ConnectionId = $"client{i}",
+                    View = new ViewDefinition { CollectionId = "trades" },
+                    StartIndex = 0,
+                    PageSize = 10
+                });
+                // Must return exactly one snapshot delta without throwing.
+                Assert.Single(result);
+                Assert.IsType<SnapshotDelta>(result[0]);
+            }
+        });
+
+        // No exception expected.
+        await Task.WhenAll(ingestTask, subscribeTask);
+    }
+
+    // Thread-safe publisher for concurrency tests.
+    private sealed class ThreadSafeCapturingPublisher : IOutboundPublisher
+    {
+        private readonly IOutboundEventFormatter _formatter = new JsonOutboundEventFormatter();
+        private readonly ConcurrentBag<(string ConnectionId, IReadOnlyList<DeltaEvent> Events)> _published = [];
+
+        public ValueTask PublishAsync(
+            IReadOnlyList<string> connectionIds,
+            IReadOnlyList<ViewDelta> deltas,
+            CancellationToken ct = default)
+        {
+            var events = _formatter.Format(deltas);
+            foreach (var connectionId in connectionIds)
+            {
+                _published.Add((connectionId, events));
+            }
+            return ValueTask.CompletedTask;
+        }
+
+        public IEnumerable<DeltaEvent> EventsFor(string connectionId) =>
+            _published
+                .Where(p => p.ConnectionId == connectionId)
+                .SelectMany(p => p.Events);
+    }
+}

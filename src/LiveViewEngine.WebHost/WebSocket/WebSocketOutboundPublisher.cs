@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using System.Text.Json;
+using System.Threading.Channels;
 using LiveViewEngine.Core;
 using LiveViewEngine.Core.Output;
 
@@ -10,34 +11,42 @@ public sealed class WebSocketOutboundPublisher(
     IOutboundEventFormatter formatter,
     ILogger<WebSocketOutboundPublisher> logger) : IOutboundPublisher
 {
-    private readonly ConcurrentDictionary<string, System.Net.WebSockets.WebSocket> _sockets = new();
+    private readonly ConcurrentDictionary<string, ConnectionState> _connections = new();
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
-    public void Register(string connectionId, System.Net.WebSockets.WebSocket socket) =>
-        _sockets[connectionId] = socket;
+    // Called when a WebSocket connection is accepted; starts a background drain consumer.
+    public void Register(string connectionId, System.Net.WebSockets.WebSocket socket)
+    {
+        var channel = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(512)
+        {
+            FullMode = BoundedChannelFullMode.DropOldest,
+            SingleReader = true
+        });
 
-    public void Unregister(string connectionId) =>
-        _sockets.TryRemove(connectionId, out _);
+        var state = new ConnectionState(socket, channel);
+        _connections[connectionId] = state;
+        state.DrainTask = Task.Run(() => DrainAsync(connectionId, socket, channel.Reader));
+    }
 
-    public async ValueTask PublishAsync(
-        string connectionId,
+    public void Unregister(string connectionId)
+    {
+        if (_connections.TryRemove(connectionId, out var state))
+        {
+            state.Channel.Writer.TryComplete();
+        }
+    }
+
+    // Serialize the deltas once, then enqueue the bytes for each connection.
+    // Returns immediately — slow clients drop stale frames, never block ingestion.
+    public ValueTask PublishAsync(
+        IReadOnlyList<string> connectionIds,
         IReadOnlyList<ViewDelta> deltas,
         CancellationToken ct = default)
     {
-        if (!_sockets.TryGetValue(connectionId, out var socket))
-        {
-            return;
-        }
-
-        if (socket.State != WebSocketState.Open)
-        {
-            return;
-        }
-
         byte[] payload;
         try
         {
@@ -46,18 +55,51 @@ public sealed class WebSocketOutboundPublisher(
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to serialise events for client '{ConnectionId}'.", connectionId);
-            return;
+            logger.LogError(ex, "Failed to serialise events for {Count} client(s).", connectionIds.Count);
+            return ValueTask.CompletedTask;
         }
 
-        try
+        foreach (var connectionId in connectionIds)
         {
-            await socket.SendAsync(payload, WebSocketMessageType.Text, endOfMessage: true, ct);
+            if (_connections.TryGetValue(connectionId, out var state))
+            {
+                state.Channel.Writer.TryWrite(payload);
+            }
         }
-        catch (WebSocketException ex)
+
+        return ValueTask.CompletedTask;
+    }
+
+    private async Task DrainAsync(
+        string connectionId,
+        System.Net.WebSockets.WebSocket socket,
+        ChannelReader<byte[]> reader)
+    {
+        await foreach (var payload in reader.ReadAllAsync())
         {
-            logger.LogDebug(ex, "WebSocket send failed for client '{ConnectionId}'.", connectionId);
-            _sockets.TryRemove(connectionId, out _);
+            if (socket.State != WebSocketState.Open)
+            {
+                break;
+            }
+
+            try
+            {
+                await socket.SendAsync(payload, WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None);
+            }
+            catch (WebSocketException ex)
+            {
+                logger.LogDebug(ex, "WebSocket send failed for client '{ConnectionId}'.", connectionId);
+                break;
+            }
         }
+    }
+
+    private sealed class ConnectionState(
+        System.Net.WebSockets.WebSocket socket,
+        Channel<byte[]> channel)
+    {
+        public readonly System.Net.WebSockets.WebSocket Socket = socket;
+        public readonly Channel<byte[]> Channel = channel;
+        public Task DrainTask = Task.CompletedTask;
     }
 }

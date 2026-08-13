@@ -2,5 +2,6 @@ namespace LiveViewEngine.Core;
 
 public interface IOutboundPublisher
 {
-    ValueTask PublishAsync(string connectionId, IReadOnlyList<ViewDelta> deltas, CancellationToken ct = default);
+    // connectionIds share the same pre-computed deltas so implementations can serialize once and fan out.
+    ValueTask PublishAsync(IReadOnlyList<string> connectionIds, IReadOnlyList<ViewDelta> deltas, CancellationToken ct = default);
 }

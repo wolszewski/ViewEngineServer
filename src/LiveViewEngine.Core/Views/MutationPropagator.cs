@@ -4,26 +4,25 @@ using LiveViewEngine.Core.Data;
 
 namespace LiveViewEngine.Core.Views;
 
-public sealed class MutationPropagator(IOutboundPublisher publisher)
+public sealed class MutationPropagator
 {
-    // Reusable per-propagation buffers — safe because PropagateAsync is called serially per collection.
+    // Reusable per-propagation buffers — safe because Propagate is called serially per collection.
     private readonly Dictionary<SortIndex, List<SharedView>> _groupBuffer =
         new(ReferenceEqualityComparer.Instance);
-    private readonly List<SharedView> _viewBuffer = [];
     private readonly List<MutationImpact> _impactBuffer = [];
     private readonly List<int> _oldPosBuffer = [];
 
-    public async Task PropagateAsync(
+    // Returns groups of (deltas, connectionIds) where all connectionIds in a group share the
+    // same viewport and therefore receive the same delta payload — serialize once, fan out.
+    public List<(IReadOnlyList<ViewDelta> Deltas, List<string> ConnectionIds)>? Propagate(
         RowCollection collection,
         ConcurrentDictionary<ViewKey, SharedView> collectionViews,
         ConcurrentDictionary<string, ViewportState> viewports,
         MutationInfo mutation,
-        bool isDelete,
-        CancellationToken ct = default)
+        bool isDelete)
     {
-        List<(string ConnectionId, IReadOnlyList<ViewDelta> Deltas)>? pendingPublishes = null;
+        List<(IReadOnlyList<ViewDelta> Deltas, List<string> ConnectionIds)>? pending = null;
 
-        // Group views by shared SortIndex reference — reuse the dictionary to avoid per-call allocation.
         foreach (var entry in collectionViews)
         {
             var sortIndex = entry.Value.SortIndex;
@@ -37,7 +36,6 @@ public sealed class MutationPropagator(IOutboundPublisher publisher)
 
         foreach (var (sortIndex, views) in _groupBuffer)
         {
-            // Analyze impact for each view, storing into reusable buffers.
             _impactBuffer.Clear();
             _oldPosBuffer.Clear();
             for (int i = 0; i < views.Count; i++)
@@ -69,29 +67,28 @@ public sealed class MutationPropagator(IOutboundPublisher publisher)
                 sortIndex.ResetPending();
             }
 
-            // Phase 3: complete filtered index updates and collect deltas.
+            // Phase 3: complete filtered index updates and collect grouped deltas.
             for (int i = 0; i < views.Count; i++)
             {
                 var view = views[i];
                 if (!_impactBuffer[i].NeedsFullRecompute)
                 {
-                    CollectFastPathPublishes(collection, view, viewports, mutation, ref pendingPublishes);
+                    CollectFastPathGroups(collection, view, viewports, mutation, ref pending);
                     continue;
                 }
 
                 int newFilteredPos = isDelete ? -1 : views[i].CompleteUpsert(mutation.RowIndex);
-                CollectPositionBasedPublishes(
+                CollectPositionGroups(
                     collection, view, viewports, mutation,
                     _oldPosBuffer[i], newFilteredPos,
-                    ref pendingPublishes);
+                    ref pending);
             }
 
             views.Clear();
         }
 
         _groupBuffer.Clear();
-
-        await PublishAllAsync(pendingPublishes, ct);
+        return pending;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -117,27 +114,31 @@ public sealed class MutationPropagator(IOutboundPublisher publisher)
             SortFieldTouched: sortFieldTouched);
     }
 
-    private static void CollectFastPathPublishes(
+    // Fast path: field update that doesn't affect sort order or filter membership.
+    // Subscribers with the same viewport see the row at the same position — share one RowUpdateDelta.
+    private static void CollectFastPathGroups(
         RowCollection collection,
         SharedView view,
         ConcurrentDictionary<string, ViewportState> viewports,
         MutationInfo mutation,
-        ref List<(string ConnectionId, IReadOnlyList<ViewDelta> Deltas)>? pendingPublishes)
+        ref List<(IReadOnlyList<ViewDelta>, List<string>)>? pending)
     {
         if (mutation.ChangedColumns is not { Count: > 0 })
         {
             return;
         }
 
+        int filteredPos = view.FilteredIndexOf(mutation.RowIndex);
+        if (filteredPos < 0)
+        {
+            return;
+        }
+
+        // Group subscribers that can see the row, by (startIndex, pageSize) viewport.
+        Dictionary<(int Start, int? PageSize), List<string>>? groups = null;
         foreach (var connectionId in view.Subscribers)
         {
             if (!viewports.TryGetValue(connectionId, out var viewport))
-            {
-                continue;
-            }
-
-            int filteredPos = view.FilteredIndexOf(mutation.RowIndex);
-            if (filteredPos < 0)
             {
                 continue;
             }
@@ -149,27 +150,41 @@ public sealed class MutationPropagator(IOutboundPublisher publisher)
                 continue;
             }
 
-            pendingPublishes ??= [];
-            pendingPublishes.Add((connectionId, [new RowUpdateDelta
+            groups ??= new();
+            var key = (start, viewport.PageSize);
+            if (!groups.TryGetValue(key, out var list)) { list = []; groups[key] = list; }
+            list.Add(connectionId);
+        }
+
+        if (groups is null) { return; }
+
+        foreach (var ((start, _), connIds) in groups)
+        {
+            pending ??= [];
+            pending.Add(([new RowUpdateDelta
             {
                 ViewId = view.Key.Id,
                 Schema = collection.Schema,
                 RowId = mutation.RowId,
                 Position = filteredPos - start,
                 ChangedColumns = mutation.ChangedColumns
-            }]));
+            }], connIds));
         }
     }
 
-    private static void CollectPositionBasedPublishes(
+    // Full-recompute path: new row, delete, sort-field change, or filter-field change.
+    // Subscribers with the same viewport produce the same delta sequence — compute and share.
+    private static void CollectPositionGroups(
         RowCollection collection,
         SharedView view,
         ConcurrentDictionary<string, ViewportState> viewports,
         MutationInfo mutation,
         int oldFilteredPos,
         int newFilteredPos,
-        ref List<(string ConnectionId, IReadOnlyList<ViewDelta> Deltas)>? pendingPublishes)
+        ref List<(IReadOnlyList<ViewDelta>, List<string>)>? pending)
     {
+        // Group subscribers by (startIndex, pageSize).
+        Dictionary<(int Start, int? PageSize), List<string>>? groups = null;
         foreach (var connectionId in view.Subscribers)
         {
             if (!viewports.TryGetValue(connectionId, out var viewport))
@@ -177,48 +192,23 @@ public sealed class MutationPropagator(IOutboundPublisher publisher)
                 continue;
             }
 
+            groups ??= new();
+            var key = (viewport.StartIndex, viewport.PageSize);
+            if (!groups.TryGetValue(key, out var list)) { list = []; groups[key] = list; }
+            list.Add(connectionId);
+        }
+
+        if (groups is null) { return; }
+
+        foreach (var ((start, pageSize), connIds) in groups)
+        {
             var deltas = ComputePositionDeltas(
-                view,
-                collection,
-                view.Key.Id,
-                mutation,
-                oldFilteredPos,
-                newFilteredPos,
-                viewport.StartIndex,
-                viewport.PageSize);
-            if (deltas.Count == 0)
-            {
-                continue;
-            }
+                view, collection, view.Key.Id, mutation,
+                oldFilteredPos, newFilteredPos, start, pageSize);
+            if (deltas.Count == 0) { continue; }
 
-            pendingPublishes ??= [];
-            pendingPublishes.Add((connectionId, deltas));
-        }
-    }
-
-    private async Task PublishAllAsync(
-        List<(string ConnectionId, IReadOnlyList<ViewDelta> Deltas)>? publishes,
-        CancellationToken ct)
-    {
-        if (publishes is not { Count: > 0 })
-        {
-            return;
-        }
-
-        List<Task>? incomplete = null;
-        foreach (var (connectionId, deltas) in publishes)
-        {
-            var publish = publisher.PublishAsync(connectionId, deltas, ct);
-            if (!publish.IsCompletedSuccessfully)
-            {
-                incomplete ??= new List<Task>(publishes.Count);
-                incomplete.Add(publish.AsTask());
-            }
-        }
-
-        if (incomplete is { Count: > 0 })
-        {
-            await Task.WhenAll(incomplete);
+            pending ??= [];
+            pending.Add((deltas, connIds));
         }
     }
 
@@ -279,11 +269,7 @@ public sealed class MutationPropagator(IOutboundPublisher publisher)
 
         void AddRemove(int position)
         {
-            deltas.Add(new RowRemoveDelta
-            {
-                ViewId = viewId,
-                Position = position
-            });
+            deltas.Add(new RowRemoveDelta { ViewId = viewId, Position = position });
         }
 
         void AddInsert(int rowIndex, int position)
@@ -299,11 +285,7 @@ public sealed class MutationPropagator(IOutboundPublisher publisher)
 
         void AddUpdate(int position)
         {
-            if (mutation.IsNew || mutation.ChangedColumns is not { Count: > 0 })
-            {
-                return;
-            }
-
+            if (mutation.IsNew || mutation.ChangedColumns is not { Count: > 0 }) { return; }
             deltas.Add(new RowUpdateDelta
             {
                 ViewId = viewId,
@@ -324,66 +306,36 @@ public sealed class MutationPropagator(IOutboundPublisher publisher)
         }
         else if (oldBefore && newIn)
         {
-            if (Exists(start - 1))
-            {
-                AddRemove(0);
-            }
-
+            if (Exists(start - 1)) { AddRemove(0); }
             AddInsert(mutation.RowIndex, newFilteredPos - start);
         }
         else if (oldIn && newBefore)
         {
             AddRemove(oldFilteredPos - start);
-            if (Exists(start))
-            {
-                AddInsert(BoundaryRow(start), 0);
-            }
+            if (Exists(start)) { AddInsert(BoundaryRow(start), 0); }
         }
         else if (!oldIn && !oldBefore && newIn)
         {
             AddInsert(mutation.RowIndex, newFilteredPos - start);
-            if (hasFinitePage && Exists(end))
-            {
-                AddRemove(bottomPosition);
-            }
+            if (hasFinitePage && Exists(end)) { AddRemove(bottomPosition); }
         }
         else if (oldIn && !newIn && !newBefore)
         {
             AddRemove(oldFilteredPos - start);
-            if (hasFinitePage && Exists(end - 1))
-            {
-                AddInsert(BoundaryRow(end - 1), bottomPosition);
-            }
+            if (hasFinitePage && Exists(end - 1)) { AddInsert(BoundaryRow(end - 1), bottomPosition); }
         }
         else if (!oldIn && !oldBefore && newBefore)
         {
-            if (Exists(start))
-            {
-                AddInsert(BoundaryRow(start), 0);
-            }
-
-            if (hasFinitePage && Exists(end))
-            {
-                AddRemove(bottomPosition);
-            }
+            if (Exists(start)) { AddInsert(BoundaryRow(start), 0); }
+            if (hasFinitePage && Exists(end)) { AddRemove(bottomPosition); }
         }
         else if (oldBefore && !newIn && !newBefore)
         {
-            if (Exists(start - 1))
-            {
-                AddRemove(0);
-            }
-
-            if (hasFinitePage && Exists(end - 1))
-            {
-                AddInsert(BoundaryRow(end - 1), bottomPosition);
-            }
+            if (Exists(start - 1)) { AddRemove(0); }
+            if (hasFinitePage && Exists(end - 1)) { AddInsert(BoundaryRow(end - 1), bottomPosition); }
         }
 
-        if (newIn)
-        {
-            AddUpdate(newFilteredPos - start);
-        }
+        if (newIn) { AddUpdate(newFilteredPos - start); }
 
         return deltas;
     }

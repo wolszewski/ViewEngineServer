@@ -75,7 +75,7 @@ public sealed class WebSocketSessionManager
                 var events = await _engine.SubscribeAsync(command, ct);
                 if (events.Count > 0)
                 {
-                    await _publisher.PublishAsync(connectionId, events, ct);
+                    await _publisher.PublishAsync([connectionId], events, ct);
                 }
             }
         }

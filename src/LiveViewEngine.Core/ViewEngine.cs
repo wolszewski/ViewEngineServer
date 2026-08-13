@@ -16,26 +16,56 @@ public sealed class ViewEngine(
     ICollectionStore store,
     IOutboundPublisher publisher,
     ILogger<ViewEngine> logger)
-    : IViewEngine
+    : IViewEngine, IDisposable
 {
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<ViewKey, SharedView>> _sharedViewsByCollection = new();
     private readonly ConcurrentDictionary<string, ViewportState> _viewports = new();
     private readonly SortIndexRegistry _sortIndexRegistry = new();
-    private readonly MutationPropagator _mutationPropagator = new(publisher);
+    private readonly ConcurrentDictionary<string, CollectionState> _states = new();
 
     public async Task<IngestResult> IngestAsync(IngestCommand command, CancellationToken ct = default)
     {
         try
         {
-            return command switch
+            if (command is CreateCollectionCommand create)
             {
-                CreateCollectionCommand create => HandleCreateCollection(create),
-                UpsertRowCommand upsert => await HandleUpsertAsync(upsert, ct),
-                DeleteRowCommand delete => await HandleDeleteAsync(delete, ct),
-                _ => IngestResult.Fail($"Unknown command type '{command.GetType().Name}'.")
-            };
+                return HandleCreateCollection(create);
+            }
+
+            if (!_states.TryGetValue(command.CollectionId, out var state))
+            {
+                return IngestResult.Fail($"Collection '{command.CollectionId}' not found.");
+            }
+
+            List<(IReadOnlyList<ViewDelta> Deltas, List<string> ConnectionIds)>? groups;
+            IngestResult result;
+
+            await state.Lock.WaitAsync(ct);
+            try
+            {
+                (result, groups) = command switch
+                {
+                    UpsertRowCommand upsert => HandleUpsert(upsert, state.Propagator),
+                    DeleteRowCommand delete => HandleDelete(delete, state.Propagator),
+                    _ => (IngestResult.Fail($"Unknown command type '{command.GetType().Name}'."), null)
+                };
+            }
+            finally
+            {
+                state.Lock.Release();
+            }
+
+            if (groups is { Count: > 0 })
+            {
+                foreach (var (deltas, connectionIds) in groups)
+                {
+                    await publisher.PublishAsync(connectionIds, deltas, ct);
+                }
+            }
+
+            return result;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogError(ex, "Error processing ingest command for collection '{CollectionId}'.",
                 command.CollectionId);
@@ -43,17 +73,51 @@ public sealed class ViewEngine(
         }
     }
 
-    public Task<IReadOnlyList<ViewDelta>> SubscribeAsync(
+    public async Task<IReadOnlyList<ViewDelta>> SubscribeAsync(
         SubscriptionCommand command, CancellationToken ct = default)
     {
-        IReadOnlyList<ViewDelta> result = command switch
+        string? collectionId = GetCollectionIdForSubscription(command);
+
+        if (collectionId is null || !_states.TryGetValue(collectionId, out var state))
         {
-            SubscribeCommand sub => HandleSubscribe(sub),
-            ChangeViewportCommand change => HandleChangeViewport(change),
-            UnsubscribeCommand unsub => HandleUnsubscribe(unsub),
-            _ => []
-        };
-        return Task.FromResult(result);
+            return [];
+        }
+
+        await state.Lock.WaitAsync(ct);
+        try
+        {
+            return command switch
+            {
+                SubscribeCommand sub => HandleSubscribe(sub),
+                ChangeViewportCommand change => HandleChangeViewport(change),
+                UnsubscribeCommand unsub => HandleUnsubscribe(unsub),
+                _ => []
+            };
+        }
+        finally
+        {
+            state.Lock.Release();
+        }
+    }
+
+    public void Dispose()
+    {
+        foreach (var state in _states.Values)
+        {
+            state.Dispose();
+        }
+    }
+
+    private string? GetCollectionIdForSubscription(SubscriptionCommand command)
+    {
+        if (command is SubscribeCommand sub)
+        {
+            return sub.View.CollectionId;
+        }
+
+        return _viewports.TryGetValue(command.ConnectionId, out var vp)
+            ? vp.ViewKey.CollectionId
+            : null;
     }
 
     private IngestResult HandleCreateCollection(CreateCollectionCommand command)
@@ -64,16 +128,19 @@ public sealed class ViewEngine(
                 $"Collection '{command.CollectionId}' already exists.");
         }
 
+        _states.TryAdd(command.CollectionId, new CollectionState());
+
         logger.LogInformation("Collection '{CollectionId}' created ({FieldCount} fields).",
             command.CollectionId, command.Schema.Fields.Count);
         return IngestResult.Ok();
     }
 
-    private async Task<IngestResult> HandleUpsertAsync(UpsertRowCommand command, CancellationToken ct)
+    private (IngestResult Result, List<(IReadOnlyList<ViewDelta> Deltas, List<string> ConnectionIds)>? Groups)
+        HandleUpsert(UpsertRowCommand command, MutationPropagator propagator)
     {
         if (!store.TryGet(command.CollectionId, out var collection) || collection is null)
         {
-            return IngestResult.Fail($"Collection '{command.CollectionId}' not found.");
+            return (IngestResult.Fail($"Collection '{command.CollectionId}' not found."), null);
         }
 
         if (collection.TryGetRowIndex(command.Key, out int existingRowIndex))
@@ -85,24 +152,20 @@ public sealed class ViewEngine(
         }
 
         var mutation = collection.AddOrUpdate(command.Key, command.Fields);
+        List<(IReadOnlyList<ViewDelta>, List<string>)>? groups = null;
         if (_sharedViewsByCollection.TryGetValue(collection.Schema.CollectionName, out var collectionViews))
         {
-            await _mutationPropagator.PropagateAsync(
-                collection,
-                collectionViews,
-                _viewports,
-                mutation,
-                isDelete: false,
-                ct);
+            groups = propagator.Propagate(collection, collectionViews, _viewports, mutation, isDelete: false);
         }
-        return IngestResult.Ok();
+        return (IngestResult.Ok(), groups);
     }
 
-    private async Task<IngestResult> HandleDeleteAsync(DeleteRowCommand command, CancellationToken ct)
+    private (IngestResult Result, List<(IReadOnlyList<ViewDelta> Deltas, List<string> ConnectionIds)>? Groups)
+        HandleDelete(DeleteRowCommand command, MutationPropagator propagator)
     {
         if (!store.TryGet(command.CollectionId, out var collection) || collection is null)
         {
-            return IngestResult.Fail($"Collection '{command.CollectionId}' not found.");
+            return (IngestResult.Fail($"Collection '{command.CollectionId}' not found."), null);
         }
 
         if (collection.TryGetRowIndex(command.Key, out int existingRowIndex))
@@ -116,20 +179,15 @@ public sealed class ViewEngine(
         var mutation = collection.Delete(command.Key);
         if (mutation is null)
         {
-            return IngestResult.Ok();
+            return (IngestResult.Ok(), null);
         }
 
+        List<(IReadOnlyList<ViewDelta>, List<string>)>? groups = null;
         if (_sharedViewsByCollection.TryGetValue(collection.Schema.CollectionName, out var collectionViews))
         {
-            await _mutationPropagator.PropagateAsync(
-                collection,
-                collectionViews,
-                _viewports,
-                mutation,
-                isDelete: true,
-                ct);
+            groups = propagator.Propagate(collection, collectionViews, _viewports, mutation, isDelete: true);
         }
-        return IngestResult.Ok();
+        return (IngestResult.Ok(), groups);
     }
 
     private static IReadOnlyList<string?[]> BuildRows(RowCollection collection, int[] indexes)
@@ -268,5 +326,15 @@ public sealed class ViewEngine(
         }
 
         return new SortIndexKey(key.CollectionId, sortFieldIndex, key.SortAscending);
+    }
+
+    // Holds the per-collection synchronisation primitive and the propagator whose
+    // reusable buffers are safe because the semaphore ensures serial access.
+    private sealed class CollectionState : IDisposable
+    {
+        public readonly SemaphoreSlim Lock = new(1, 1);
+        public readonly MutationPropagator Propagator = new();
+
+        public void Dispose() => Lock.Dispose();
     }
 }

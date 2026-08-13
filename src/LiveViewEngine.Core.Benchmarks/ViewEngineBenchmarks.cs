@@ -226,7 +226,7 @@ public class ViewEngineBenchmarks
 
     internal sealed class NullPublisher : IOutboundPublisher
     {
-        public ValueTask PublishAsync(string connectionId, IReadOnlyList<ViewDelta> deltas, CancellationToken ct = default)
+        public ValueTask PublishAsync(IReadOnlyList<string> connectionIds, IReadOnlyList<ViewDelta> deltas, CancellationToken ct = default)
             => ValueTask.CompletedTask;
     }
 }

@@ -42,7 +42,7 @@ public class ServiceCollectionExtensionsTests
     private sealed class TestPublisher : IOutboundPublisher
     {
         public ValueTask PublishAsync(
-            string connectionId,
+            IReadOnlyList<string> connectionIds,
             IReadOnlyList<ViewDelta> deltas,
             CancellationToken ct = default)
         {
