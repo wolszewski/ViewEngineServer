@@ -9,6 +9,7 @@ public static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddLiveViewEngineCore(this IServiceCollection services)
     {
+        services.AddSingleton<ViewEngineMetrics>();
         services.AddSingleton<ICollectionStore, CollectionStore>();
         services.AddSingleton<IOutboundEventFormatter, JsonOutboundEventFormatter>();
         services.AddSingleton<IViewEngine, ViewEngine>();

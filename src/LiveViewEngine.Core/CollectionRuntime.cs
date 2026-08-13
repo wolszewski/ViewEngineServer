@@ -11,11 +11,13 @@ public sealed class CollectionRuntime : IDisposable
     private readonly ConcurrentDictionary<ViewKey, SharedView> _sharedViews = new();
     private readonly ConcurrentDictionary<string, ViewportState> _viewports = new();
     private readonly SortIndexRegistry _sortIndexRegistry = new();
+    private readonly ViewEngineMetrics _metrics;
 
-    public CollectionRuntime(string collectionId, RowCollection collection)
+    public CollectionRuntime(string collectionId, RowCollection collection, ViewEngineMetrics metrics)
     {
         CollectionId = collectionId;
         Collection = collection;
+        _metrics = metrics;
         _channel.Start();
     }
 
@@ -66,13 +68,13 @@ public sealed class CollectionRuntime : IDisposable
             var durationMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
             if (rowAlreadyExisted)
             {
-                ViewEngineMetrics.UpdateDuration.Record(
+                _metrics.UpdateDuration.Record(
                     durationMs,
                     new KeyValuePair<string, object?>("collectionId", CollectionId));
             }
             else
             {
-                ViewEngineMetrics.InsertDuration.Record(
+                _metrics.InsertDuration.Record(
                     durationMs,
                     new KeyValuePair<string, object?>("collectionId", CollectionId));
             }

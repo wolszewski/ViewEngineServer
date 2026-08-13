@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using LiveViewEngine.Core;
 
 namespace LiveViewEngine.Core.Data;
 
@@ -10,13 +11,13 @@ public interface ICollectionStore
     ICollection<string> CollectionIds { get; }
 }
 
-public sealed class CollectionStore : ICollectionStore
+public sealed class CollectionStore(ViewEngineMetrics metrics) : ICollectionStore
 {
     private readonly ConcurrentDictionary<string, CollectionRuntime> _collections = new();
 
     public bool TryCreate(CollectionSchema schema)
     {
-        var runtime = new CollectionRuntime(schema.CollectionName, new RowCollection(schema));
+        var runtime = new CollectionRuntime(schema.CollectionName, new RowCollection(schema), metrics);
         return _collections.TryAdd(schema.CollectionName, runtime);
     }
 

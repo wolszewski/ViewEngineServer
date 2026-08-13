@@ -11,9 +11,10 @@ public class ViewEngineConcurrencyTests
 {
     private static (ViewEngine engine, ThreadSafeCapturingPublisher publisher) CreateEngine()
     {
-        var store = new CollectionStore();
+        var metrics = new ViewEngineMetrics();
+        var store = new CollectionStore(metrics);
         var publisher = new ThreadSafeCapturingPublisher();
-        var engine = new ViewEngine(store, publisher, NullLogger<ViewEngine>.Instance);
+        var engine = new ViewEngine(store, publisher, NullLogger<ViewEngine>.Instance, metrics);
         return (engine, publisher);
     }
 

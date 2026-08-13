@@ -12,9 +12,10 @@ public class ViewEngineBlotterTests
 
     private static (ViewEngine engine, CapturingPublisher publisher, ICollectionStore store) CreateEngine()
     {
-        var store = new CollectionStore();
+        var metrics = new ViewEngineMetrics();
+        var store = new CollectionStore(metrics);
         var publisher = new CapturingPublisher();
-        var engine = new ViewEngine(store, publisher, NullLogger<ViewEngine>.Instance);
+        var engine = new ViewEngine(store, publisher, NullLogger<ViewEngine>.Instance, metrics);
         return (engine, publisher, store);
     }
 

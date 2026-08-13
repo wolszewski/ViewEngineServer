@@ -1,3 +1,4 @@
+using LiveViewEngine.Core;
 using LiveViewEngine.Core.Data;
 
 namespace LiveViewEngine.Core.UnitTests;
@@ -7,17 +8,19 @@ public class CollectionStoreTests
     private static CollectionSchema MakeSchema(string id = "col1") =>
         new(id, ["name"]);
 
+    private static CollectionStore MakeStore() => new(new ViewEngineMetrics());
+
     [Fact]
     public void TryCreate_NewId_ReturnsTrue()
     {
-        var store = new CollectionStore();
+        var store = MakeStore();
         Assert.True(store.TryCreate(MakeSchema()));
     }
 
     [Fact]
     public void TryCreate_DuplicateId_ReturnsFalse()
     {
-        var store = new CollectionStore();
+        var store = MakeStore();
         store.TryCreate(MakeSchema());
         Assert.False(store.TryCreate(MakeSchema()));
     }
@@ -25,7 +28,7 @@ public class CollectionStoreTests
     [Fact]
     public void TryGet_ExistingCollection_ReturnsTrue_AndNonNull()
     {
-        var store = new CollectionStore();
+        var store = MakeStore();
         store.TryCreate(MakeSchema());
 
         Assert.True(store.TryGet("col1", out var col));
@@ -35,7 +38,7 @@ public class CollectionStoreTests
     [Fact]
     public void TryGet_NonExistentCollection_ReturnsFalse()
     {
-        var store = new CollectionStore();
+        var store = MakeStore();
         Assert.False(store.TryGet("missing", out var col));
         Assert.Null(col);
     }
@@ -43,7 +46,7 @@ public class CollectionStoreTests
     [Fact]
     public void CollectionIds_ReflectsCreatedCollections()
     {
-        var store = new CollectionStore();
+        var store = MakeStore();
         store.TryCreate(MakeSchema("a"));
         store.TryCreate(MakeSchema("b"));
         Assert.Contains("a", store.CollectionIds);

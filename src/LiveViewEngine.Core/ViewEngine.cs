@@ -1,30 +1,9 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Diagnostics.Metrics;
 using LiveViewEngine.Core.Data;
 using Microsoft.Extensions.Logging;
 
 namespace LiveViewEngine.Core;
-
-internal static class ViewEngineMetrics
-{
-    private static readonly Meter Meter = new("ViewEngineServer");
-
-    internal static readonly Histogram<double> InsertDuration = Meter.CreateHistogram<double>(
-        "viewengine.insert.duration",
-        unit: "ms",
-        description: "Time spent processing insert operations.");
-
-    internal static readonly Histogram<double> UpdateDuration = Meter.CreateHistogram<double>(
-        "viewengine.update.duration",
-        unit: "ms",
-        description: "Time spent processing update operations.");
-
-    internal static readonly Histogram<double> SubscriptionDuration = Meter.CreateHistogram<double>(
-        "viewengine.subscription.duration",
-        unit: "ms",
-        description: "Time spent processing subscription operations.");
-}
 
 public interface IViewEngine
 {
@@ -32,37 +11,29 @@ public interface IViewEngine
     Task<IReadOnlyList<ViewDelta>> SubscribeAsync(SubscriptionCommand command, CancellationToken ct = default);
 }
 
-public sealed class ViewEngine(
-    ICollectionStore store,
-    IOutboundPublisher publisher,
-    ILogger<ViewEngine> logger)
-    : IViewEngine, IDisposable
+public sealed class ViewEngine : IViewEngine, IDisposable
 {
+    private readonly ICollectionStore _store;
+    private readonly IOutboundPublisher _publisher;
+    private readonly ILogger<ViewEngine> _logger;
+    private readonly ViewEngineMetrics _metrics;
     private readonly ConcurrentDictionary<string, CollectionRuntime> _collectionRuntimes = new();
-    private readonly Meter _meter = new("ViewEngineServer");
 
-    public ViewEngine(ICollectionStore store, IOutboundPublisher publisher, ILogger<ViewEngine> logger)
-        : this(store, publisher, logger, registerMetrics: true) { }
-
-    private ViewEngine(ICollectionStore store, IOutboundPublisher publisher, ILogger<ViewEngine> logger, bool registerMetrics)
+    public ViewEngine(
+        ICollectionStore store,
+        IOutboundPublisher publisher,
+        ILogger<ViewEngine> logger,
+        ViewEngineMetrics metrics)
     {
-        if (registerMetrics)
-        {
-            _meter.CreateObservableGauge(
-                "viewengine.active_subscriptions",
-                () => _collectionRuntimes.Values.Sum(r => r.ActiveSubscriptionCount),
-                description: "Number of active viewport subscriptions across all collections.");
+        _store = store;
+        _publisher = publisher;
+        _logger = logger;
+        _metrics = metrics;
 
-            _meter.CreateObservableGauge(
-                "viewengine.active_shared_views",
-                () => _collectionRuntimes.Values.Sum(r => r.ActiveSharedViewCount),
-                description: "Number of active shared views (sort+filter combinations) across all collections.");
-
-            _meter.CreateObservableGauge(
-                "viewengine.active_sort_indexes",
-                () => _collectionRuntimes.Values.Sum(r => r.SortIndexCount),
-                description: "Number of active sort indexes across all collections.");
-        }
+        metrics.RegisterGaugeSources(
+            () => _collectionRuntimes.Values.Sum(static r => r.ActiveSubscriptionCount),
+            () => _collectionRuntimes.Values.Sum(static r => r.ActiveSharedViewCount),
+            () => _collectionRuntimes.Values.Sum(static r => r.SortIndexCount));
     }
 
     public async Task<IngestResult> IngestAsync(IngestCommand command, CancellationToken ct = default)
@@ -90,7 +61,7 @@ public sealed class ViewEngine(
             {
                 foreach (var (deltas, connectionIds) in queued.Groups)
                 {
-                    await publisher.PublishAsync(connectionIds, deltas, ct);
+                    await _publisher.PublishAsync(connectionIds, deltas, ct);
                 }
             }
 
@@ -98,7 +69,7 @@ public sealed class ViewEngine(
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            logger.LogError(ex, "Error processing ingest command for collection '{CollectionId}'.",
+            _logger.LogError(ex, "Error processing ingest command for collection '{CollectionId}'.",
                 command.CollectionId);
             return IngestResult.Fail(ex.Message);
         }
@@ -128,7 +99,7 @@ public sealed class ViewEngine(
         finally
         {
             var durationMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
-            ViewEngineMetrics.SubscriptionDuration.Record(
+            _metrics.SubscriptionDuration.Record(
                 durationMs,
                 new KeyValuePair<string, object?>("commandType", command.GetType().Name),
                 new KeyValuePair<string, object?>("collectionId", collectionId));
@@ -163,20 +134,20 @@ public sealed class ViewEngine(
 
     private IngestResult HandleCreateCollection(CreateCollectionCommand command)
     {
-        if (!store.TryCreate(command.Schema))
+        if (!_store.TryCreate(command.Schema))
         {
             return IngestResult.Fail(
                 $"Collection '{command.CollectionId}' already exists.");
         }
 
-        if (!store.TryGetRuntime(command.CollectionId, out var runtime) || runtime is null)
+        if (!_store.TryGetRuntime(command.CollectionId, out var runtime) || runtime is null)
         {
             return IngestResult.Fail($"Collection '{command.CollectionId}' could not be initialized.");
         }
 
         _collectionRuntimes.TryAdd(command.CollectionId, runtime);
 
-        logger.LogInformation("Collection '{CollectionId}' created ({FieldCount} fields).",
+        _logger.LogInformation("Collection '{CollectionId}' created ({FieldCount} fields).",
             command.CollectionId, command.Schema.Fields.Count);
         return IngestResult.Ok();
     }

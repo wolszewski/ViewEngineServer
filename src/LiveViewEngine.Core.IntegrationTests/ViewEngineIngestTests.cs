@@ -10,10 +10,11 @@ public class ViewEngineIngestTests
 {
     private static (ViewEngine engine, CapturingPublisher publisher, ICollectionStore store) CreateEngine()
     {
-        var store = new CollectionStore();
+        var metrics = new ViewEngineMetrics();
+        var store = new CollectionStore(metrics);
         var publisher = new CapturingPublisher();
         var logger = NullLogger<ViewEngine>.Instance;
-        var engine = new ViewEngine(store, publisher, logger);
+        var engine = new ViewEngine(store, publisher, logger, metrics);
         return (engine, publisher, store);
     }
 
