@@ -209,21 +209,28 @@ public sealed class CollectionRuntime : IDisposable
             return Enumerable.Range(0, Collection.Schema.Fields.Count).ToArray();
         }
 
-        var indexes = new int[view.Fields.Count];
-        for (int i = 0; i < view.Fields.Count; i++)
+        var keyFieldName = Collection.Schema.Fields[0].Name;
+        var includeKey = !view.Fields.Any(f => string.Equals(f, keyFieldName, StringComparison.OrdinalIgnoreCase));
+        var indexes = new List<int>(view.Fields.Count + (includeKey ? 1 : 0));
+        if (includeKey)
         {
-            int fieldIndex = Collection.Schema.GetFieldIndex(view.Fields[i]);
+            indexes.Add(0);
+        }
+
+        foreach (var fieldName in view.Fields)
+        {
+            int fieldIndex = Collection.Schema.GetFieldIndex(fieldName);
             if (fieldIndex < 0)
             {
                 throw new ArgumentException(
-                    $"Unknown field '{view.Fields[i]}' for collection '{Collection.Schema.CollectionName}'.",
+                    $"Unknown field '{fieldName}' for collection '{Collection.Schema.CollectionName}'.",
                     nameof(view.Fields));
             }
 
-            indexes[i] = fieldIndex;
+            indexes.Add(fieldIndex);
         }
 
-        return indexes;
+        return indexes.ToArray();
     }
 
     private static IReadOnlyList<string?[]> BuildRows(RowCollection collection, int[] indexes, int[] selectedFieldIndexes)

@@ -402,10 +402,11 @@ public class ViewEngineBlotterTests
 
         var snapshot = Assert.IsType<SnapshotDelta>(events.Single());
         Assert.Collection(snapshot.Rows[0]!,
-            value => Assert.Equal("O00001", value),
+            value => Assert.Equal("O00001", value),  // key auto-included at index 0
+            value => Assert.Equal("O00001", value),  // id at index 1
             value => Assert.Equal("category1", value),
             value => Assert.Equal("v0", value));
-        Assert.Equal([1, 3, 4], snapshot.VisibleFieldIndexes);
+        Assert.Equal([0, 1, 3, 4], snapshot.VisibleFieldIndexes);
     }
 
     [Fact]

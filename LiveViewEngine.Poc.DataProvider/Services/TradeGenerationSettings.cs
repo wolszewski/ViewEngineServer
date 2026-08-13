@@ -5,6 +5,7 @@ public sealed class TradeGenerationSettings
     public int InitialTradeCount { get; set; } = 10_000;
     public int UpdateFieldCount { get; set; } = 5;
     public int UpdateFrequencyHz { get; set; } = 10;
+    public IReadOnlyList<string>? UpdatableFields { get; set; }
 }
 
 public sealed class TradeGenerationStatus

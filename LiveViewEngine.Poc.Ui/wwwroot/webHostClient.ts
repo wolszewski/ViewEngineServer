@@ -40,6 +40,7 @@ export interface SubscribeRequest {
     pageSize: number;
     startIndex: number;
     filters: FilterRequest[];
+    fields?: string[];
 }
 
 interface ClientCallbacks {
@@ -144,7 +145,7 @@ export class WebHostClient {
         }
 
         this.lastSubscribe = request;
-        this.socket.send(JSON.stringify({
+        const message: Record<string, unknown> = {
             type: 'subscribe',
             collectionId: request.collectionId,
             sortColumn: request.sortColumn,
@@ -156,7 +157,13 @@ export class WebHostClient {
                 operator: filter.operator,
                 value: filter.value
             }))
-        }));
+        };
+
+        if (request.fields && request.fields.length > 0) {
+            message.fields = request.fields;
+        }
+
+        this.socket.send(JSON.stringify(message));
     }
 
     private ensureSnapshotMatchesRequestedViewport(snapshot: SnapshotEvent): void {

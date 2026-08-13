@@ -15,6 +15,17 @@ public sealed class TradeGeneratorService(
     private CancellationTokenSource? _activeRun;
     private TradeGenerationStatus _status = TradeGenerationStatus.Idle();
 
+    public IReadOnlyList<string> UpdatableFieldNames =>
+        _fieldDefinitions.Where(static f => f.IsUserUpdatable).Select(static f => f.Name).ToList();
+
+    public IReadOnlyDictionary<string, IReadOnlyList<string>> UpdatableFieldNamesByType =>
+        _fieldDefinitions
+            .Where(static f => f.IsUserUpdatable)
+            .GroupBy(static f => f.Type)
+            .ToDictionary(
+                static g => g.Key,
+                static g => (IReadOnlyList<string>)g.Select(static f => f.Name).ToList());
+
     public TradeGenerationStatus Status
     {
         get
@@ -184,7 +195,15 @@ public sealed class TradeGeneratorService(
     private Dictionary<string, string?> ApplyUpdates(TradeEntity trade, TradeGenerationSettings settings)
     {
         var updatableFields = _fieldDefinitions.Where(static field => field.IsUserUpdatable).ToList();
-        var fieldsToUpdate = Random.Shared.Next(1, Math.Min(settings.UpdateFieldCount, updatableFields.Count) + 1);
+        if (settings.UpdatableFields is { Count: > 0 })
+        {
+            var allowedSet = new HashSet<string>(settings.UpdatableFields, StringComparer.OrdinalIgnoreCase);
+            updatableFields = updatableFields.Where(f => allowedSet.Contains(f.Name)).ToList();
+        }
+
+        var fieldsToUpdate = updatableFields.Count == 0
+            ? 0
+            : Random.Shared.Next(1, Math.Min(settings.UpdateFieldCount, updatableFields.Count) + 1);
         var selected = updatableFields.OrderBy(_ => Random.Shared.Next()).Take(fieldsToUpdate).ToList();
         var changedFields = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
         foreach (var field in selected)

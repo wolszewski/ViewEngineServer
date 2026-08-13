@@ -25,6 +25,7 @@ const filterOperators = [
     { label: 'less than or equal', value: 'lte' },
     { label: 'contains', value: 'contains' }
 ] as const;
+const impliedFields = new Set(['key']);
 const knownTradeColumns = [
     'tradeId',
     'createdDate',
@@ -39,6 +40,14 @@ const knownTradeColumns = [
     ...Array.from({ length: 23 }, (_, index) => `intField${index.toString().padStart(2, '0')}`),
     ...Array.from({ length: 20 }, (_, index) => `decimalField${index.toString().padStart(2, '0')}`),
     ...Array.from({ length: 20 }, (_, index) => `enumField${index.toString().padStart(2, '0')}`)
+];
+
+const columnGroups: Array<{ label: string; columns: string[] }> = [
+    { label: 'string',  columns: ['tradeId', ...Array.from({ length: 30 }, (_, i) => `stringField${i.toString().padStart(2, '0')}`)] },
+    { label: 'int',     columns: ['accountId', 'quantity', ...Array.from({ length: 23 }, (_, i) => `intField${i.toString().padStart(2, '0')}`)] },
+    { label: 'decimal', columns: ['price', 'notional', ...Array.from({ length: 20 }, (_, i) => `decimalField${i.toString().padStart(2, '0')}`)] },
+    { label: 'enum',    columns: ['side', 'status', ...Array.from({ length: 20 }, (_, i) => `enumField${i.toString().padStart(2, '0')}`)] },
+    { label: 'date',    columns: ['createdDate', 'updatedDate'] }
 ];
 
 interface SearchableDropdownProps {
@@ -178,6 +187,9 @@ function App(): React.ReactElement {
         operator: 'eq',
         value: ''
     });
+    const [selectedFields, setSelectedFields] = useState<string[]>([]);
+    const [isSelectingColumns, setIsSelectingColumns] = useState(false);
+    const [draftColumns, setDraftColumns] = useState<Set<string>>(new Set());
     const [totalCount, setTotalCount] = useState<number | null>(null);
     const [columnDefs, setColumnDefs] = useState<ColDef<RowData>[]>([]);
 
@@ -213,7 +225,7 @@ function App(): React.ReactElement {
             return;
         }
 
-        const fields = Object.keys(row);
+        const fields = Object.keys(row).filter((f) => !impliedFields.has(f));
         if (fields.length === 0) {
             return;
         }
@@ -358,9 +370,10 @@ function App(): React.ReactElement {
             sortAscending,
             pageSize,
             startIndex,
-            filters: normalisedFilters
+            filters: normalisedFilters,
+            fields: selectedFields.length > 0 ? selectedFields : undefined
         });
-    }, [clearState, collectionId, normalisedFilters, pageIndex, pageSize, sortAscending, sortColumn]);
+    }, [clearState, collectionId, normalisedFilters, pageIndex, pageSize, selectedFields, sortAscending, sortColumn]);
 
     const disconnect = useCallback(() => {
         clientRef.current?.disconnect();
@@ -371,8 +384,7 @@ function App(): React.ReactElement {
     const goToPage = useCallback((nextPageIndex: number) => {
         const clamped = Math.max(0, Math.min(nextPageIndex, maxPageIndex));
         setPageIndex(clamped);
-        clientRef.current?.setViewport(clamped * pageSize, pageSize);
-    }, [maxPageIndex, pageSize]);
+    }, [maxPageIndex]);
 
     const onPageSizeChanged = useCallback((nextPageSize: number) => {
         if (!Number.isFinite(nextPageSize) || nextPageSize < 1) {
@@ -382,7 +394,6 @@ function App(): React.ReactElement {
         const normalizedPageSize = Math.floor(nextPageSize);
         setPageSize(normalizedPageSize);
         setPageIndex(0);
-        clientRef.current?.setViewport(0, normalizedPageSize);
     }, []);
 
     const commitPageSize = useCallback((nextPageSize: string) => {
@@ -436,6 +447,39 @@ function App(): React.ReactElement {
         setFilters((current) => current.filter((_, currentIndex) => currentIndex !== index));
     }, []);
 
+    const openColumnSelector = useCallback(() => {
+        setDraftColumns(new Set(selectedFields.length > 0 ? selectedFields : knownTradeColumns));
+        setIsSelectingColumns(true);
+    }, [selectedFields]);
+
+    const toggleDraftColumn = useCallback((column: string, checked: boolean) => {
+        setDraftColumns((current) => {
+            const next = new Set(current);
+            if (checked) { next.add(column); } else { next.delete(column); }
+            return next;
+        });
+    }, []);
+
+    const toggleDraftGroup = useCallback((columns: string[]) => {
+        setDraftColumns((current) => {
+            const allSelected = columns.every((c) => current.has(c));
+            const next = new Set(current);
+            if (allSelected) { columns.forEach((c) => next.delete(c)); }
+            else { columns.forEach((c) => next.add(c)); }
+            return next;
+        });
+    }, []);
+
+    const commitColumns = useCallback(() => {
+        const committed = knownTradeColumns.filter((c) => draftColumns.has(c));
+        setSelectedFields(committed.length === knownTradeColumns.length ? [] : committed);
+        setIsSelectingColumns(false);
+    }, [draftColumns]);
+
+    const cancelColumns = useCallback(() => {
+        setIsSelectingColumns(false);
+    }, []);
+
     useEffect(() => {
         clientRef.current = new WebHostClient('ws://127.0.0.1:5100/ws', {
             onStatus: setStatus,
@@ -464,9 +508,10 @@ function App(): React.ReactElement {
             sortAscending,
             pageSize,
             startIndex: pageIndex * pageSize,
-            filters: normalisedFilters
+            filters: normalisedFilters,
+            fields: selectedFields.length > 0 ? selectedFields : undefined
         });
-    }, [collectionId, filters, normalisedFilters, pageIndex, pageSize, sortAscending, sortColumn]);
+    }, [collectionId, filters, normalisedFilters, pageIndex, pageSize, selectedFields, sortAscending, sortColumn]);
 
     return React.createElement(
         React.Fragment,
@@ -642,6 +687,7 @@ function App(): React.ReactElement {
                 })
             ),
             React.createElement('button', { type: 'button', onClick: addFilter }, 'Add filter'),
+            React.createElement('button', { type: 'button', onClick: openColumnSelector }, 'Select columns'),
             React.createElement('button', { type: 'button', onClick: connect }, 'Connect'),
             React.createElement('button', { type: 'button', onClick: disconnect }, 'Disconnect')
         ),
@@ -699,6 +745,54 @@ function App(): React.ReactElement {
                     React.createElement('span', null, `${filter.field} ${filterOperators.find((operator) => operator.value === filter.operator)?.label ?? filter.operator} ${filter.value}`),
                     React.createElement('button', { type: 'button', onClick: () => removeFilter(index) }, 'Remove')
                 ))
+        ),
+        React.createElement(
+            'div',
+            { className: 'filters' },
+            isSelectingColumns
+                ? React.createElement(
+                    'div',
+                    { className: 'filter-row', style: { flexWrap: 'wrap', gap: '0.5rem' } },
+                    React.createElement(
+                        'div',
+                        { style: { width: '100%', display: 'flex', gap: '0.25rem', flexWrap: 'wrap', marginBottom: '0.25rem' } },
+                        React.createElement('button', {
+                            type: 'button',
+                            onClick: () => setDraftColumns(new Set(knownTradeColumns))
+                        }, 'All'),
+                        React.createElement('button', {
+                            type: 'button',
+                            onClick: () => setDraftColumns(new Set())
+                        }, 'None'),
+                        ...columnGroups.map((group) =>
+                            React.createElement('button', {
+                                key: group.label,
+                                type: 'button',
+                                onClick: () => toggleDraftGroup(group.columns)
+                            }, group.label)
+                        )
+                    ),
+                    ...knownTradeColumns.map((column) =>
+                        React.createElement(
+                            'label',
+                            { key: column, style: { display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer' } },
+                            React.createElement('input', {
+                                type: 'checkbox',
+                                checked: draftColumns.has(column),
+                                onChange: (e: Event) => toggleDraftColumn(column, (e.target as HTMLInputElement).checked)
+                            }),
+                            column
+                        )
+                    ),
+                    React.createElement('button', { type: 'button', onClick: commitColumns }, 'Apply'),
+                    React.createElement('button', { type: 'button', onClick: cancelColumns }, 'Cancel')
+                )
+                : null,
+            selectedFields.length === 0
+                ? React.createElement('div', { className: 'empty-filters' }, 'All columns subscribed (no column filter).')
+                : React.createElement('div', { className: 'filter-chip' },
+                    React.createElement('span', null, `Columns: ${selectedFields.join(', ')}`)
+                )
         ),
         React.createElement(
             'div',
