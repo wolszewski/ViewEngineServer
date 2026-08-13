@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using LiveViewEngine.Core.Data;
 using LiveViewEngine.Core.Views;
 
@@ -34,22 +35,44 @@ public sealed class CollectionRuntime : IDisposable
     public (IngestResult Result, List<(IReadOnlyList<ViewDelta> Deltas, List<string> ConnectionIds)>? Groups)
         HandleUpsert(UpsertRowCommand command)
     {
-        if (Collection.TryGetRowIndex(command.Key, out int existingRowIndex))
+        var started = Stopwatch.GetTimestamp();
+        var rowAlreadyExisted = Collection.TryGetRowIndex(command.Key, out int existingRowIndex);
+
+        try
         {
-            foreach (var sortIndex in _sortIndexRegistry.GetAllForCollection(Collection.Schema.CollectionName))
+            if (rowAlreadyExisted)
             {
-                sortIndex.CaptureOldValue(existingRowIndex);
+                foreach (var sortIndex in _sortIndexRegistry.GetAllForCollection(Collection.Schema.CollectionName))
+                {
+                    sortIndex.CaptureOldValue(existingRowIndex);
+                }
+            }
+
+            var mutation = Collection.AddOrUpdate(command.Key, command.Fields);
+            List<(IReadOnlyList<ViewDelta>, List<string>)>? groups = null;
+            if (_sharedViews.Count > 0)
+            {
+                groups = Propagator.Propagate(Collection, _sharedViews, _viewports, mutation, isDelete: false);
+            }
+
+            return (IngestResult.Ok(), groups);
+        }
+        finally
+        {
+            var durationMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            if (rowAlreadyExisted)
+            {
+                ViewEngineMetrics.UpdateDuration.Record(
+                    durationMs,
+                    new KeyValuePair<string, object?>("collectionId", CollectionId));
+            }
+            else
+            {
+                ViewEngineMetrics.InsertDuration.Record(
+                    durationMs,
+                    new KeyValuePair<string, object?>("collectionId", CollectionId));
             }
         }
-
-        var mutation = Collection.AddOrUpdate(command.Key, command.Fields);
-        List<(IReadOnlyList<ViewDelta>, List<string>)>? groups = null;
-        if (_sharedViews.Count > 0)
-        {
-            groups = Propagator.Propagate(Collection, _sharedViews, _viewports, mutation, isDelete: false);
-        }
-
-        return (IngestResult.Ok(), groups);
     }
 
     public (IngestResult Result, List<(IReadOnlyList<ViewDelta> Deltas, List<string> ConnectionIds)>? Groups)

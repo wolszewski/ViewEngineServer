@@ -12,6 +12,7 @@ services.AddOpenTelemetry()
     .WithMetrics(metrics =>
     {
         metrics
+            .AddMeter("ViewEngineServer")
             .AddAspNetCoreInstrumentation()
             .AddRuntimeInstrumentation()
             .AddProcessInstrumentation()

@@ -1,9 +1,30 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using LiveViewEngine.Core.Data;
 using Microsoft.Extensions.Logging;
 
 namespace LiveViewEngine.Core;
 
+internal static class ViewEngineMetrics
+{
+    private static readonly Meter Meter = new("ViewEngineServer");
+
+    internal static readonly Histogram<double> InsertDuration = Meter.CreateHistogram<double>(
+        "viewengine.insert.duration",
+        unit: "ms",
+        description: "Time spent processing insert operations.");
+
+    internal static readonly Histogram<double> UpdateDuration = Meter.CreateHistogram<double>(
+        "viewengine.update.duration",
+        unit: "ms",
+        description: "Time spent processing update operations.");
+
+    internal static readonly Histogram<double> SubscriptionDuration = Meter.CreateHistogram<double>(
+        "viewengine.subscription.duration",
+        unit: "ms",
+        description: "Time spent processing subscription operations.");
+}
 
 public interface IViewEngine
 {
@@ -58,23 +79,35 @@ public sealed class ViewEngine(
         }
     }
 
-    public Task<IReadOnlyList<ViewDelta>> SubscribeAsync(
+    public async Task<IReadOnlyList<ViewDelta>> SubscribeAsync(
         SubscriptionCommand command, CancellationToken ct = default)
     {
         string? collectionId = GetCollectionIdForSubscription(command);
 
         if (collectionId is null || !_collectionRuntimes.TryGetValue(collectionId, out var runtime))
         {
-            return Task.FromResult<IReadOnlyList<ViewDelta>>([]);
+            return [];
         }
 
-        return runtime.EnqueueAsync(() => command switch
+        var started = Stopwatch.GetTimestamp();
+        try
         {
-            SubscribeCommand sub => runtime.HandleSubscribe(sub),
-            ChangeViewportCommand change => runtime.HandleChangeViewport(change),
-            UnsubscribeCommand unsub => runtime.HandleUnsubscribe(unsub),
-            _ => []
-        }, ct);
+            return await runtime.EnqueueAsync(() => command switch
+            {
+                SubscribeCommand sub => runtime.HandleSubscribe(sub),
+                ChangeViewportCommand change => runtime.HandleChangeViewport(change),
+                UnsubscribeCommand unsub => runtime.HandleUnsubscribe(unsub),
+                _ => []
+            }, ct);
+        }
+        finally
+        {
+            var durationMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            ViewEngineMetrics.SubscriptionDuration.Record(
+                durationMs,
+                new KeyValuePair<string, object?>("commandType", command.GetType().Name),
+                new KeyValuePair<string, object?>("collectionId", collectionId));
+        }
     }
 
     public void Dispose()
