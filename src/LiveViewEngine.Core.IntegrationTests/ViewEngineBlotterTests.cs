@@ -70,7 +70,8 @@ public class ViewEngineBlotterTests
     }
 
     // Collects all ids from a view by paging through the full result set.
-    private static async Task<HashSet<string>> CollectAllIds(ViewEngine engine, string connectionId, ViewDefinition view, int total)
+    private static async Task<HashSet<string>> CollectAllIds(ViewEngine engine, string connectionId,
+        ViewDefinition view, int total)
     {
         var allIds = new HashSet<string>(total);
         int pageSize = 500;
@@ -85,8 +86,12 @@ public class ViewEngineBlotterTests
             });
             var snap = Assert.IsType<SnapshotDelta>(evts.Single());
             int idIdx = snap.Schema.GetFieldIndex("id");
-            foreach (var row in snap.Rows) { allIds.Add(row[idIdx]!); }
+            foreach (var row in snap.Rows)
+            {
+                allIds.Add(row[idIdx]!);
+            }
         }
+
         return allIds;
     }
 
@@ -101,7 +106,10 @@ public class ViewEngineBlotterTests
         var allIds = await CollectAllIds(engine, "client", view, 10000);
 
         Assert.Equal(10000, allIds.Count);
-        for (int i = 1; i <= 10000; i++) { Assert.Contains($"O{i:D5}", allIds); }
+        for (int i = 1; i <= 10000; i++)
+        {
+            Assert.Contains($"O{i:D5}", allIds);
+        }
     }
 
     [Fact]
@@ -116,7 +124,10 @@ public class ViewEngineBlotterTests
         // Verify all ids present
         var allIds = await CollectAllIds(engine, "client", view, 10000);
         Assert.Equal(10000, allIds.Count);
-        for (int i = 1; i <= 10000; i++) { Assert.Contains($"O{i:D5}", allIds); }
+        for (int i = 1; i <= 10000; i++)
+        {
+            Assert.Contains($"O{i:D5}", allIds);
+        }
 
         // Verify page boundary ordering: last row of page N <= first row of page N+1 (desc)
         var evts0 = await engine.SubscribeAsync(new SubscribeCommand
@@ -140,8 +151,10 @@ public class ViewEngineBlotterTests
         // Within first page: descending
         for (int i = 1; i < snap0.Rows.Count; i++)
         {
-            Assert.True(string.Compare(snap0.Rows[i - 1][dateIdx], snap0.Rows[i][dateIdx], StringComparison.Ordinal) >= 0);
+            Assert.True(string.Compare(snap0.Rows[i - 1][dateIdx], snap0.Rows[i][dateIdx], StringComparison.Ordinal) >=
+                        0);
         }
+
         // Boundary: last of page 0 >= first of page 1
         Assert.True(string.Compare(snap0.Rows[^1][dateIdx], snap1.Rows[0][dateIdx], StringComparison.Ordinal) >= 0);
     }
@@ -166,7 +179,10 @@ public class ViewEngineBlotterTests
         // Every category1 id: O00001, O00005, O00009, ... (i%4==0 → i+1 = 1,5,9,...)
         for (int i = 0; i < 10000; i++)
         {
-            if (i % 4 == 0) { Assert.Contains($"O{i + 1:D5}", allIds); }
+            if (i % 4 == 0)
+            {
+                Assert.Contains($"O{i + 1:D5}", allIds);
+            }
         }
     }
 
@@ -189,7 +205,10 @@ public class ViewEngineBlotterTests
         Assert.Equal(2500, allIds.Count);
         for (int i = 0; i < 10000; i++)
         {
-            if (i % 4 == 0) { Assert.Contains($"O{i + 1:D5}", allIds); }
+            if (i % 4 == 0)
+            {
+                Assert.Contains($"O{i + 1:D5}", allIds);
+            }
         }
 
         // Spot-check ordering on first page
@@ -206,7 +225,8 @@ public class ViewEngineBlotterTests
         Assert.All(snap.Rows, row => Assert.Equal("category1", row[catIdx]));
         for (int i = 1; i < snap.Rows.Count; i++)
         {
-            Assert.True(string.Compare(snap.Rows[i - 1][dateIdx], snap.Rows[i][dateIdx], StringComparison.Ordinal) >= 0);
+            Assert.True(string.Compare(snap.Rows[i - 1][dateIdx], snap.Rows[i][dateIdx], StringComparison.Ordinal) >=
+                        0);
         }
     }
 
@@ -325,13 +345,23 @@ public class ViewEngineBlotterTests
         // category1: i%4==0, category2: i%4==1
         for (int i = 0; i < 10000; i++)
         {
-            if (i % 4 == 0) { Assert.Contains($"O{i + 1:D5}", idsCat1); }
-            if (i % 4 == 1) { Assert.Contains($"O{i + 1:D5}", idsCat2); }
+            if (i % 4 == 0)
+            {
+                Assert.Contains($"O{i + 1:D5}", idsCat1);
+            }
+
+            if (i % 4 == 1)
+            {
+                Assert.Contains($"O{i + 1:D5}", idsCat2);
+            }
         }
     }
 
     private static readonly string[] ModifiableFields =
-        ["f01", "f02", "f03", "f04", "f05", "f06", "f07", "f08", "f09", "f10", "f11", "f12", "f13", "f14", "f15", "f16", "f17"];
+    [
+        "f01", "f02", "f03", "f04", "f05", "f06", "f07", "f08", "f09", "f10", "f11", "f12", "f13", "f14", "f15", "f16",
+        "f17"
+    ];
 
     private static string[] PickFields(int count, Random rng)
     {
@@ -341,10 +371,12 @@ public class ViewEngineBlotterTests
             int j = i + rng.Next(ModifiableFields.Length - i);
             (arr[i], arr[j]) = (arr[j], arr[i]);
         }
+
         return arr[..count];
     }
 
-    private static (UpsertRowCommand Command, Dictionary<string, string?> Fields)[] GenerateModifications(int count, int seed = 42)
+    private static (UpsertRowCommand Command, Dictionary<string, string?> Fields)[] GenerateModifications(int count,
+        int seed = 42)
     {
         var rng = new Random(seed);
         var result = new (UpsertRowCommand, Dictionary<string, string?>)[count];
@@ -353,9 +385,15 @@ public class ViewEngineBlotterTests
             int fieldCount = 1 + rng.Next(5);
             string[] chosen = PickFields(fieldCount, rng);
             var fields = new Dictionary<string, string?>(fieldCount);
-            foreach (var f in chosen) { fields[f] = $"mod-{i}-{f}"; }
-            result[i] = (new UpsertRowCommand { CollectionId = CollectionId, Key = $"O{i + 1:D5}", Fields = fields }, fields);
+            foreach (var f in chosen)
+            {
+                fields[f] = $"mod-{i}-{f}";
+            }
+
+            result[i] = (new UpsertRowCommand { CollectionId = CollectionId, Key = $"O{i + 1:D5}", Fields = fields },
+                fields);
         }
+
         return result;
     }
 
@@ -402,8 +440,8 @@ public class ViewEngineBlotterTests
 
         var snapshot = Assert.IsType<SnapshotDelta>(events.Single());
         Assert.Collection(snapshot.Rows[0]!,
-            value => Assert.Equal("O00001", value),  // key auto-included at index 0
-            value => Assert.Equal("O00001", value),  // id at index 1
+            value => Assert.Equal("O00001", value), // key auto-included at index 0
+            value => Assert.Equal("O00001", value), // id at index 1
             value => Assert.Equal("category1", value),
             value => Assert.Equal("v0", value));
         Assert.Equal([0, 1, 3, 4], snapshot.VisibleFieldIndexes);
@@ -522,7 +560,10 @@ public class ViewEngineBlotterTests
         });
 
         var mods = GenerateModifications(50);
-        foreach (var (cmd, _) in mods) { await engine.IngestAsync(cmd); }
+        foreach (var (cmd, _) in mods)
+        {
+            await engine.IngestAsync(cmd);
+        }
 
         var updates = publisher.EventsFor("client").OfType<RowUpdateEvent>().ToList();
         Assert.Equal(50, updates.Count);
@@ -555,7 +596,10 @@ public class ViewEngineBlotterTests
         });
 
         var mods = GenerateModifications(100);
-        foreach (var (cmd, _) in mods) { await engine.IngestAsync(cmd); }
+        foreach (var (cmd, _) in mods)
+        {
+            await engine.IngestAsync(cmd);
+        }
 
         var updates = publisher.EventsFor("client").OfType<RowUpdateEvent>().ToList();
 
@@ -583,7 +627,10 @@ public class ViewEngineBlotterTests
 
         // Modify first 60 objects with seeded-random 1-5 fields each
         var mods = GenerateModifications(60);
-        foreach (var (cmd, _) in mods) { await engine.IngestAsync(cmd); }
+        foreach (var (cmd, _) in mods)
+        {
+            await engine.IngestAsync(cmd);
+        }
 
         // Early client should have received exactly 60 update events (all 60 are in viewport)
         var earlyUpdates = publisher.EventsFor("earlyClient").OfType<RowUpdateEvent>().ToList();
@@ -627,12 +674,238 @@ public class ViewEngineBlotterTests
         foreach (var row in lateSnap.Rows)
         {
             string rowId = row[idIdx]!;
-            if (!expectedMods.TryGetValue(rowId, out var modFields)) { continue; }
+            if (!expectedMods.TryGetValue(rowId, out var modFields))
+            {
+                continue;
+            }
+
             foreach (var (fieldName, expectedValue) in modFields)
             {
                 int fieldIdx = lateSnap.Schema.GetFieldIndex(fieldName);
                 Assert.Equal(expectedValue, row[fieldIdx]);
             }
         }
+    }
+
+    [Fact]
+    public async Task Subscribe_WithSelectedFields_KeyAlwaysIncludedEvenWhenNotRequested()
+    {
+        var (engine, _, _) = CreateEngine();
+        await CreateObjects(engine);
+        await UpsertObject(engine, 0);
+
+        var events = await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = "client",
+            View = new ViewDefinition
+            {
+                CollectionId = CollectionId,
+                Fields = ["f01", "f02"]
+            },
+            StartIndex = 0,
+            PageSize = 50
+        });
+
+        var snapshot = Assert.IsType<SnapshotDelta>(events.Single());
+        Assert.Contains(0, snapshot.VisibleFieldIndexes);
+        Assert.Equal("O00001", snapshot.Rows[0]![0]);
+    }
+
+    [Fact]
+    public async Task Subscribe_WithKeyExplicitlyRequested_KeyNotDuplicated()
+    {
+        var (engine, _, _) = CreateEngine();
+        await CreateObjects(engine);
+        await UpsertObject(engine, 0);
+
+        var events = await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = "client",
+            View = new ViewDefinition
+            {
+                CollectionId = CollectionId,
+                Fields = ["key", "f01"]
+            },
+            StartIndex = 0,
+            PageSize = 50
+        });
+
+        var snapshot = Assert.IsType<SnapshotDelta>(events.Single());
+        Assert.Equal(2, snapshot.VisibleFieldIndexes!.Count);
+        Assert.Equal(0, snapshot.VisibleFieldIndexes[0]);
+    }
+
+    [Fact]
+    public async Task Update_OnlyUnselectedColumnsChanged_NoUpdatePublished()
+    {
+        var (engine, publisher, _) = CreateEngine();
+        await CreateObjects(engine);
+        await UpsertObject(engine, 0);
+
+        await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = "client",
+            View = new ViewDefinition
+            {
+                CollectionId = CollectionId,
+                Fields = ["f01", "f02"]
+            },
+            StartIndex = 0,
+            PageSize = 50
+        });
+
+        await engine.IngestAsync(new UpsertRowCommand
+        {
+            CollectionId = CollectionId,
+            Key = "O00001",
+            Fields = new Dictionary<string, string?> { ["f05"] = "changed", ["f10"] = "changed" }
+        });
+
+        var updates = publisher.EventsFor("client").OfType<RowUpdateEvent>().ToList();
+        Assert.Empty(updates);
+    }
+
+    [Fact]
+    public async Task Update_MixOfSelectedAndUnselectedColumns_OnlySelectedPublished()
+    {
+        var (engine, publisher, _) = CreateEngine();
+        await CreateObjects(engine);
+        await UpsertObject(engine, 0);
+
+        await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = "client",
+            View = new ViewDefinition
+            {
+                CollectionId = CollectionId,
+                Fields = ["f01", "f03"]
+            },
+            StartIndex = 0,
+            PageSize = 50
+        });
+
+        await engine.IngestAsync(new UpsertRowCommand
+        {
+            CollectionId = CollectionId,
+            Key = "O00001",
+            Fields = new Dictionary<string, string?>
+            {
+                ["f01"] = "selected-changed",
+                ["f02"] = "unselected-changed",
+                ["f03"] = "also-selected",
+                ["f07"] = "also-unselected"
+            }
+        });
+
+        var updates = publisher.EventsFor("client").OfType<RowUpdateEvent>().ToList();
+        Assert.Single(updates);
+        Assert.Equal(2, updates[0].ChangedFields.Count);
+        Assert.Equal("selected-changed", updates[0].ChangedFields["f01"]);
+        Assert.Equal("also-selected", updates[0].ChangedFields["f03"]);
+    }
+
+    [Fact]
+    public async Task Delete_WithSelectedFields_RemoveEventAlwaysPublished()
+    {
+        var (engine, publisher, _) = CreateEngine();
+        await CreateObjects(engine);
+        await UpsertObject(engine, 0);
+
+        await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = "client",
+            View = new ViewDefinition
+            {
+                CollectionId = CollectionId,
+                Fields = ["f01"]
+            },
+            StartIndex = 0,
+            PageSize = 50
+        });
+
+        await engine.IngestAsync(new DeleteRowCommand
+        {
+            CollectionId = CollectionId,
+            Key = "O00001"
+        });
+
+        var removes = publisher.EventsFor("client").OfType<RowRemoveEvent>().ToList();
+        Assert.Single(removes);
+    }
+
+    [Fact]
+    public async Task Insert_WithSelectedFields_InsertEventAlwaysPublished()
+    {
+        var (engine, publisher, _) = CreateEngine();
+        await CreateObjects(engine);
+        await UpsertObject(engine, 0);
+
+        await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = "client",
+            View = new ViewDefinition
+            {
+                CollectionId = CollectionId,
+                Fields = ["f01"]
+            },
+            StartIndex = 0,
+            PageSize = 50
+        });
+
+        await UpsertObject(engine, 1);
+
+        var inserts = publisher.EventsFor("client").OfType<RowInsertEvent>().ToList();
+        Assert.Single(inserts);
+        Assert.Contains("key", inserts[0].Row.Keys);
+        Assert.Contains("f01", inserts[0].Row.Keys);
+        Assert.DoesNotContain("f02", inserts[0].Row.Keys);
+    }
+
+    [Fact]
+    public async Task TwoSubscribers_DifferentFieldSelections_EachReceivesOnlyTheirColumns()
+    {
+        var (engine, publisher, _) = CreateEngine();
+        await CreateObjects(engine);
+        await UpsertObject(engine, 0);
+
+        await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = "clientA",
+            View = new ViewDefinition { CollectionId = CollectionId, Fields = ["f01", "f02"] },
+            StartIndex = 0,
+            PageSize = 50
+        });
+
+        await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = "clientB",
+            View = new ViewDefinition { CollectionId = CollectionId, Fields = ["f03", "f04"] },
+            StartIndex = 0,
+            PageSize = 50
+        });
+
+        await engine.IngestAsync(new UpsertRowCommand
+        {
+            CollectionId = CollectionId,
+            Key = "O00001",
+            Fields = new Dictionary<string, string?>
+            {
+                ["f01"] = "a1", ["f02"] = "a2",
+                ["f03"] = "b3", ["f04"] = "b4"
+            }
+        });
+
+        var updatesA = publisher.EventsFor("clientA").OfType<RowUpdateEvent>().ToList();
+        var updatesB = publisher.EventsFor("clientB").OfType<RowUpdateEvent>().ToList();
+
+        Assert.Single(updatesA);
+        Assert.Contains("f01", updatesA[0].ChangedFields.Keys);
+        Assert.Contains("f02", updatesA[0].ChangedFields.Keys);
+        Assert.DoesNotContain("f03", updatesA[0].ChangedFields.Keys);
+
+        Assert.Single(updatesB);
+        Assert.Contains("f03", updatesB[0].ChangedFields.Keys);
+        Assert.Contains("f04", updatesB[0].ChangedFields.Keys);
+        Assert.DoesNotContain("f01", updatesB[0].ChangedFields.Keys);
     }
 }
