@@ -6,25 +6,29 @@ public interface ICollectionStore
 {
     bool TryCreate(CollectionSchema schema);
     bool TryGet(string collectionId, out RowCollection? collection);
+    bool TryGetRuntime(string collectionId, out CollectionRuntime? runtime);
     ICollection<string> CollectionIds { get; }
 }
 
 public sealed class CollectionStore : ICollectionStore
 {
-    private readonly ConcurrentDictionary<string, RowCollection> _collections = new();
+    private readonly ConcurrentDictionary<string, CollectionRuntime> _collections = new();
 
     public bool TryCreate(CollectionSchema schema)
     {
-        var col = new RowCollection(schema);
-        return _collections.TryAdd(schema.CollectionName, col);
+        var runtime = new CollectionRuntime(schema.CollectionName, new RowCollection(schema));
+        return _collections.TryAdd(schema.CollectionName, runtime);
     }
 
     public bool TryGet(string collectionId, out RowCollection? collection)
     {
-        var found = _collections.TryGetValue(collectionId, out var rowCollection);
-        collection = rowCollection;
+        var found = TryGetRuntime(collectionId, out var runtime);
+        collection = runtime?.Collection;
         return found;
     }
+
+    public bool TryGetRuntime(string collectionId, out CollectionRuntime? runtime) =>
+        _collections.TryGetValue(collectionId, out runtime);
 
     public ICollection<string> CollectionIds => _collections.Keys;
 }
