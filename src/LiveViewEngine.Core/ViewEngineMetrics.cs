@@ -22,11 +22,21 @@ public sealed class ViewEngineMetrics : IDisposable
             "viewengine.subscription.duration",
             unit: "ms",
             description: "Time spent processing subscription operations.");
+
+        InsertCount = _meter.CreateCounter<long>(
+            "viewengine.insert.count",
+            description: "Total number of insert operations processed.");
+
+        UpdateCount = _meter.CreateCounter<long>(
+            "viewengine.update.count",
+            description: "Total number of update operations processed.");
     }
 
     public Histogram<double> InsertDuration { get; }
     public Histogram<double> UpdateDuration { get; }
     public Histogram<double> SubscriptionDuration { get; }
+    public Counter<long> InsertCount { get; }
+    public Counter<long> UpdateCount { get; }
 
     public void RegisterGaugeSources(
         Func<int> activeSubscriptions,

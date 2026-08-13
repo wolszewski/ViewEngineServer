@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using LiveViewEngine.HttpClient;
 
@@ -101,6 +102,7 @@ public sealed class TradeGeneratorService(
                 status.IsRunning = false;
                 status.StatusMessage = "Idle";
                 status.IsInUpdateMode = false;
+                status.UpdatesPerSecond = 0;
             });
         }
     }
@@ -163,12 +165,20 @@ public sealed class TradeGeneratorService(
         });
 
         var nextTradeIndex = 0;
-        var updateDelay = TimeSpan.FromSeconds(1d / settings.UpdateFrequencyHz);
+        var rateWindowStart = Stopwatch.GetTimestamp();
+        var updatesSentTotal = 0;
+        var rateWindowStartCount = 0;
+        var limiter = new RateLimiter();
+        limiter.Configure(settings.UpdateFrequencyHz);
+        limiter.Start();
+
         while (!ct.IsCancellationRequested)
         {
+            limiter.Wait();
+            ct.ThrowIfCancellationRequested();
+
             if (trades.Count == 0)
             {
-                await Task.Delay(updateDelay, ct);
                 continue;
             }
 
@@ -182,13 +192,23 @@ public sealed class TradeGeneratorService(
                 logger.LogWarning("Update ingestion failed for trade {TradeId}.", trade.Id);
             }
 
-            UpdateStatus(status =>
-            {
-                status.UpdatesSent++;
-                status.LastUpdatedUtc = DateTimeOffset.UtcNow;
-            });
+            updatesSentTotal++;
 
-            await Task.Delay(updateDelay, ct);
+            var elapsed = Stopwatch.GetElapsedTime(rateWindowStart);
+            if (elapsed.TotalSeconds >= 1.0)
+            {
+                var rate = (updatesSentTotal - rateWindowStartCount) / elapsed.TotalSeconds;
+                rateWindowStart = Stopwatch.GetTimestamp();
+                rateWindowStartCount = updatesSentTotal;
+                var snapshot = updatesSentTotal;
+
+                UpdateStatus(status =>
+                {
+                    status.UpdatesSent = snapshot;
+                    status.UpdatesPerSecond = rate;
+                    status.LastUpdatedUtc = DateTimeOffset.UtcNow;
+                });
+            }
         }
     }
 

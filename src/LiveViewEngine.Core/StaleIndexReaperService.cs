@@ -1,3 +1,4 @@
+using LiveViewEngine.Core.Data;
 using Microsoft.Extensions.Hosting;
 
 namespace LiveViewEngine.Core;

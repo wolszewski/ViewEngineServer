@@ -17,6 +17,7 @@ public sealed class TradeGenerationStatus
     public int UpdateFrequencyHz { get; set; }
     public int TradesGenerated { get; set; }
     public int UpdatesSent { get; set; }
+    public double UpdatesPerSecond { get; set; }
     public string StatusMessage { get; set; } = "Idle";
     public string? LastError { get; set; }
     public DateTimeOffset LastUpdatedUtc { get; set; } = DateTimeOffset.UtcNow;

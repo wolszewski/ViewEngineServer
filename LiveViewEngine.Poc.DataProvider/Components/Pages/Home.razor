@@ -64,6 +64,7 @@
             <p class="mb-1"><strong>Update mode:</strong> @_status.IsInUpdateMode</p>
             <p class="mb-1"><strong>Trades generated:</strong> @_status.TradesGenerated</p>
             <p class="mb-1"><strong>Updates sent:</strong> @_status.UpdatesSent</p>
+            <p class="mb-1"><strong>Updates/s:</strong> @(_status.UpdatesPerSecond > 0 ? $"{_status.UpdatesPerSecond:F1}" : "—")</p>
             <p class="mb-1"><strong>Message:</strong> @_status.StatusMessage</p>
             @if (!string.IsNullOrWhiteSpace(_status.LastError))
             {

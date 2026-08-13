@@ -73,11 +73,17 @@ public sealed class CollectionRuntime : IDisposable
                 _metrics.UpdateDuration.Record(
                     durationMs,
                     new KeyValuePair<string, object?>("collectionId", CollectionId));
+                _metrics.UpdateCount.Add(
+                    1,
+                    new KeyValuePair<string, object?>("collectionId", CollectionId));
             }
             else
             {
                 _metrics.InsertDuration.Record(
                     durationMs,
+                    new KeyValuePair<string, object?>("collectionId", CollectionId));
+                _metrics.InsertCount.Add(
+                    1,
                     new KeyValuePair<string, object?>("collectionId", CollectionId));
             }
         }
