@@ -109,12 +109,15 @@ public sealed class CollectionRuntime : IDisposable
         var view = _sharedViews.GetOrAdd(key, k => new SharedView(k, Collection, sortIndex));
         view.AddSubscriber(command.ConnectionId);
 
+        var selectedFieldIndexes = ResolveVisibleFieldIndexes(command.View);
         var viewport = new ViewportState
         {
             ConnectionId = command.ConnectionId,
             ViewKey = key,
             StartIndex = command.StartIndex,
-            PageSize = command.PageSize
+            PageSize = command.PageSize,
+            VisibleColumns = FieldMask.From(selectedFieldIndexes.AsSpan()),
+            SelectedFieldIndexes = selectedFieldIndexes
         };
         _viewports[command.ConnectionId] = viewport;
 
@@ -125,7 +128,8 @@ public sealed class CollectionRuntime : IDisposable
             Schema = Collection.Schema,
             TotalCount = view.GetTotalCount(),
             StartIndex = command.StartIndex,
-            Rows = BuildRows(Collection, indexes)
+            Rows = BuildRows(Collection, indexes, selectedFieldIndexes),
+            VisibleFieldIndexes = selectedFieldIndexes
         }];
     }
 
@@ -151,7 +155,8 @@ public sealed class CollectionRuntime : IDisposable
             Schema = Collection.Schema,
             TotalCount = view.GetTotalCount(),
             StartIndex = command.StartIndex,
-            Rows = BuildRows(Collection, indexes)
+            Rows = BuildRows(Collection, indexes, viewport.SelectedFieldIndexes),
+            VisibleFieldIndexes = viewport.SelectedFieldIndexes
         }];
     }
 
@@ -197,14 +202,48 @@ public sealed class CollectionRuntime : IDisposable
         return new SortIndexKey(key.CollectionId, sortFieldIndex, key.SortAscending);
     }
 
-    private static IReadOnlyList<string?[]> BuildRows(RowCollection collection, int[] indexes)
+    private int[] ResolveVisibleFieldIndexes(ViewDefinition view)
+    {
+        if (view.Fields is null)
+        {
+            return Enumerable.Range(0, Collection.Schema.Fields.Count).ToArray();
+        }
+
+        var indexes = new int[view.Fields.Count];
+        for (int i = 0; i < view.Fields.Count; i++)
+        {
+            int fieldIndex = Collection.Schema.GetFieldIndex(view.Fields[i]);
+            if (fieldIndex < 0)
+            {
+                throw new ArgumentException(
+                    $"Unknown field '{view.Fields[i]}' for collection '{Collection.Schema.CollectionName}'.",
+                    nameof(view.Fields));
+            }
+
+            indexes[i] = fieldIndex;
+        }
+
+        return indexes;
+    }
+
+    private static IReadOnlyList<string?[]> BuildRows(RowCollection collection, int[] indexes, int[] selectedFieldIndexes)
     {
         var rows = new string?[indexes.Length][];
         for (int i = 0; i < indexes.Length; i++)
         {
-            rows[i] = CopyRow(collection.GetRowValues(indexes[i]));
+            rows[i] = ProjectRow(collection.GetRowValues(indexes[i]), selectedFieldIndexes);
         }
         return rows;
+    }
+
+    private static string?[] ProjectRow(string?[] source, int[] selectedFieldIndexes)
+    {
+        var copy = new string?[selectedFieldIndexes.Length];
+        for (int i = 0; i < selectedFieldIndexes.Length; i++)
+        {
+            copy[i] = source[selectedFieldIndexes[i]];
+        }
+        return copy;
     }
 
     private static string?[] CopyRow(string?[] source)

@@ -360,6 +360,92 @@ public class ViewEngineBlotterTests
     }
 
     [Fact]
+    public void ViewKey_IgnoresSelectedFields_WhenSortAndFiltersMatch()
+    {
+        var left = new ViewDefinition
+        {
+            CollectionId = CollectionId,
+            SortColumn = "date",
+            Filters = [new FilterSpec("category", FilterOperator.Eq, "category1")],
+            Fields = ["id", "category", "f01"]
+        };
+        var right = new ViewDefinition
+        {
+            CollectionId = CollectionId,
+            SortColumn = "date",
+            Filters = [new FilterSpec("category", FilterOperator.Eq, "category1")],
+            Fields = ["id", "f03", "f17"]
+        };
+
+        Assert.Equal(ViewKey.From(left), ViewKey.From(right));
+        Assert.Equal(ViewKey.From(left).GetHashCode(), ViewKey.From(right).GetHashCode());
+    }
+
+    [Fact]
+    public async Task Subscribe_WithSelectedFields_ProjectsOnlyRequestedColumns()
+    {
+        var (engine, _, _) = CreateEngine();
+        await CreateObjects(engine);
+        await UpsertObject(engine, 0);
+
+        var events = await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = "client",
+            View = new ViewDefinition
+            {
+                CollectionId = CollectionId,
+                Fields = ["id", "category", "f01"]
+            },
+            StartIndex = 0,
+            PageSize = 50
+        });
+
+        var snapshot = Assert.IsType<SnapshotDelta>(events.Single());
+        Assert.Collection(snapshot.Rows[0]!,
+            value => Assert.Equal("O00001", value),
+            value => Assert.Equal("category1", value),
+            value => Assert.Equal("v0", value));
+        Assert.Equal([1, 3, 4], snapshot.VisibleFieldIndexes);
+    }
+
+    [Fact]
+    public async Task Update_WithSelectedFields_OnlySelectedColumnsArePublished()
+    {
+        var (engine, publisher, _) = CreateEngine();
+        await CreateObjects(engine);
+        await UpsertObject(engine, 0);
+
+        await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = "client",
+            View = new ViewDefinition
+            {
+                CollectionId = CollectionId,
+                Fields = ["id", "f01"]
+            },
+            StartIndex = 0,
+            PageSize = 50
+        });
+
+        await engine.IngestAsync(new UpsertRowCommand
+        {
+            CollectionId = CollectionId,
+            Key = "O00001",
+            Fields = new Dictionary<string, string?>
+            {
+                ["f01"] = "modified-value",
+                ["f02"] = "B"
+            }
+        });
+
+        var updates = publisher.EventsFor("client").OfType<RowUpdateEvent>().ToList();
+        Assert.Single(updates);
+        Assert.Equal("O00001", updates[0].RowId);
+        Assert.Equal("modified-value", updates[0].ChangedFields["f01"]);
+        Assert.DoesNotContain("f02", updates[0].ChangedFields.Keys);
+    }
+
+    [Fact]
     public async Task ModifyObject_SingleField_SubscriberReceivesOnlyThatField()
     {
         var (engine, publisher, _) = CreateEngine();

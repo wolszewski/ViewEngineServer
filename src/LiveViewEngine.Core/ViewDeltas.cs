@@ -5,6 +5,7 @@ namespace LiveViewEngine.Core;
 public abstract class ViewDelta
 {
     public required string ViewId { get; init; }
+    public IReadOnlyList<int>? VisibleFieldIndexes { get; init; }
 }
 
 public sealed class SnapshotDelta : ViewDelta

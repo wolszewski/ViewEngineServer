@@ -81,6 +81,7 @@ public sealed class MutationPropagator
                 CollectPositionGroups(
                     collection, view, viewports, mutation,
                     _oldPosBuffer[i], newFilteredPos,
+                    isDelete,
                     ref pending);
             }
 
@@ -134,11 +135,15 @@ public sealed class MutationPropagator
             return;
         }
 
-        // Group subscribers that can see the row, by (startIndex, pageSize) viewport.
-        Dictionary<(int Start, int? PageSize), List<string>>? groups = null;
+        Dictionary<(int Start, int? PageSize, FieldMask VisibleColumns), List<string>>? groups = null;
         foreach (var connectionId in view.Subscribers)
         {
             if (!viewports.TryGetValue(connectionId, out var viewport))
+            {
+                continue;
+            }
+
+            if (!viewport.VisibleColumns.Intersects(mutation.ChangedMask))
             {
                 continue;
             }
@@ -151,29 +156,37 @@ public sealed class MutationPropagator
             }
 
             groups ??= new();
-            var key = (start, viewport.PageSize);
+            var key = (start, viewport.PageSize, viewport.VisibleColumns);
             if (!groups.TryGetValue(key, out var list)) { list = []; groups[key] = list; }
             list.Add(connectionId);
         }
 
         if (groups is null) { return; }
 
-        foreach (var ((start, _), connIds) in groups)
+        foreach (var ((start, _, _), connIds) in groups)
         {
             pending ??= [];
+            var viewport = viewports[connIds[0]];
+            var projectedColumns = FilterChangedColumns(mutation.ChangedColumns, viewport.VisibleColumns);
+            if (projectedColumns.Count == 0)
+            {
+                continue;
+            }
+
             pending.Add(([new RowUpdateDelta
             {
                 ViewId = view.Key.Id,
                 Schema = collection.Schema,
                 RowId = mutation.RowId,
                 Position = filteredPos - start,
-                ChangedColumns = mutation.ChangedColumns
+                ChangedColumns = projectedColumns,
+                VisibleFieldIndexes = viewport.SelectedFieldIndexes
             }], connIds));
         }
     }
 
     // Full-recompute path: new row, delete, sort-field change, or filter-field change.
-    // Subscribers with the same viewport produce the same delta sequence — compute and share.
+    // Subscribers with the same viewport and projection produce the same delta sequence — compute and share.
     private static void CollectPositionGroups(
         RowCollection collection,
         SharedView view,
@@ -181,10 +194,10 @@ public sealed class MutationPropagator
         MutationInfo mutation,
         int oldFilteredPos,
         int newFilteredPos,
+        bool isDelete,
         ref List<(IReadOnlyList<ViewDelta>, List<string>)>? pending)
     {
-        // Group subscribers by (startIndex, pageSize).
-        Dictionary<(int Start, int? PageSize), List<string>>? groups = null;
+        Dictionary<(int Start, int? PageSize, FieldMask VisibleColumns), List<string>>? groups = null;
         foreach (var connectionId in view.Subscribers)
         {
             if (!viewports.TryGetValue(connectionId, out var viewport))
@@ -193,18 +206,20 @@ public sealed class MutationPropagator
             }
 
             groups ??= new();
-            var key = (viewport.StartIndex, viewport.PageSize);
+            var key = (viewport.StartIndex, viewport.PageSize, viewport.VisibleColumns);
             if (!groups.TryGetValue(key, out var list)) { list = []; groups[key] = list; }
             list.Add(connectionId);
         }
 
         if (groups is null) { return; }
 
-        foreach (var ((start, pageSize), connIds) in groups)
+        foreach (var ((start, pageSize, projectionKey), connIds) in groups)
         {
+            var visibleViewport = viewports[connIds[0]];
             var deltas = ComputePositionDeltas(
                 view, collection, view.Key.Id, mutation,
-                oldFilteredPos, newFilteredPos, start, pageSize);
+                oldFilteredPos, newFilteredPos, start, pageSize,
+                visibleViewport.SelectedFieldIndexes, visibleViewport.VisibleColumns, isDelete);
             if (deltas.Count == 0) { continue; }
 
             pending ??= [];
@@ -220,9 +235,17 @@ public sealed class MutationPropagator
         int oldFilteredPos,
         int newFilteredPos,
         int startIndex,
-        int? pageSize)
+        int? pageSize,
+        int[] selectedFieldIndexes,
+        FieldMask visibleMask,
+        bool isDelete)
     {
         if (pageSize is <= 0)
+        {
+            return [];
+        }
+
+        if (!isDelete && !mutation.IsNew && !visibleMask.Intersects(mutation.ChangedMask))
         {
             return [];
         }
@@ -252,7 +275,9 @@ public sealed class MutationPropagator
 
         if (oldFilteredPos == newFilteredPos)
         {
-            return BuildUpdateDeltaIfVisible(viewId, collection, mutation, newIn ? newFilteredPos - start : -1);
+            return BuildUpdateDeltaIfVisible(
+                viewId, collection, mutation, newIn ? newFilteredPos - start : -1,
+                selectedFieldIndexes, visibleMask, isDelete);
         }
 
         if (!oldIn && !oldBefore && !newIn && !newBefore)
@@ -274,25 +299,31 @@ public sealed class MutationPropagator
 
         void AddInsert(int rowIndex, int position)
         {
+            var row = ProjectRow(collection.GetRowValues(rowIndex), selectedFieldIndexes);
             deltas.Add(new RowInsertDelta
             {
                 ViewId = viewId,
                 Position = position,
                 Schema = collection.Schema,
-                Row = CopyRow(collection.GetRowValues(rowIndex))
+                Row = row,
+                VisibleFieldIndexes = selectedFieldIndexes
             });
         }
 
         void AddUpdate(int position)
         {
             if (mutation.IsNew || mutation.ChangedColumns is not { Count: > 0 }) { return; }
+            var projected = FilterChangedColumns(mutation.ChangedColumns, visibleMask);
+            if (projected.Count == 0) { return; }
+
             deltas.Add(new RowUpdateDelta
             {
                 ViewId = viewId,
                 Schema = collection.Schema,
                 RowId = mutation.RowId,
                 Position = position,
-                ChangedColumns = mutation.ChangedColumns
+                ChangedColumns = projected,
+                VisibleFieldIndexes = selectedFieldIndexes
             });
         }
 
@@ -344,9 +375,23 @@ public sealed class MutationPropagator
         string viewId,
         RowCollection collection,
         MutationInfo mutation,
-        int position)
+        int position,
+        int[] selectedFieldIndexes,
+        FieldMask visibleMask,
+        bool isDelete)
     {
         if (position < 0 || mutation.IsNew || mutation.ChangedColumns is not { Count: > 0 })
+        {
+            return [];
+        }
+
+        if (isDelete || !visibleMask.Intersects(mutation.ChangedMask))
+        {
+            return [];
+        }
+
+        var projectedColumns = FilterChangedColumns(mutation.ChangedColumns, visibleMask);
+        if (projectedColumns.Count == 0)
         {
             return [];
         }
@@ -357,8 +402,40 @@ public sealed class MutationPropagator
             Schema = collection.Schema,
             RowId = mutation.RowId,
             Position = position,
-            ChangedColumns = mutation.ChangedColumns
+            ChangedColumns = projectedColumns,
+            VisibleFieldIndexes = selectedFieldIndexes
         }];
+    }
+
+    private static IReadOnlyCollection<KeyValuePair<int, string?>> FilterChangedColumns(
+        IReadOnlyCollection<KeyValuePair<int, string?>> changedColumns,
+        FieldMask visibleMask)
+    {
+        if (visibleMask.IsEmpty)
+        {
+            return [];
+        }
+
+        var filtered = new List<KeyValuePair<int, string?>>(changedColumns.Count);
+        foreach (var (fieldIndex, value) in changedColumns)
+        {
+            if (visibleMask[fieldIndex])
+            {
+                filtered.Add(new KeyValuePair<int, string?>(fieldIndex, value));
+            }
+        }
+
+        return filtered;
+    }
+
+    private static string?[] ProjectRow(string?[] source, int[] selectedFieldIndexes)
+    {
+        var copy = new string?[selectedFieldIndexes.Length];
+        for (int i = 0; i < selectedFieldIndexes.Length; i++)
+        {
+            copy[i] = source[selectedFieldIndexes[i]];
+        }
+        return copy;
     }
 
     private static string?[] CopyRow(string?[] source)

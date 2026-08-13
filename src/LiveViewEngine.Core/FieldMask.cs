@@ -1,3 +1,4 @@
+using System.Numerics;
 using System.Runtime.CompilerServices;
 
 namespace LiveViewEngine.Core;
@@ -29,10 +30,14 @@ public struct FieldMask
         Span<ulong> words = mask._words;
         foreach (var col in indexes)
         {
+            if (col < 0) { continue; }
             words[col >> 6] |= 1UL << (col & 63);
         }
         return mask;
     }
+
+    public readonly (ulong Low, ulong High) Key =>
+        (((ReadOnlySpan<ulong>)_words)[0], ((ReadOnlySpan<ulong>)_words)[1]);
 
     public readonly bool this[int fieldIndex] =>
         (((ReadOnlySpan<ulong>)_words)[fieldIndex >> 6] >> (fieldIndex & 63) & 1UL) != 0;
@@ -58,5 +63,22 @@ public struct FieldMask
             }
             return true;
         }
+    }
+
+    public readonly int[] ToIndexes()
+    {
+        var indexes = new List<int>();
+        ReadOnlySpan<ulong> words = _words;
+        for (int wordIndex = 0; wordIndex < WordCapacity; wordIndex++)
+        {
+            ulong word = words[wordIndex];
+            while (word != 0)
+            {
+                int bitIndex = BitOperations.TrailingZeroCount(word);
+                indexes.Add((wordIndex << 6) + bitIndex);
+                word &= word - 1;
+            }
+        }
+        return indexes.ToArray();
     }
 }

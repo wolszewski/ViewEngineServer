@@ -9,7 +9,8 @@ public sealed class ViewportState
     public required ViewKey ViewKey { get; set; }
     public int StartIndex { get; set; }
     public int? PageSize { get; set; }
-
+    public FieldMask VisibleColumns { get; set; }
+    public int[] SelectedFieldIndexes { get; set; } = [];
 }
 
 

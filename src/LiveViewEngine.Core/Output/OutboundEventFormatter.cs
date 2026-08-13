@@ -27,13 +27,13 @@ public sealed class JsonOutboundEventFormatter : IOutboundEventFormatter
                 ViewId = snapshot.ViewId,
                 TotalCount = snapshot.TotalCount,
                 StartIndex = snapshot.StartIndex,
-                Rows = FormatRows(snapshot.Schema.Fields, snapshot.Rows)
+                Rows = FormatRows(snapshot.Schema.Fields, snapshot.Rows, snapshot.VisibleFieldIndexes)
             },
             RowInsertDelta insert => new RowInsertEvent
             {
                 ViewId = insert.ViewId,
                 Position = insert.Position,
-                Row = FormatRow(insert.Schema.Fields, insert.Row)
+                Row = FormatRow(insert.Schema.Fields, insert.Row, insert.VisibleFieldIndexes)
             },
             RowUpdateDelta update => new RowUpdateEvent
             {
@@ -53,28 +53,31 @@ public sealed class JsonOutboundEventFormatter : IOutboundEventFormatter
 
     private static IReadOnlyList<IReadOnlyDictionary<string, string?>> FormatRows(
         IReadOnlyList<Data.FieldDefinition> fields,
-        IReadOnlyList<string?[]> rows)
+    IReadOnlyList<string?[]> rows,
+    IReadOnlyList<int>? visibleFieldIndexes)
     {
-        var result = new IReadOnlyDictionary<string, string?>[rows.Count];
-        for (int i = 0; i < rows.Count; i++)
-        {
-            result[i] = FormatRow(fields, rows[i]);
-        }
+    var result = new IReadOnlyDictionary<string, string?>[rows.Count];
+    for (int i = 0; i < rows.Count; i++)
+    {
+        result[i] = FormatRow(fields, rows[i], visibleFieldIndexes);
+    }
 
-        return result;
+    return result;
     }
 
     private static IReadOnlyDictionary<string, string?> FormatRow(
-        IReadOnlyList<Data.FieldDefinition> fields,
-        string?[] values)
+    IReadOnlyList<Data.FieldDefinition> fields,
+    string?[] values,
+    IReadOnlyList<int>? visibleFieldIndexes)
     {
-        var row = new Dictionary<string, string?>(fields.Count);
-        for (int i = 0; i < fields.Count; i++)
-        {
-            row[fields[i].Name] = values[i];
-        }
+    var indexes = visibleFieldIndexes ?? Enumerable.Range(0, fields.Count).ToArray();
+    var row = new Dictionary<string, string?>(indexes.Count);
+    for (int i = 0; i < indexes.Count; i++)
+    {
+        row[fields[indexes[i]].Name] = values[i];
+    }
 
-        return row;
+    return row;
     }
 
     private static IReadOnlyDictionary<string, string?> FormatChanges(

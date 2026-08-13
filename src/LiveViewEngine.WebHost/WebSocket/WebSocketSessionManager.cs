@@ -117,7 +117,8 @@ public sealed class WebSocketSessionManager
                         f.Field,
                         Enum.TryParse<FilterOperator>(f.Operator, ignoreCase: true, out var op)
                             ? op : FilterOperator.Eq,
-                        f.Value)).ToList() ?? []
+                        f.Value)).ToList() ?? [],
+                    Fields = msg.Fields
                 }
             },
             "setviewport" => new ChangeViewportCommand

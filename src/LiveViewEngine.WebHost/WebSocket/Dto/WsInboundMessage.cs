@@ -8,6 +8,7 @@ public sealed class WsInboundMessage
     public string? SortColumn { get; set; }
     public bool SortAscending { get; set; } = true;
     public List<WsFilterDto>? Filters { get; set; }
+    public List<string>? Fields { get; set; }
     public int StartIndex { get; set; }
     public int? PageSize { get; set; }
 }
