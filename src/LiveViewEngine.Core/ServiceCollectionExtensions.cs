@@ -2,6 +2,7 @@ using LiveViewEngine.Core.Data;
 using LiveViewEngine.Core.Output;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 
 namespace LiveViewEngine.Core;
 
@@ -13,6 +14,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ICollectionStore, CollectionStore>();
         services.AddSingleton<IOutboundEventFormatter, JsonOutboundEventFormatter>();
         services.AddSingleton<IViewEngine, ViewEngine>();
+        services.AddHostedService<StaleIndexReaperService>();
         return services;
     }
 

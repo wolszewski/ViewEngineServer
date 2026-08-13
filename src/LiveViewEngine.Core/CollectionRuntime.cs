@@ -7,6 +7,8 @@ namespace LiveViewEngine.Core;
 
 public sealed class CollectionRuntime : IDisposable
 {
+    internal static readonly TimeSpan StaleIndexGracePeriod = TimeSpan.FromSeconds(30);
+
     private readonly CollectionWorker _channel = new();
     private readonly ConcurrentDictionary<ViewKey, SharedView> _sharedViews = new();
     private readonly ConcurrentDictionary<string, ViewportState> _viewports = new();
@@ -112,8 +114,10 @@ public sealed class CollectionRuntime : IDisposable
         var key = ViewKey.From(command.View);
         var sortIndexKey = CreateSortIndexKey(Collection, key);
         var sortIndex = _sortIndexRegistry.GetOrCreate(sortIndexKey, Collection);
+        _sortIndexRegistry.UnflagForRemoval(sortIndexKey);
         var view = _sharedViews.GetOrAdd(key, k => new SharedView(k, Collection, sortIndex));
         view.AddSubscriber(command.ConnectionId);
+        sortIndex.IncrementSubscribers();
 
         var selectedFieldIndexes = ResolveVisibleFieldIndexes(command.View);
         var viewport = new ViewportState
@@ -176,17 +180,21 @@ public sealed class CollectionRuntime : IDisposable
         if (_sharedViews.TryGetValue(viewport.ViewKey, out var view))
         {
             view.RemoveSubscriber(command.ConnectionId);
-            if (view.IsEmpty && _sharedViews.TryRemove(viewport.ViewKey, out _))
+            var sortIndex = view.SortIndex;
+            sortIndex.DecrementSubscribers();
+
+            if (view.IsEmpty)
+            {
+                _sharedViews.TryRemove(viewport.ViewKey, out _);
+            }
+
+            if (sortIndex.SubscriberCount == 0)
             {
                 var sortIndexKey = new SortIndexKey(
                     viewport.ViewKey.CollectionId,
-                    view.SortIndex.FieldIndex,
+                    sortIndex.FieldIndex,
                     viewport.ViewKey.SortAscending);
-                bool stillUsed = _sharedViews.Values.Any(candidate => ReferenceEquals(candidate.SortIndex, view.SortIndex));
-                if (!stillUsed)
-                {
-                    _sortIndexRegistry.Remove(sortIndexKey);
-                }
+                _sortIndexRegistry.FlagForRemoval(sortIndexKey);
             }
         }
 
@@ -194,6 +202,36 @@ public sealed class CollectionRuntime : IDisposable
     }
 
     public void Dispose() => _channel.Dispose();
+
+    internal async Task ReapOnceAsync(CancellationToken ct)
+    {
+        foreach (var (key, flaggedAt) in _sortIndexRegistry.GetFlagged())
+        {
+            if (DateTime.UtcNow - flaggedAt >= StaleIndexGracePeriod)
+            {
+                await EnqueueAsync(() => RemoveStaleIndex(key), ct).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private bool RemoveStaleIndex(SortIndexKey key)
+    {
+        if (!_sortIndexRegistry.TryGet(key, out var index) || index is null)
+        {
+            _sortIndexRegistry.UnflagForRemoval(key);
+            return false;
+        }
+
+        if (index.SubscriberCount > 0)
+        {
+            _sortIndexRegistry.UnflagForRemoval(key);
+            return false;
+        }
+
+        _sortIndexRegistry.Remove(key);
+        _sortIndexRegistry.UnflagForRemoval(key);
+        return true;
+    }
 
     private static SortIndexKey CreateSortIndexKey(RowCollection collection, ViewKey key)
     {

@@ -1,5 +1,6 @@
 using LiveViewEngine.Collections;
 using LiveViewEngine.Core.Data;
+using System.Threading;
 
 namespace LiveViewEngine.Core;
 
@@ -15,6 +16,8 @@ public sealed class SortIndex : IRowIndex
     private string? _pendingOldValue;
     private int _overrideRowIndex = -1;
     private string? _overrideValue;
+    private volatile int _subscriberCount;
+    private long _lastUsedTicks = DateTime.UtcNow.Ticks;
 
     public SortIndex(RowCollection collection, int fieldIndex, bool ascending = true)
     {
@@ -31,6 +34,17 @@ public sealed class SortIndex : IRowIndex
 
     public int Count => _tree.Count;
     public int FieldIndex => _fieldIndex;
+
+    public int SubscriberCount => _subscriberCount;
+    public DateTime LastUsedUtc => new DateTime(Interlocked.Read(ref _lastUsedTicks), DateTimeKind.Utc);
+
+    internal void IncrementSubscribers()
+    {
+        Interlocked.Increment(ref _subscriberCount);
+        Interlocked.Exchange(ref _lastUsedTicks, DateTime.UtcNow.Ticks);
+    }
+
+    internal void DecrementSubscribers() => Interlocked.Decrement(ref _subscriberCount);
 
     public void Take(int startIndex, Span<int> destination) => _tree.Take(startIndex, destination);
 
