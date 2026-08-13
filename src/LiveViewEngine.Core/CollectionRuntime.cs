@@ -23,6 +23,10 @@ public sealed class CollectionRuntime : IDisposable
     public RowCollection Collection { get; }
     public MutationPropagator Propagator { get; } = new();
 
+    public int ActiveSubscriptionCount => _viewports.Count;
+    public int ActiveSharedViewCount => _sharedViews.Count;
+    public int SortIndexCount => _sortIndexRegistry.Count;
+
     public Task<T> EnqueueAsync<T>(Func<T> work, CancellationToken ct = default) =>
         _channel.EnqueueAsync(work, ct);
 

@@ -39,6 +39,31 @@ public sealed class ViewEngine(
     : IViewEngine, IDisposable
 {
     private readonly ConcurrentDictionary<string, CollectionRuntime> _collectionRuntimes = new();
+    private readonly Meter _meter = new("ViewEngineServer");
+
+    public ViewEngine(ICollectionStore store, IOutboundPublisher publisher, ILogger<ViewEngine> logger)
+        : this(store, publisher, logger, registerMetrics: true) { }
+
+    private ViewEngine(ICollectionStore store, IOutboundPublisher publisher, ILogger<ViewEngine> logger, bool registerMetrics)
+    {
+        if (registerMetrics)
+        {
+            _meter.CreateObservableGauge(
+                "viewengine.active_subscriptions",
+                () => _collectionRuntimes.Values.Sum(r => r.ActiveSubscriptionCount),
+                description: "Number of active viewport subscriptions across all collections.");
+
+            _meter.CreateObservableGauge(
+                "viewengine.active_shared_views",
+                () => _collectionRuntimes.Values.Sum(r => r.ActiveSharedViewCount),
+                description: "Number of active shared views (sort+filter combinations) across all collections.");
+
+            _meter.CreateObservableGauge(
+                "viewengine.active_sort_indexes",
+                () => _collectionRuntimes.Values.Sum(r => r.SortIndexCount),
+                description: "Number of active sort indexes across all collections.");
+        }
+    }
 
     public async Task<IngestResult> IngestAsync(IngestCommand command, CancellationToken ct = default)
     {

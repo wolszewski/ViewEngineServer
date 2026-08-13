@@ -24,4 +24,6 @@ internal sealed class SortIndexRegistry
     }
 
     internal void Remove(SortIndexKey key) => _indexes.TryRemove(key, out _);
+
+    internal int Count => _indexes.Count;
 }
