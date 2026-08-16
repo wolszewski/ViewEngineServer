@@ -6,7 +6,7 @@ namespace LiveViewEngine.Core.Views;
 
 public sealed class MutationPropagator
 {
-    // Reusable per-propagation buffers — safe because Propagate is called serially per collection.
+    // Reusable per-propagation buffers. CollectionRuntime serializes all mutations per collection.
     private readonly Dictionary<SortIndex, List<SharedView>> _groupBuffer = new(ReferenceEqualityComparer.Instance);
     private readonly List<MutationImpact> _impactBuffer = [];
     private readonly List<int> _oldPosBuffer = [];
@@ -21,7 +21,29 @@ public sealed class MutationPropagator
         bool isDelete)
     {
         List<(IReadOnlyList<ViewDelta> Deltas, List<string> ConnectionIds)>? pending = null;
+        try
+        {
+            GroupViewsBySortIndex(collectionViews);
+            foreach (var (sortIndex, views) in _groupBuffer)
+            {
+                AnalyzeImpactsAndCaptureOldPositions(views, mutation, isDelete);
+                ApplySortIndexMutation(sortIndex, mutation, isDelete);
+                CollectViewDeltaGroups(collection, views, viewports, mutation, isDelete, ref pending);
+                views.Clear();
+            }
 
+            return pending;
+        }
+        finally
+        {
+            _groupBuffer.Clear();
+            _impactBuffer.Clear();
+            _oldPosBuffer.Clear();
+        }
+    }
+
+    private void GroupViewsBySortIndex(ConcurrentDictionary<ViewKey, SharedView> collectionViews)
+    {
         foreach (var entry in collectionViews)
         {
             var sortIndex = entry.Value.SortIndex;
@@ -30,65 +52,78 @@ public sealed class MutationPropagator
                 list = [];
                 _groupBuffer[sortIndex] = list;
             }
+
             list.Add(entry.Value);
         }
+    }
 
-        foreach (var (sortIndex, views) in _groupBuffer)
+    private void AnalyzeImpactsAndCaptureOldPositions(List<SharedView> views, MutationInfo mutation, bool isDelete)
+    {
+        _impactBuffer.Clear();
+        _oldPosBuffer.Clear();
+
+        for (int i = 0; i < views.Count; i++)
         {
-            _impactBuffer.Clear();
-            _oldPosBuffer.Clear();
-            for (int i = 0; i < views.Count; i++)
+            var impact = AnalyzeMutationImpact(views[i], mutation, isDelete);
+            _impactBuffer.Add(impact);
+            _oldPosBuffer.Add(0);
+
+            if (!impact.NeedsFullRecompute)
             {
-                _impactBuffer.Add(AnalyzeMutationImpact(views[i], mutation, isDelete));
-                _oldPosBuffer.Add(0);
+                continue;
             }
 
-            // Phase 1: capture old filtered positions before the SortIndex tree mutates.
-            for (int i = 0; i < views.Count; i++)
-            {
-                if (!_impactBuffer[i].NeedsFullRecompute) { continue; }
-                _oldPosBuffer[i] = isDelete
-                    ? views[i].PrepareDelete(mutation.RowIndex)
-                    : views[i].PrepareUpsert(mutation.RowIndex, mutation.IsNew);
-            }
+            _oldPosBuffer[i] = isDelete
+                ? views[i].PrepareDelete(mutation.RowIndex)
+                : views[i].PrepareUpsert(mutation.RowIndex, mutation.IsNew);
+        }
+    }
 
-            // Phase 2: update SortIndex once.
-            if (isDelete)
-            {
-                sortIndex.OnDelete(mutation.RowIndex);
-            }
-            else if (mutation.IsNew || AnySortFieldTouched(_impactBuffer))
-            {
-                sortIndex.OnUpsert(mutation.RowIndex);
-            }
-            else
-            {
-                sortIndex.ResetPending();
-            }
-
-            // Phase 3: complete filtered index updates and collect grouped deltas.
-            for (int i = 0; i < views.Count; i++)
-            {
-                var view = views[i];
-                if (!_impactBuffer[i].NeedsFullRecompute)
-                {
-                    CollectFastPathGroups(collection, view, viewports, mutation, ref pending);
-                    continue;
-                }
-
-                int newFilteredPos = isDelete ? -1 : views[i].CompleteUpsert(mutation.RowIndex);
-                CollectPositionGroups(
-                    collection, view, viewports, mutation,
-                    _oldPosBuffer[i], newFilteredPos,
-                    isDelete,
-                    ref pending);
-            }
-
-            views.Clear();
+    private void ApplySortIndexMutation(SortIndex sortIndex, MutationInfo mutation, bool isDelete)
+    {
+        if (isDelete)
+        {
+            sortIndex.OnDelete(mutation.RowIndex);
+            return;
         }
 
-        _groupBuffer.Clear();
-        return pending;
+        if (mutation.IsNew || AnySortFieldTouched(_impactBuffer))
+        {
+            sortIndex.OnUpsert(mutation.RowIndex);
+            return;
+        }
+
+        sortIndex.ResetPending();
+    }
+
+    private void CollectViewDeltaGroups(
+        RowCollection collection,
+        List<SharedView> views,
+        ConcurrentDictionary<string, ViewportState> viewports,
+        MutationInfo mutation,
+        bool isDelete,
+        ref List<(IReadOnlyList<ViewDelta> Deltas, List<string> ConnectionIds)>? pending)
+    {
+        for (int i = 0; i < views.Count; i++)
+        {
+            var view = views[i];
+            if (!_impactBuffer[i].NeedsFullRecompute)
+            {
+                CollectFastPathGroups(collection, view, viewports, mutation, ref pending);
+                continue;
+            }
+
+            int newFilteredPos = isDelete ? -1 : view.CompleteUpsert(mutation.RowIndex);
+            CollectPositionGroups(
+                collection,
+                view,
+                viewports,
+                mutation,
+                _oldPosBuffer[i],
+                newFilteredPos,
+                isDelete,
+                ref pending);
+        }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -134,7 +169,7 @@ public sealed class MutationPropagator
             return;
         }
 
-        Dictionary<(int Start, int? PageSize, FieldMask VisibleColumns), List<string>>? groups = null;
+        Dictionary<FastPathGroupKey, List<string>>? groups = null;
         foreach (var connectionId in view.Subscribers)
         {
             if (!viewports.TryGetValue(connectionId, out var viewport))
@@ -147,22 +182,20 @@ public sealed class MutationPropagator
                 continue;
             }
 
-            int start = viewport.StartIndex;
-            int end = viewport.PageSize.HasValue ? start + viewport.PageSize.Value : int.MaxValue;
-            if (filteredPos < start || filteredPos >= end)
+            if (!IsPositionInViewport(filteredPos, viewport.StartIndex, viewport.PageSize))
             {
                 continue;
             }
 
             groups ??= new();
-            var key = (start, viewport.PageSize, viewport.VisibleColumns);
+            var key = new FastPathGroupKey(viewport.StartIndex, viewport.PageSize, viewport.VisibleColumns);
             if (!groups.TryGetValue(key, out var list)) { list = []; groups[key] = list; }
             list.Add(connectionId);
         }
 
         if (groups is null) { return; }
 
-        foreach (var ((start, _, _), connIds) in groups)
+        foreach (var (key, connIds) in groups)
         {
             pending ??= [];
             var viewport = viewports[connIds[0]];
@@ -177,7 +210,7 @@ public sealed class MutationPropagator
                 ViewId = view.Key.Id,
                 Schema = collection.Schema,
                 RowId = mutation.RowId,
-                Position = filteredPos - start,
+                Position = filteredPos - key.Start,
                 ChangedColumns = projectedColumns,
                 VisibleFieldIndexes = viewport.SelectedFieldIndexes
             }], connIds));
@@ -196,7 +229,7 @@ public sealed class MutationPropagator
         bool isDelete,
         ref List<(IReadOnlyList<ViewDelta>, List<string>)>? pending)
     {
-        Dictionary<(int Start, int? PageSize, FieldMask VisibleColumns), List<string>>? groups = null;
+        Dictionary<ViewportGroupKey, List<string>>? groups = null;
         foreach (var connectionId in view.Subscribers)
         {
             if (!viewports.TryGetValue(connectionId, out var viewport))
@@ -204,20 +237,24 @@ public sealed class MutationPropagator
                 continue;
             }
 
-            groups ??= new();
-            var key = (viewport.StartIndex, viewport.PageSize, viewport.VisibleColumns);
+            groups ??= new(ViewportGroupKey.Comparer);
+            var key = new ViewportGroupKey(
+                viewport.StartIndex,
+                viewport.PageSize,
+                viewport.VisibleColumns,
+                viewport.SelectedFieldIndexes);
             if (!groups.TryGetValue(key, out var list)) { list = []; groups[key] = list; }
             list.Add(connectionId);
         }
 
         if (groups is null) { return; }
 
-        foreach (var ((start, pageSize, projectionKey), connIds) in groups)
+        foreach (var (key, connIds) in groups)
         {
             var visibleViewport = viewports[connIds[0]];
             var deltas = ComputePositionDeltas(
                 view, collection, view.Key.Id, mutation,
-                oldFilteredPos, newFilteredPos, start, pageSize,
+                oldFilteredPos, newFilteredPos, key.Start, key.PageSize,
                 visibleViewport.SelectedFieldIndexes, visibleViewport.VisibleColumns, isDelete);
             if (deltas.Count == 0) { continue; }
 
@@ -274,100 +311,200 @@ public sealed class MutationPropagator
 
         if (oldFilteredPos == newFilteredPos)
         {
+            int stablePosition = newIn ? newFilteredPos - start : -1;
             return BuildUpdateDeltaIfVisible(
-                viewId, collection, mutation, newIn ? newFilteredPos - start : -1,
-                selectedFieldIndexes, visibleMask, isDelete);
+                viewId,
+                collection,
+                mutation,
+                stablePosition,
+                selectedFieldIndexes,
+                visibleMask,
+                isDelete);
         }
 
-        if (!oldIn && !oldBefore && !newIn && !newBefore)
-        {
-            return [];
-        }
-
-        if (oldBefore && newBefore)
+        if (IsMutationOutsideViewport(oldIn, oldBefore, newIn, newBefore))
         {
             return [];
         }
 
         var deltas = new List<ViewDelta>(3);
 
-        void AddRemove(int position)
-        {
-            deltas.Add(new RowRemoveDelta { ViewId = viewId, Position = position });
-        }
-
-        void AddInsert(int rowIndex, int position)
-        {
-            var row = ProjectRow(collection.GetRowValues(rowIndex), selectedFieldIndexes);
-            deltas.Add(new RowInsertDelta
-            {
-                ViewId = viewId,
-                Position = position,
-                Schema = collection.Schema,
-                Row = row,
-                VisibleFieldIndexes = selectedFieldIndexes
-            });
-        }
-
-        void AddUpdate(int position)
-        {
-            if (mutation.IsNew || mutation.ChangedColumns is not { Count: > 0 }) { return; }
-            var projected = FilterChangedColumns(mutation.ChangedColumns, visibleMask);
-            if (projected.Count == 0) { return; }
-
-            deltas.Add(new RowUpdateDelta
-            {
-                ViewId = viewId,
-                Schema = collection.Schema,
-                RowId = mutation.RowId,
-                Position = position,
-                ChangedColumns = projected,
-                VisibleFieldIndexes = selectedFieldIndexes
-            });
-        }
-
-        bool Exists(int pos) => pos >= 0 && pos < n;
-        int BoundaryRow(int pos) => view.GetFilteredByIndex(pos);
-
         if (oldIn && newIn)
         {
-            AddRemove(oldFilteredPos - start);
-            AddInsert(mutation.RowIndex, newFilteredPos - start);
+            AddRemoveDelta(deltas, viewId, oldFilteredPos - start);
+            AddInsertDelta(deltas, viewId, collection, selectedFieldIndexes, mutation.RowIndex, newFilteredPos - start);
         }
         else if (oldBefore && newIn)
         {
-            if (Exists(start - 1)) { AddRemove(0); }
-            AddInsert(mutation.RowIndex, newFilteredPos - start);
+            if (Exists(start - 1, n))
+            {
+                AddRemoveDelta(deltas, viewId, 0);
+            }
+
+            AddInsertDelta(deltas, viewId, collection, selectedFieldIndexes, mutation.RowIndex, newFilteredPos - start);
         }
         else if (oldIn && newBefore)
         {
-            AddRemove(oldFilteredPos - start);
-            if (Exists(start)) { AddInsert(BoundaryRow(start), 0); }
+            AddRemoveDelta(deltas, viewId, oldFilteredPos - start);
+            if (Exists(start, n))
+            {
+                AddInsertDelta(
+                    deltas,
+                    viewId,
+                    collection,
+                    selectedFieldIndexes,
+                    view.GetFilteredByIndex(start),
+                    0);
+            }
         }
         else if (!oldIn && !oldBefore && newIn)
         {
-            AddInsert(mutation.RowIndex, newFilteredPos - start);
-            if (hasFinitePage && Exists(end)) { AddRemove(bottomPosition); }
+            AddInsertDelta(deltas, viewId, collection, selectedFieldIndexes, mutation.RowIndex, newFilteredPos - start);
+            if (hasFinitePage && Exists(end, n))
+            {
+                AddRemoveDelta(deltas, viewId, bottomPosition);
+            }
         }
         else if (oldIn && !newIn && !newBefore)
         {
-            AddRemove(oldFilteredPos - start);
-            if (hasFinitePage && Exists(end - 1)) { AddInsert(BoundaryRow(end - 1), bottomPosition); }
+            AddRemoveDelta(deltas, viewId, oldFilteredPos - start);
+            if (hasFinitePage && Exists(end - 1, n))
+            {
+                AddInsertDelta(
+                    deltas,
+                    viewId,
+                    collection,
+                    selectedFieldIndexes,
+                    view.GetFilteredByIndex(end - 1),
+                    bottomPosition);
+            }
         }
         else if (!oldIn && !oldBefore && newBefore)
         {
-            if (Exists(start)) { AddInsert(BoundaryRow(start), 0); }
-            if (hasFinitePage && Exists(end)) { AddRemove(bottomPosition); }
+            if (Exists(start, n))
+            {
+                AddInsertDelta(
+                    deltas,
+                    viewId,
+                    collection,
+                    selectedFieldIndexes,
+                    view.GetFilteredByIndex(start),
+                    0);
+            }
+
+            if (hasFinitePage && Exists(end, n))
+            {
+                AddRemoveDelta(deltas, viewId, bottomPosition);
+            }
         }
         else if (oldBefore && !newIn && !newBefore)
         {
-            if (Exists(start - 1)) { AddRemove(0); }
-            if (hasFinitePage && Exists(end - 1)) { AddInsert(BoundaryRow(end - 1), bottomPosition); }
+            if (Exists(start - 1, n))
+            {
+                AddRemoveDelta(deltas, viewId, 0);
+            }
+
+            if (hasFinitePage && Exists(end - 1, n))
+            {
+                AddInsertDelta(
+                    deltas,
+                    viewId,
+                    collection,
+                    selectedFieldIndexes,
+                    view.GetFilteredByIndex(end - 1),
+                    bottomPosition);
+            }
         }
 
-        if (newIn) { AddUpdate(newFilteredPos - start); }
+        if (newIn)
+        {
+            AddUpdateDelta(
+                deltas,
+                viewId,
+                collection,
+                mutation,
+                newFilteredPos - start,
+                selectedFieldIndexes,
+                visibleMask);
+        }
 
         return deltas;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool IsMutationOutsideViewport(bool oldIn, bool oldBefore, bool newIn, bool newBefore)
+    {
+        return (!oldIn && !oldBefore && !newIn && !newBefore) || (oldBefore && newBefore);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool IsPositionInViewport(int position, int start, int? pageSize)
+    {
+        int end = pageSize.HasValue ? start + pageSize.Value : int.MaxValue;
+        return position >= start && position < end;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool Exists(int pos, int count)
+    {
+        return pos >= 0 && pos < count;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void AddRemoveDelta(List<ViewDelta> deltas, string viewId, int position)
+    {
+        deltas.Add(new RowRemoveDelta { ViewId = viewId, Position = position });
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void AddInsertDelta(
+        List<ViewDelta> deltas,
+        string viewId,
+        RowCollection collection,
+        int[] selectedFieldIndexes,
+        int rowIndex,
+        int position)
+    {
+        var row = ProjectRow(collection.GetRowValues(rowIndex), selectedFieldIndexes);
+        deltas.Add(new RowInsertDelta
+        {
+            ViewId = viewId,
+            Position = position,
+            Schema = collection.Schema,
+            Row = row,
+            VisibleFieldIndexes = selectedFieldIndexes
+        });
+    }
+
+    private static void AddUpdateDelta(
+        List<ViewDelta> deltas,
+        string viewId,
+        RowCollection collection,
+        MutationInfo mutation,
+        int position,
+        int[] selectedFieldIndexes,
+        FieldMask visibleMask)
+    {
+        if (mutation.IsNew || mutation.ChangedColumns is not { Count: > 0 })
+        {
+            return;
+        }
+
+        var projected = FilterChangedColumns(mutation.ChangedColumns, visibleMask);
+        if (projected.Count == 0)
+        {
+            return;
+        }
+
+        deltas.Add(new RowUpdateDelta
+        {
+            ViewId = viewId,
+            Schema = collection.Schema,
+            RowId = mutation.RowId,
+            Position = position,
+            ChangedColumns = projected,
+            VisibleFieldIndexes = selectedFieldIndexes
+        });
     }
 
     private static IReadOnlyList<ViewDelta> BuildUpdateDeltaIfVisible(
@@ -435,6 +572,49 @@ public sealed class MutationPropagator
             copy[i] = source[selectedFieldIndexes[i]];
         }
         return copy;
+    }
+
+    private readonly record struct FastPathGroupKey(int Start, int? PageSize, FieldMask VisibleColumns);
+
+    private readonly record struct ViewportGroupKey(
+        int Start,
+        int? PageSize,
+        FieldMask VisibleColumns,
+        int[] SelectedFieldIndexes)
+    {
+        public static IEqualityComparer<ViewportGroupKey> Comparer { get; } = new ViewportGroupKeyComparer();
+    }
+
+    private sealed class ViewportGroupKeyComparer : IEqualityComparer<ViewportGroupKey>
+    {
+        public bool Equals(ViewportGroupKey x, ViewportGroupKey y)
+        {
+            if (x.Start != y.Start || x.PageSize != y.PageSize)
+            {
+                return false;
+            }
+
+            var xMask = x.VisibleColumns.Key;
+            var yMask = y.VisibleColumns.Key;
+            if (xMask.Low != yMask.Low || xMask.High != yMask.High)
+            {
+                return false;
+            }
+
+            return x.SelectedFieldIndexes.AsSpan().SequenceEqual(y.SelectedFieldIndexes);
+        }
+
+        public int GetHashCode(ViewportGroupKey obj)
+        {
+            var mask = obj.VisibleColumns.Key;
+            var hash = HashCode.Combine(obj.Start, obj.PageSize, mask.Low, mask.High, obj.SelectedFieldIndexes.Length);
+            foreach (var index in obj.SelectedFieldIndexes)
+            {
+                hash = HashCode.Combine(hash, index);
+            }
+
+            return hash;
+        }
     }
 
     private readonly record struct MutationImpact(bool NeedsFullRecompute, bool SortFieldTouched);
