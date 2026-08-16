@@ -192,8 +192,7 @@ public sealed class CollectionRuntime : IDisposable
 
         var sortIndexKey = new SortIndexKey(
             viewport.ViewKey.CollectionId,
-            sortIndex.FieldIndex,
-            viewport.ViewKey.SortAscending);
+            sortIndex.FieldIndex);
         _sortIndexRegistry.FlagForRemoval(sortIndexKey);
 
         return [];
@@ -241,7 +240,7 @@ public sealed class CollectionRuntime : IDisposable
             sortFieldIndex = collection.Schema.PrimaryKey.FieldIndex;
         }
 
-        return new SortIndexKey(key.CollectionId, sortFieldIndex, key.SortAscending);
+        return new SortIndexKey(key.CollectionId, sortFieldIndex);
     }
 
     private int[] ResolveVisibleFieldIndexes(ViewDefinition view)

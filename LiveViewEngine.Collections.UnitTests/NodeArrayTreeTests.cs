@@ -32,6 +32,15 @@ public class NodeArrayTreeTests
         return list;
     }
 
+    private static List<int> ToReverseList<TComparer>(NodeArrayTree<TComparer> tree, int startIndex)
+        where TComparer : IComparer<int>
+    {
+        var list = new List<int>(tree.Count);
+        var cursor = tree.GetReverseCursor(startIndex);
+        while (cursor.MoveNext()) { list.Add(cursor.Current); }
+        return list;
+    }
+
     // ── Insert ───────────────────────────────────────────────────────────────
 
     [Fact]
@@ -361,6 +370,90 @@ public class NodeArrayTreeTests
         var list = ToList(tree);
         Assert.Equal(65, list.Count);
         for (int i = 0; i < 65; i++) { Assert.Equal(i + 1, list[i]); }
+    }
+
+    [Fact]
+    public void ReverseCursor_FromLast_IteratesAllDescending()
+    {
+        var tree = Make(3, 1, 2);
+        Assert.Equal([3, 2, 1], ToReverseList(tree, tree.Count - 1));
+    }
+
+    [Fact]
+    public void ReverseCursor_FromMid_IteratesPrefixDescending()
+    {
+        var tree = Make(1, 2, 3, 4, 5);
+        Assert.Equal([3, 2, 1], ToReverseList(tree, 2));
+    }
+
+    [Fact]
+    public void ReverseCursor_StartBeyondEnd_IsEmpty()
+    {
+        var tree = Make(1, 2, 3);
+        var cursor = tree.GetReverseCursor(100);
+        Assert.False(cursor.MoveNext());
+    }
+
+    [Fact]
+    public void TakeReverse_PageCorrect()
+    {
+        var tree = new NodeArrayTree<AscIntComparer>(default);
+        for (int i = 1; i <= 300; i++) { tree.Insert(i); }
+
+        var page = new int[10];
+        tree.TakeReverse(249, page);
+
+        Assert.Equal(Enumerable.Range(241, 10).Reverse().ToArray(), page);
+    }
+
+    [Fact]
+    public void TakeReverse_AcrossNodeBoundary_PageCorrect()
+    {
+        var tree = new NodeArrayTree<AscIntComparer>(default);
+        for (int i = 1; i <= 130; i++) { tree.Insert(i); }
+
+        var page = new int[10];
+        tree.TakeReverse(69, page);
+
+        Assert.Equal([70, 69, 68, 67, 66, 65, 64, 63, 62, 61], page);
+    }
+
+    [Fact]
+    public void TakeReverse_EmptyDestination_NoOp()
+    {
+        var tree = Make(1, 2, 3);
+
+        tree.TakeReverse(2, Array.Empty<int>());
+    }
+
+    [Fact]
+    public void TakeReverse_NegativeStart_Throws()
+    {
+        var tree = Make(1, 2, 3);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => tree.TakeReverse(-1, new int[1]));
+    }
+
+    [Fact]
+    public void TakeReverse_AllValidWindows_MatchIndexedExpectation()
+    {
+        var tree = new NodeArrayTree<AscIntComparer>(default);
+        for (int i = 1; i <= 80; i++) { tree.Insert(i); }
+
+        for (int startIndex = 0; startIndex < tree.Count; startIndex++)
+        {
+            int maxLength = startIndex + 1;
+            for (int length = 0; length <= maxLength; length++)
+            {
+                var page = new int[length];
+                tree.TakeReverse(startIndex, page);
+
+                var expected = Enumerable.Range(0, length)
+                    .Select(offset => tree.GetByIndex(startIndex - offset))
+                    .ToArray();
+                Assert.Equal(expected, page);
+            }
+        }
     }
 
     // ── Custom comparer ───────────────────────────────────────────────────────

@@ -126,6 +126,18 @@ public sealed class NodeArrayTree<TComparer> where TComparer : IComparer<int>
         }
     }
 
+    public void TakeReverse(int startIndex, Span<int> destination)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(startIndex);
+
+        var cursor = GetReverseCursor(startIndex);
+        for (int i = 0; i < destination.Length; i++)
+        {
+            cursor.MoveNext();
+            destination[i] = cursor.Current;
+        }
+    }
+
     public TreeCursor GetCursor(int startIndex)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(startIndex);
@@ -137,6 +149,19 @@ public sealed class NodeArrayTree<TComparer> where TComparer : IComparer<int>
 
         var finger = _sentinel.LeftChild.FindIndex(startIndex);
         return new TreeCursor(finger.Node, finger.Offset);
+    }
+
+    public ReverseTreeCursor GetReverseCursor(int startIndex)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(startIndex);
+
+        if (startIndex >= Count || _sentinel.LeftChild == null)
+        {
+            return new ReverseTreeCursor(_sentinel, 0);
+        }
+
+        var finger = _sentinel.LeftChild.FindIndex(startIndex);
+        return new ReverseTreeCursor(finger.Node, finger.Offset);
     }
 
     private Node InsertNode(int index)
@@ -803,6 +828,51 @@ public sealed class NodeArrayTree<TComparer> where TComparer : IComparer<int>
             {
                 _node = _node.GetSuccessor();
                 _offset = 0;
+            }
+
+            return true;
+        }
+    }
+
+    public sealed class ReverseTreeCursor
+    {
+        private readonly Node _sentinel;
+        private Node _node;
+        private int _offset;
+
+        internal ReverseTreeCursor(Node node, int offset)
+        {
+            var sentinel = node;
+            while (sentinel.Parent != null)
+            {
+                sentinel = sentinel.Parent;
+            }
+
+            _sentinel = sentinel;
+            _node = node;
+            _offset = offset;
+        }
+
+        public int Current { get; private set; }
+
+        public bool MoveNext()
+        {
+            if (_node.IsSentinel)
+            {
+                return false;
+            }
+
+            Current = _node.Data[_offset];
+            _offset -= 1;
+            if (_offset >= 0)
+            {
+                return true;
+            }
+
+            _node = _node.GetPredecessor() ?? _sentinel;
+            if (!_node.IsSentinel)
+            {
+                _offset = _node.Size - 1;
             }
 
             return true;

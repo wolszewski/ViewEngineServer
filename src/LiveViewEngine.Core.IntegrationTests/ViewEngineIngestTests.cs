@@ -214,6 +214,94 @@ public class ViewEngineIngestTests
     }
 
     [Fact]
+    public async Task Subscribe_SameSortColumnWithDifferentDirections_CreatesSingleSortIndex()
+    {
+        var (engine, _, store) = CreateEngine();
+        await CreateOrders(engine);
+        await Upsert(engine, "o1", "Alice", "100");
+        await Upsert(engine, "o2", "Bob", "200");
+        await Upsert(engine, "o3", "Carol", "300");
+
+        await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = "clientAsc",
+            View = new ViewDefinition
+            {
+                CollectionId = "orders",
+                SortColumn = "amount",
+                SortAscending = true
+            },
+            StartIndex = 0,
+            PageSize = 10
+        });
+
+        await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = "clientDesc",
+            View = new ViewDefinition
+            {
+                CollectionId = "orders",
+                SortColumn = "amount",
+                SortAscending = false
+            },
+            StartIndex = 0,
+            PageSize = 10
+        });
+
+        Assert.True(store.TryGetRuntime("orders", out var runtime));
+        Assert.NotNull(runtime);
+        Assert.Equal(1, runtime.SortIndexCount);
+    }
+
+    [Fact]
+    public async Task Subscribe_SameSortColumnWithDifferentDirections_PagingReturnsCorrectRows()
+    {
+        var (engine, _, _) = CreateEngine();
+        await CreateOrders(engine);
+
+        for (int i = 1; i <= 10; i++)
+        {
+            await Upsert(engine, $"o{i}", $"Customer-{i}", i.ToString("D3"));
+        }
+
+        var ascendingEvents = await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = "clientAsc",
+            View = new ViewDefinition
+            {
+                CollectionId = "orders",
+                SortColumn = "amount",
+                SortAscending = true
+            },
+            StartIndex = 0,
+            PageSize = 5
+        });
+
+        var descendingEvents = await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = "clientDesc",
+            View = new ViewDefinition
+            {
+                CollectionId = "orders",
+                SortColumn = "amount",
+                SortAscending = false
+            },
+            StartIndex = 0,
+            PageSize = 5
+        });
+
+        var ascendingSnapshot = Assert.IsType<SnapshotDelta>(ascendingEvents.Single());
+        var descendingSnapshot = Assert.IsType<SnapshotDelta>(descendingEvents.Single());
+        var amountIndex = ascendingSnapshot.Schema.GetFieldIndex("amount");
+
+        var ascendingAmounts = ascendingSnapshot.Rows.Select(row => row[amountIndex]).ToList();
+        var descendingAmounts = descendingSnapshot.Rows.Select(row => row[amountIndex]).ToList();
+
+        Assert.Equal(["001", "002", "003", "004", "005"], ascendingAmounts);
+        Assert.Equal(["010", "009", "008", "007", "006"], descendingAmounts);
+    }
+
+    [Fact]
     public async Task Subscribe_WithFilter_ReturnsMatchingRows()
     {
         var (engine, _, _) = CreateEngine();

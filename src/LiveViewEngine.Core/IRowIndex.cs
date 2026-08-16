@@ -6,4 +6,5 @@ internal interface IRowIndex
     int GetByIndex(int position);
     int IndexOf(int rowIndex);
     void Take(int startIndex, Span<int> destination);
+    void TakeReverse(int startIndex, Span<int> destination);
 }

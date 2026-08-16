@@ -48,7 +48,11 @@ public sealed class SortIndex : IRowIndex
 
     public void Take(int startIndex, Span<int> destination) => _tree.Take(startIndex, destination);
 
+    public void TakeReverse(int startIndex, Span<int> destination) => _tree.TakeReverse(startIndex, destination);
+
     internal NodeArrayTree<RowComparer>.TreeCursor GetCursor(int startIndex) => _tree.GetCursor(startIndex);
+
+    internal NodeArrayTree<RowComparer>.ReverseTreeCursor GetReverseCursor(int startIndex) => _tree.GetReverseCursor(startIndex);
 
     internal RowComparer GetComparer() => new(this, _ascending);
 

@@ -3,7 +3,7 @@ using LiveViewEngine.Core.Data;
 
 namespace LiveViewEngine.Core;
 
-internal readonly record struct SortIndexKey(string CollectionId, int FieldIndex, bool Ascending);
+internal readonly record struct SortIndexKey(string CollectionId, int FieldIndex);
 
 internal sealed class SortIndexRegistry
 {
@@ -11,7 +11,7 @@ internal sealed class SortIndexRegistry
     private readonly ConcurrentDictionary<SortIndexKey, DateTime> _flaggedForRemoval = new();
 
     internal SortIndex GetOrCreate(SortIndexKey key, RowCollection collection) =>
-        _indexes.GetOrAdd(key, k => new SortIndex(collection, k.FieldIndex, k.Ascending));
+        _indexes.GetOrAdd(key, k => new SortIndex(collection, k.FieldIndex));
 
     internal bool TryGet(SortIndexKey key, out SortIndex? index) =>
         _indexes.TryGetValue(key, out index);

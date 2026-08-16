@@ -26,4 +26,6 @@ internal sealed class FilteredDataIndex : IRowIndex
     public int GetByIndex(int k) => _index.GetByIndex(k);
 
     public void Take(int startIndex, Span<int> destination) => _index.Take(startIndex, destination);
+
+    public void TakeReverse(int startIndex, Span<int> destination) => _index.TakeReverse(startIndex, destination);
 }

@@ -6,6 +6,7 @@ namespace LiveViewEngine.Core.Views;
 public sealed class SharedView
 {
     public ViewKey Key { get; }
+    private readonly bool _sortAscending;
     private readonly RowCollection _collection;
     private readonly SortIndex _sortIndex;
     private readonly FilterSet _filters;
@@ -16,6 +17,7 @@ public sealed class SharedView
     public SharedView(ViewKey key, RowCollection collection, SortIndex sortIndex)
     {
         Key = key;
+        _sortAscending = key.SortAscending;
         _collection = collection;
         _sortIndex = sortIndex;
 
@@ -60,15 +62,28 @@ public sealed class SharedView
 
         int take = pageSize.HasValue ? Math.Min(pageSize.Value, total - startIndex) : total - startIndex;
         var result = new int[take];
-        _activeIndex.Take(startIndex, result);
+        if (_sortAscending)
+        {
+            _activeIndex.Take(startIndex, result);
+            return result;
+        }
+
+        _activeIndex.TakeReverse(total - 1 - startIndex, result);
+
         return result;
     }
 
     public int GetTotalCount() => _activeIndex.Count;
 
-    internal int GetFilteredByIndex(int position) => _activeIndex.GetByIndex(position);
+    internal int GetFilteredByIndex(int position)
+    {
+        return _activeIndex.GetByIndex(ToIndexPosition(position, _activeIndex.Count));
+    }
 
-    internal int FilteredIndexOf(int rowIndex) => _activeIndex.IndexOf(rowIndex);
+    internal int FilteredIndexOf(int rowIndex)
+    {
+        return ToViewPosition(_activeIndex.IndexOf(rowIndex), _activeIndex.Count);
+    }
 
     internal int PrepareUpsert(int rowIndex, bool isNew)
     {
@@ -77,26 +92,32 @@ public sealed class SharedView
             return -1;
         }
 
-        return _filteredIndex != null
+        int originalCount = _activeIndex.Count;
+        int basePosition = _filteredIndex != null
             ? _sortIndex.WithPendingOldValue(rowIndex, () => _filteredIndex.TryDelete(rowIndex))
             : _sortIndex.IndexOfWithPendingOldValue(rowIndex);
+        return ToViewPosition(basePosition, originalCount);
     }
 
     internal int CompleteUpsert(int rowIndex)
     {
         if (_filteredIndex != null)
         {
-            return PassesFilters(rowIndex) ? _filteredIndex.Insert(rowIndex) : -1;
+            return PassesFilters(rowIndex)
+                ? ToViewPosition(_filteredIndex.Insert(rowIndex), _activeIndex.Count)
+                : -1;
         }
 
-        return _sortIndex.IndexOf(rowIndex);
+        return ToViewPosition(_sortIndex.IndexOf(rowIndex), _activeIndex.Count);
     }
 
     internal int PrepareDelete(int rowIndex)
     {
-        return _filteredIndex != null
+        int originalCount = _activeIndex.Count;
+        int basePosition = _filteredIndex != null
             ? _sortIndex.WithPendingOldValue(rowIndex, () => _filteredIndex.TryDelete(rowIndex))
             : _sortIndex.IndexOfWithPendingOldValue(rowIndex);
+        return ToViewPosition(basePosition, originalCount);
     }
 
     public (bool SortFieldChanged, bool FilterFieldChanged) TouchedFields(in FieldMask changedMask)
@@ -107,4 +128,24 @@ public sealed class SharedView
     }
 
     private bool PassesFilters(int rowIndex) => _filters.Passes(_collection, rowIndex);
+
+    private int ToViewPosition(int indexPosition, int count)
+    {
+        if (indexPosition < 0)
+        {
+            return -1;
+        }
+
+        return _sortAscending ? indexPosition : count - 1 - indexPosition;
+    }
+
+    private int ToIndexPosition(int viewPosition, int count)
+    {
+        if (viewPosition < 0 || viewPosition >= count)
+        {
+            throw new ArgumentOutOfRangeException(nameof(viewPosition));
+        }
+
+        return _sortAscending ? viewPosition : count - 1 - viewPosition;
+    }
 }
