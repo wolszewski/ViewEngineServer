@@ -291,7 +291,7 @@ public sealed class MutationPropagator
         bool hasFinitePage;
         int end;
         int bottomPosition;
-        if (pageSize is int finitePageSize)
+        if (pageSize is { } finitePageSize)
         {
             hasFinitePage = true;
             end = start + finitePageSize;

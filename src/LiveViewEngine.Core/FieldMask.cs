@@ -3,7 +3,7 @@ using System.Runtime.CompilerServices;
 
 namespace LiveViewEngine.Core;
 
-public struct FieldMask
+public struct FieldMask : IEquatable<FieldMask>
 {
     // Increase WordCapacity to support larger schemas (each word = 64 fields).
     private const int WordCapacity = 2; // 128 fields max
@@ -81,4 +81,31 @@ public struct FieldMask
         }
         return indexes.ToArray();
     }
+
+    public readonly bool Equals(FieldMask other)
+    {
+        ReadOnlySpan<ulong> a = _words;
+        ReadOnlySpan<ulong> b = other._words;
+        for (int i = 0; i < WordCapacity; i++)
+        {
+            if (a[i] != b[i])
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public readonly override bool Equals(object? obj) => obj is FieldMask other && Equals(other);
+
+    public readonly override int GetHashCode()
+    {
+        ReadOnlySpan<ulong> words = _words;
+        return HashCode.Combine(words[0], words[1]);
+    }
+
+    public static bool operator ==(FieldMask left, FieldMask right) => left.Equals(right);
+
+    public static bool operator !=(FieldMask left, FieldMask right) => !left.Equals(right);
 }
