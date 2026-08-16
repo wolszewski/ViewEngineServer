@@ -7,8 +7,7 @@ namespace LiveViewEngine.Core.Views;
 public sealed class MutationPropagator
 {
     // Reusable per-propagation buffers — safe because Propagate is called serially per collection.
-    private readonly Dictionary<SortIndex, List<SharedView>> _groupBuffer =
-        new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<SortIndex, List<SharedView>> _groupBuffer = new(ReferenceEqualityComparer.Instance);
     private readonly List<MutationImpact> _impactBuffer = [];
     private readonly List<int> _oldPosBuffer = [];
 
@@ -435,13 +434,6 @@ public sealed class MutationPropagator
         {
             copy[i] = source[selectedFieldIndexes[i]];
         }
-        return copy;
-    }
-
-    private static string?[] CopyRow(string?[] source)
-    {
-        var copy = new string?[source.Length];
-        Array.Copy(source, copy, source.Length);
         return copy;
     }
 
