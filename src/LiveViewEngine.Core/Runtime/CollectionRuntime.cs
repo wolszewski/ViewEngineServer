@@ -104,11 +104,11 @@ public sealed class CollectionRuntime : IDisposable
 
     public IReadOnlyList<ViewDelta> HandleSubscribe(SubscribeCommand command)
     {
-        var key = ViewKey.From(command.View);
-        var sortIndexKey = CreateSortIndexKey(Collection, key);
+        var viewKey = ViewKey.From(command.View);
+        var sortIndexKey = CreateSortIndexKey(Collection, viewKey);
         var sortIndex = _sortIndexRegistry.GetOrCreate(sortIndexKey, Collection);
         _sortIndexRegistry.UnflagForRemoval(sortIndexKey);
-        var view = _sharedViews.GetOrAdd(key, k => new SharedView(k, Collection, sortIndex));
+        var view = _sharedViews.GetOrAdd(viewKey, key => new SharedView(key, Collection, sortIndex));
         view.AddSubscriber(command.ConnectionId);
         sortIndex.IncrementSubscribers();
 
@@ -116,7 +116,7 @@ public sealed class CollectionRuntime : IDisposable
         var viewport = new ViewportState
         {
             ConnectionId = command.ConnectionId,
-            ViewKey = key,
+            ViewKey = viewKey,
             StartIndex = command.StartIndex,
             PageSize = command.PageSize,
             VisibleColumns = FieldMask.From(selectedFieldIndexes.AsSpan()),
@@ -129,7 +129,7 @@ public sealed class CollectionRuntime : IDisposable
         [
             new SnapshotDelta
             {
-                ViewId = key.Id,
+                ViewId = viewKey.Id,
                 Schema = Collection.Schema,
                 TotalCount = view.GetTotalCount(),
                 StartIndex = command.StartIndex,
@@ -141,12 +141,7 @@ public sealed class CollectionRuntime : IDisposable
 
     public IReadOnlyList<ViewDelta> HandleChangeViewport(ChangeViewportCommand command)
     {
-        if (!_viewports.TryGetValue(command.ConnectionId, out var viewport))
-        {
-            return [];
-        }
-
-        if (!_sharedViews.TryGetValue(viewport.ViewKey, out var view))
+        if (!_viewports.TryGetValue(command.ConnectionId, out var viewport) || !_sharedViews.TryGetValue(viewport.ViewKey, out var view))
         {
             return [];
         }
@@ -176,26 +171,30 @@ public sealed class CollectionRuntime : IDisposable
             return [];
         }
 
-        if (_sharedViews.TryGetValue(viewport.ViewKey, out var view))
+        if (!_sharedViews.TryGetValue(viewport.ViewKey, out var view))
         {
-            view.RemoveSubscriber(command.ConnectionId);
-            var sortIndex = view.SortIndex;
-            sortIndex.DecrementSubscribers();
-
-            if (view.IsEmpty)
-            {
-                _sharedViews.TryRemove(viewport.ViewKey, out _);
-            }
-
-            if (sortIndex.SubscriberCount == 0)
-            {
-                var sortIndexKey = new SortIndexKey(
-                    viewport.ViewKey.CollectionId,
-                    sortIndex.FieldIndex,
-                    viewport.ViewKey.SortAscending);
-                _sortIndexRegistry.FlagForRemoval(sortIndexKey);
-            }
+            return [];
         }
+
+        view.RemoveSubscriber(command.ConnectionId);
+        var sortIndex = view.SortIndex;
+        sortIndex.DecrementSubscribers();
+
+        if (view.IsEmpty)
+        {
+            _sharedViews.TryRemove(viewport.ViewKey, out _);
+        }
+
+        if (sortIndex.SubscriberCount != 0)
+        {
+            return [];
+        }
+
+        var sortIndexKey = new SortIndexKey(
+            viewport.ViewKey.CollectionId,
+            sortIndex.FieldIndex,
+            viewport.ViewKey.SortAscending);
+        _sortIndexRegistry.FlagForRemoval(sortIndexKey);
 
         return [];
     }

@@ -65,21 +65,6 @@ public sealed class SortIndex : IRowIndex
         }
     }
 
-    internal int CountFiltered(FilterSet filters)
-    {
-        int count = 0;
-        var cursor = _tree.GetCursor(0);
-        while (cursor.MoveNext())
-        {
-            if (filters.Passes(_collection, cursor.Current))
-            {
-                count++;
-            }
-        }
-
-        return count;
-    }
-
     internal void CaptureOldValue(int rowIndex)
     {
         int pos = _tree.IndexOf(rowIndex);
