@@ -204,8 +204,8 @@ public class ViewEngineBenchmarks
             "f06", "f07", "f08", "f09", "f10", "f11", "f12", "f13",
             "f14", "f15", "f16", "f17"
         ]);
-        var store = new CollectionStore();
-        var engine = new ViewEngine(store, new NullPublisher(), NullLogger<ViewEngine>.Instance);
+        var store = new CollectionStore(null);
+        var engine = new ViewEngine(store, new NullPublisher(), NullLogger<ViewEngine>.Instance, null);
 
         engine.IngestAsync(new CreateCollectionCommand { CollectionId = CollectionId, Schema = schema })
               .GetAwaiter().GetResult();

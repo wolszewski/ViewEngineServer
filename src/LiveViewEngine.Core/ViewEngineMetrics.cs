@@ -2,7 +2,21 @@
 
 namespace LiveViewEngine.Core;
 
-public sealed class ViewEngineMetrics : IDisposable
+public interface IViewEngineMetrics
+{
+    Histogram<double> InsertDuration { get; }
+    Histogram<double> UpdateDuration { get; }
+    Histogram<double> SubscriptionDuration { get; }
+    Counter<long> InsertCount { get; }
+    Counter<long> UpdateCount { get; }
+
+    void RegisterGaugeSources(
+        Func<int> activeSubscriptions,
+        Func<int> activeSharedViews,
+        Func<int> activeSortIndexes);
+}
+
+public sealed class ViewEngineMetrics : IDisposable, IViewEngineMetrics
 {
     private readonly Meter _meter = new("ViewEngineServer");
 

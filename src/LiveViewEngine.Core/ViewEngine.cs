@@ -16,21 +16,21 @@ public sealed class ViewEngine : IViewEngine, IDisposable
     private readonly ICollectionStore _store;
     private readonly IOutboundPublisher _publisher;
     private readonly ILogger<ViewEngine> _logger;
-    private readonly ViewEngineMetrics _metrics;
+    private readonly IViewEngineMetrics? _metrics;
     private readonly ConcurrentDictionary<string, CollectionRuntime> _collectionRuntimes = new();
 
     public ViewEngine(
         ICollectionStore store,
         IOutboundPublisher publisher,
         ILogger<ViewEngine> logger,
-        ViewEngineMetrics metrics)
+        IViewEngineMetrics? metrics)
     {
         _store = store;
         _publisher = publisher;
         _logger = logger;
         _metrics = metrics;
 
-        metrics.RegisterGaugeSources(
+        metrics?.RegisterGaugeSources(
             () => _collectionRuntimes.Values.Sum(static r => r.ActiveSubscriptionCount),
             () => _collectionRuntimes.Values.Sum(static r => r.ActiveSharedViewCount),
             () => _collectionRuntimes.Values.Sum(static r => r.SortIndexCount));
@@ -49,19 +49,21 @@ public sealed class ViewEngine : IViewEngine, IDisposable
             {
                 return IngestResult.Fail($"Collection '{command.CollectionId}' not found.");
             }
-
+            
             var queued = await runtime.EnqueueAsync(() => command switch
             {
                 UpsertRowCommand upsert => runtime.HandleUpsert(upsert),
                 DeleteRowCommand delete => runtime.HandleDelete(delete),
-                _ => (IngestResult.Fail($"Unknown command type '{command.GetType().Name}'."), null)
+                _ => new MutationResult(
+                    IngestResult.Fail($"Unknown command type '{command.GetType().Name}'."),
+                    null)
             }, ct);
 
             if (queued.Groups is { Count: > 0 })
             {
-                foreach (var (deltas, connectionIds) in queued.Groups)
+                foreach (var group in queued.Groups)
                 {
-                    await _publisher.PublishAsync(connectionIds, deltas, ct);
+                    await _publisher.PublishAsync(group.ConnectionIds, group.Deltas, ct);
                 }
             }
 

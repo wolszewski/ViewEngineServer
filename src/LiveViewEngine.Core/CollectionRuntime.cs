@@ -7,32 +7,29 @@ namespace LiveViewEngine.Core;
 
 public sealed class CollectionRuntime : IDisposable
 {
-    internal static readonly TimeSpan StaleIndexGracePeriod = TimeSpan.FromSeconds(30);
-
-    private readonly CollectionWorker _channel = new();
+    private static readonly TimeSpan StaleIndexGracePeriod = TimeSpan.FromSeconds(30);
+    private readonly CollectionWorker _worker = new();
     private readonly ConcurrentDictionary<ViewKey, SharedView> _sharedViews = new();
     private readonly ConcurrentDictionary<string, ViewportState> _viewports = new();
     private readonly SortIndexRegistry _sortIndexRegistry = new();
-    private readonly ViewEngineMetrics _metrics;
+    private readonly IViewEngineMetrics? _metrics;
 
-    public CollectionRuntime(string collectionId, RowCollection collection, ViewEngineMetrics metrics)
+    public CollectionRuntime(RowCollection collection, IViewEngineMetrics? metrics)
     {
-        CollectionId = collectionId;
         Collection = collection;
         _metrics = metrics;
-        _channel.Start();
+        _worker.Start();
     }
 
-    public string CollectionId { get; }
     public RowCollection Collection { get; }
-    public MutationPropagator Propagator { get; } = new();
+    private readonly MutationPropagator _propagator = new();
 
     public int ActiveSubscriptionCount => _viewports.Count;
     public int ActiveSharedViewCount => _sharedViews.Count;
     public int SortIndexCount => _sortIndexRegistry.Count;
 
     public Task<T> EnqueueAsync<T>(Func<T> work, CancellationToken ct = default) =>
-        _channel.EnqueueAsync(work, ct);
+        _worker.EnqueueAsync(work, ct);
 
     public bool TryGetCollectionIdForConnection(string connectionId, out string? collectionId)
     {
@@ -40,8 +37,8 @@ public sealed class CollectionRuntime : IDisposable
         return collectionId is not null;
     }
 
-    public (IngestResult Result, List<(IReadOnlyList<ViewDelta> Deltas, List<string> ConnectionIds)>? Groups)
-        HandleUpsert(UpsertRowCommand command)
+
+    public MutationResult HandleUpsert(UpsertRowCommand command)
     {
         var started = Stopwatch.GetTimestamp();
         var rowAlreadyExisted = Collection.TryGetRowIndex(command.Key, out int existingRowIndex);
@@ -60,10 +57,10 @@ public sealed class CollectionRuntime : IDisposable
             List<(IReadOnlyList<ViewDelta>, List<string>)>? groups = null;
             if (_sharedViews.Count > 0)
             {
-                groups = Propagator.Propagate(Collection, _sharedViews, _viewports, mutation, isDelete: false);
+                groups = _propagator.Propagate(Collection, _sharedViews, _viewports, mutation, isDelete: false);
             }
 
-            return (IngestResult.Ok(), groups);
+            return new MutationResult(IngestResult.Ok(), groups);
         }
         finally
         {
@@ -72,27 +69,27 @@ public sealed class CollectionRuntime : IDisposable
             {
                 _metrics.UpdateDuration.Record(
                     durationMs,
-                    new KeyValuePair<string, object?>("collectionId", CollectionId));
+                    new KeyValuePair<string, object?>("collectionId", Collection.Schema.CollectionName));
                 _metrics.UpdateCount.Add(
                     1,
-                    new KeyValuePair<string, object?>("collectionId", CollectionId));
+                    new KeyValuePair<string, object?>("collectionId", Collection.Schema.CollectionName));
             }
             else
             {
                 _metrics.InsertDuration.Record(
                     durationMs,
-                    new KeyValuePair<string, object?>("collectionId", CollectionId));
+                    new KeyValuePair<string, object?>("collectionId", Collection.Schema.CollectionName));
                 _metrics.InsertCount.Add(
                     1,
-                    new KeyValuePair<string, object?>("collectionId", CollectionId));
+                    new KeyValuePair<string, object?>("collectionId", Collection.Schema.CollectionName));
             }
         }
     }
 
-    public (IngestResult Result, List<(IReadOnlyList<ViewDelta> Deltas, List<string> ConnectionIds)>? Groups)
-        HandleDelete(DeleteRowCommand command)
+    public MutationResult HandleDelete(DeleteRowCommand command)
     {
-        if (Collection.TryGetRowIndex(command.Key, out int existingRowIndex))
+        var rowAlreadyExisted = Collection.TryGetRowIndex(command.Key, out int existingRowIndex);
+        if (rowAlreadyExisted)
         {
             foreach (var sortIndex in _sortIndexRegistry.GetAllForCollection(Collection.Schema.CollectionName))
             {
@@ -103,16 +100,16 @@ public sealed class CollectionRuntime : IDisposable
         var mutation = Collection.Delete(command.Key);
         if (mutation is null)
         {
-            return (IngestResult.Ok(), null);
+            return new MutationResult(IngestResult.Ok(), null);
         }
 
         List<(IReadOnlyList<ViewDelta>, List<string>)>? groups = null;
         if (_sharedViews.Count > 0)
         {
-            groups = Propagator.Propagate(Collection, _sharedViews, _viewports, mutation, isDelete: true);
+            groups = _propagator.Propagate(Collection, _sharedViews, _viewports, mutation, isDelete: true);
         }
 
-        return (IngestResult.Ok(), groups);
+        return new MutationResult(IngestResult.Ok(), groups);
     }
 
     public IReadOnlyList<ViewDelta> HandleSubscribe(SubscribeCommand command)
@@ -138,15 +135,18 @@ public sealed class CollectionRuntime : IDisposable
         _viewports[command.ConnectionId] = viewport;
 
         var indexes = view.GetPageIndexes(command.StartIndex, command.PageSize);
-        return [new SnapshotDelta
-        {
-            ViewId = key.Id,
-            Schema = Collection.Schema,
-            TotalCount = view.GetTotalCount(),
-            StartIndex = command.StartIndex,
-            Rows = BuildRows(Collection, indexes, selectedFieldIndexes),
-            VisibleFieldIndexes = selectedFieldIndexes
-        }];
+        return
+        [
+            new SnapshotDelta
+            {
+                ViewId = key.Id,
+                Schema = Collection.Schema,
+                TotalCount = view.GetTotalCount(),
+                StartIndex = command.StartIndex,
+                Rows = BuildRows(Collection, indexes, selectedFieldIndexes),
+                VisibleFieldIndexes = selectedFieldIndexes
+            }
+        ];
     }
 
     public IReadOnlyList<ViewDelta> HandleChangeViewport(ChangeViewportCommand command)
@@ -165,15 +165,18 @@ public sealed class CollectionRuntime : IDisposable
         viewport.PageSize = command.PageSize;
 
         var indexes = view.GetPageIndexes(command.StartIndex, command.PageSize);
-        return [new SnapshotDelta
-        {
-            ViewId = viewport.ViewKey.Id,
-            Schema = Collection.Schema,
-            TotalCount = view.GetTotalCount(),
-            StartIndex = command.StartIndex,
-            Rows = BuildRows(Collection, indexes, viewport.SelectedFieldIndexes),
-            VisibleFieldIndexes = viewport.SelectedFieldIndexes
-        }];
+        return
+        [
+            new SnapshotDelta
+            {
+                ViewId = viewport.ViewKey.Id,
+                Schema = Collection.Schema,
+                TotalCount = view.GetTotalCount(),
+                StartIndex = command.StartIndex,
+                Rows = BuildRows(Collection, indexes, viewport.SelectedFieldIndexes),
+                VisibleFieldIndexes = viewport.SelectedFieldIndexes
+            }
+        ];
     }
 
     public IReadOnlyList<ViewDelta> HandleUnsubscribe(UnsubscribeCommand command)
@@ -207,7 +210,7 @@ public sealed class CollectionRuntime : IDisposable
         return [];
     }
 
-    public void Dispose() => _channel.Dispose();
+    public void Dispose() => _worker.Dispose();
 
     internal async Task ReapOnceAsync(CancellationToken ct)
     {
@@ -283,13 +286,15 @@ public sealed class CollectionRuntime : IDisposable
         return indexes.ToArray();
     }
 
-    private static IReadOnlyList<string?[]> BuildRows(RowCollection collection, int[] indexes, int[] selectedFieldIndexes)
+    private static IReadOnlyList<string?[]> BuildRows(RowCollection collection, int[] indexes,
+        int[] selectedFieldIndexes)
     {
         var rows = new string?[indexes.Length][];
         for (int i = 0; i < indexes.Length; i++)
         {
             rows[i] = ProjectRow(collection.GetRowValues(indexes[i]), selectedFieldIndexes);
         }
+
         return rows;
     }
 
@@ -300,6 +305,7 @@ public sealed class CollectionRuntime : IDisposable
         {
             copy[i] = source[selectedFieldIndexes[i]];
         }
+
         return copy;
     }
 
