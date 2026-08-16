@@ -58,17 +58,17 @@ public sealed class ViewEngine : IViewEngine, IDisposable
                 _ => new UnknownCommandRuntimeWork(command),
             };
 
-            var queued = await runtime.EnqueueAsync(work, ct);
+            var mutationResult = await runtime.EnqueueAsync(work, ct);
 
-            if (queued.Groups is { Count: > 0 })
+            if (mutationResult.Groups is { Count: > 0 })
             {
-                foreach (var group in queued.Groups)
+                foreach (var group in mutationResult.Groups)
                 {
                     await _publisher.PublishAsync(group.ConnectionIds, group.Deltas, ct);
                 }
             }
 
-            return queued.Result;
+            return mutationResult.Result;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -104,10 +104,7 @@ public sealed class ViewEngine : IViewEngine, IDisposable
         finally
         {
             var durationMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
-            _metrics.SubscriptionDuration.Record(
-                durationMs,
-                new KeyValuePair<string, object?>("commandType", command.GetType().Name),
-                new KeyValuePair<string, object?>("collectionId", collectionId));
+            _metrics?.RecordSubscriptionDuration(durationMs, command.GetType().Name, collectionId!);
         }
     }
 
@@ -156,4 +153,5 @@ public sealed class ViewEngine : IViewEngine, IDisposable
             command.CollectionId, command.Schema.Fields.Count);
         return IngestResult.Ok();
     }
+
 }

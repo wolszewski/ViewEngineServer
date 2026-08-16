@@ -67,21 +67,11 @@ public sealed class CollectionRuntime : IDisposable
             var durationMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
             if (rowAlreadyExisted)
             {
-                _metrics.UpdateDuration.Record(
-                    durationMs,
-                    new KeyValuePair<string, object?>("collectionId", Collection.Schema.CollectionName));
-                _metrics.UpdateCount.Add(
-                    1,
-                    new KeyValuePair<string, object?>("collectionId", Collection.Schema.CollectionName));
+                _metrics?.RecordUpdate(durationMs, Collection.Schema.CollectionName);
             }
             else
             {
-                _metrics.InsertDuration.Record(
-                    durationMs,
-                    new KeyValuePair<string, object?>("collectionId", Collection.Schema.CollectionName));
-                _metrics.InsertCount.Add(
-                    1,
-                    new KeyValuePair<string, object?>("collectionId", Collection.Schema.CollectionName));
+                _metrics?.RecordInsert(durationMs, Collection.Schema.CollectionName);
             }
         }
     }

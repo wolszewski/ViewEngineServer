@@ -4,53 +4,50 @@ namespace LiveViewEngine.Core;
 
 public interface IViewEngineMetrics
 {
-    Histogram<double> InsertDuration { get; }
-    Histogram<double> UpdateDuration { get; }
-    Histogram<double> SubscriptionDuration { get; }
-    Counter<long> InsertCount { get; }
-    Counter<long> UpdateCount { get; }
-
     void RegisterGaugeSources(
         Func<int> activeSubscriptions,
         Func<int> activeSharedViews,
         Func<int> activeSortIndexes);
+
+    void RecordInsert(double durationMs, string collectionId);
+    void RecordUpdate(double durationMs, string collectionId);
+    void RecordSubscriptionDuration(double durationMs, string commandType, string collectionId);
 }
 
 public sealed class ViewEngineMetrics : IDisposable, IViewEngineMetrics
 {
     private readonly Meter _meter = new("ViewEngineServer");
+    private readonly Histogram<double> _insertDuration;
+    private readonly Histogram<double> _updateDuration;
+    private readonly Histogram<double> _subscriptionDuration;
+    private readonly Counter<long> _insertCount;
+    private readonly Counter<long> _updateCount;
 
     public ViewEngineMetrics()
     {
-        InsertDuration = _meter.CreateHistogram<double>(
+        _insertDuration = _meter.CreateHistogram<double>(
             "viewengine.insert.duration",
             unit: "ms",
             description: "Time spent processing insert operations.");
 
-        UpdateDuration = _meter.CreateHistogram<double>(
+        _updateDuration = _meter.CreateHistogram<double>(
             "viewengine.update.duration",
             unit: "ms",
             description: "Time spent processing update operations.");
 
-        SubscriptionDuration = _meter.CreateHistogram<double>(
+        _subscriptionDuration = _meter.CreateHistogram<double>(
             "viewengine.subscription.duration",
             unit: "ms",
             description: "Time spent processing subscription operations.");
 
-        InsertCount = _meter.CreateCounter<long>(
+        _insertCount = _meter.CreateCounter<long>(
             "viewengine.insert.count",
             description: "Total number of insert operations processed.");
 
-        UpdateCount = _meter.CreateCounter<long>(
+        _updateCount = _meter.CreateCounter<long>(
             "viewengine.update.count",
             description: "Total number of update operations processed.");
     }
-
-    public Histogram<double> InsertDuration { get; }
-    public Histogram<double> UpdateDuration { get; }
-    public Histogram<double> SubscriptionDuration { get; }
-    public Counter<long> InsertCount { get; }
-    public Counter<long> UpdateCount { get; }
 
     public void RegisterGaugeSources(
         Func<int> activeSubscriptions,
@@ -71,6 +68,26 @@ public sealed class ViewEngineMetrics : IDisposable, IViewEngineMetrics
             "viewengine.active_sort_indexes",
             activeSortIndexes,
             description: "Number of active sort indexes across all collections.");
+    }
+
+    public void RecordInsert(double durationMs, string collectionId)
+    {
+        _insertDuration.Record(durationMs, new KeyValuePair<string, object?>("collectionId", collectionId));
+        _insertCount.Add(1, new KeyValuePair<string, object?>("collectionId", collectionId));
+    }
+
+    public void RecordUpdate(double durationMs, string collectionId)
+    {
+        _updateDuration.Record(durationMs, new KeyValuePair<string, object?>("collectionId", collectionId));
+        _updateCount.Add(1, new KeyValuePair<string, object?>("collectionId", collectionId));
+    }
+
+    public void RecordSubscriptionDuration(double durationMs, string commandType, string collectionId)
+    {
+        _subscriptionDuration.Record(
+            durationMs,
+            new KeyValuePair<string, object?>("commandType", commandType),
+            new KeyValuePair<string, object?>("collectionId", collectionId));
     }
 
     public void Dispose() => _meter.Dispose();
