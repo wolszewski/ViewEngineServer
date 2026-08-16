@@ -3,7 +3,7 @@ using System.Diagnostics;
 using LiveViewEngine.Core.Data;
 using LiveViewEngine.Core.Views;
 
-namespace LiveViewEngine.Core;
+namespace LiveViewEngine.Core.Runtime;
 
 public sealed class CollectionRuntime : IDisposable
 {
@@ -28,7 +28,7 @@ public sealed class CollectionRuntime : IDisposable
     public int ActiveSharedViewCount => _sharedViews.Count;
     public int SortIndexCount => _sortIndexRegistry.Count;
 
-    public Task<T> EnqueueAsync<T>(Func<T> work, CancellationToken ct = default) =>
+    public Task<T> EnqueueAsync<T>(IWorkItem<T> work, CancellationToken ct = default) =>
         _worker.EnqueueAsync(work, ct);
 
     public bool TryGetCollectionIdForConnection(string connectionId, out string? collectionId)
@@ -218,12 +218,12 @@ public sealed class CollectionRuntime : IDisposable
         {
             if (DateTime.UtcNow - flaggedAt >= StaleIndexGracePeriod)
             {
-                await EnqueueAsync(() => RemoveStaleIndex(key), ct).ConfigureAwait(false);
+                await EnqueueAsync(new RemoveStaleIndexRuntimeWork(this, key), ct).ConfigureAwait(false);
             }
         }
     }
 
-    private bool RemoveStaleIndex(SortIndexKey key)
+    internal bool RemoveStaleIndex(SortIndexKey key)
     {
         if (!_sortIndexRegistry.TryGet(key, out var index) || index is null)
         {

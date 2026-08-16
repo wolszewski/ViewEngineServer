@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using LiveViewEngine.Core.Data;
+using LiveViewEngine.Core.Runtime;
 using Microsoft.Extensions.Logging;
 
 namespace LiveViewEngine.Core;
@@ -50,14 +51,14 @@ public sealed class ViewEngine : IViewEngine, IDisposable
                 return IngestResult.Fail($"Collection '{command.CollectionId}' not found.");
             }
             
-            var queued = await runtime.EnqueueAsync(() => command switch
+            RuntimeWorkItem<MutationResult> work = command switch
             {
-                UpsertRowCommand upsert => runtime.HandleUpsert(upsert),
-                DeleteRowCommand delete => runtime.HandleDelete(delete),
-                _ => new MutationResult(
-                    IngestResult.Fail($"Unknown command type '{command.GetType().Name}'."),
-                    null)
-            }, ct);
+                UpsertRowCommand upsert => new UpsertRuntimeWork(runtime, upsert),
+                DeleteRowCommand delete => new DeleteRuntimeWork(runtime, delete),
+                _ => new UnknownCommandRuntimeWork(command),
+            };
+
+            var queued = await runtime.EnqueueAsync(work, ct);
 
             if (queued.Groups is { Count: > 0 })
             {
@@ -90,13 +91,15 @@ public sealed class ViewEngine : IViewEngine, IDisposable
         var started = Stopwatch.GetTimestamp();
         try
         {
-            return await runtime.EnqueueAsync(() => command switch
+            RuntimeWorkItem<IReadOnlyList<ViewDelta>> work = command switch
             {
-                SubscribeCommand sub => runtime.HandleSubscribe(sub),
-                ChangeViewportCommand change => runtime.HandleChangeViewport(change),
-                UnsubscribeCommand unsub => runtime.HandleUnsubscribe(unsub),
-                _ => []
-            }, ct);
+                SubscribeCommand sub => new SubscribeRuntimeWork(runtime, sub),
+                ChangeViewportCommand change => new ChangeViewportRuntimeWork(runtime, change),
+                UnsubscribeCommand unsub => new UnsubscribeRuntimeWork(runtime, unsub),
+                _ => new UnknownSubscriptionRuntimeWork(command),
+            };
+
+            return await runtime.EnqueueAsync(work, ct);
         }
         finally
         {

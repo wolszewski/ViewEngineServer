@@ -2,12 +2,21 @@ using System.Threading.Channels;
 
 namespace LiveViewEngine.Core;
 
+public interface IWorkItem
+{
+    void Execute();
+}
+
+public interface IWorkItem<T> : IWorkItem
+{
+    TaskCompletionSource<T> Completion { get; }
+}
+
 internal sealed class CollectionWorker : IDisposable
 {
-    private readonly Channel<IWorkItem> _queue = Channel.CreateUnbounded<IWorkItem>(
-        new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
+    private readonly Channel<IWorkItem> _queue = Channel.CreateUnbounded<IWorkItem>( new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
     private readonly CancellationTokenSource _cts = new();
-    private readonly object _startLock = new();
+    private readonly Lock _startLock = new();
     private bool _started;
     private Task? _workerTask;
 
@@ -25,11 +34,10 @@ internal sealed class CollectionWorker : IDisposable
         }
     }
 
-    public async Task<T> EnqueueAsync<T>(Func<T> work, CancellationToken ct = default)
+    public async Task<T> EnqueueAsync<T>(IWorkItem<T> work, CancellationToken ct = default)
     {
-        var completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
-        await _queue.Writer.WriteAsync(new WorkItem<T>(work, completion), ct).ConfigureAwait(false);
-        return await completion.Task.WaitAsync(ct).ConfigureAwait(false);
+        await _queue.Writer.WriteAsync(work, ct).ConfigureAwait(false);
+        return await work.Completion.Task.WaitAsync(ct).ConfigureAwait(false);
     }
 
     public void Dispose()
@@ -68,35 +76,6 @@ internal sealed class CollectionWorker : IDisposable
         }
         catch (ChannelClosedException)
         {
-        }
-    }
-
-    private interface IWorkItem
-    {
-        void Execute();
-    }
-
-    private sealed class WorkItem<T> : IWorkItem
-    {
-        private readonly Func<T> _work;
-        private readonly TaskCompletionSource<T> _completion;
-
-        public WorkItem(Func<T> work, TaskCompletionSource<T> completion)
-        {
-            _work = work;
-            _completion = completion;
-        }
-
-        public void Execute()
-        {
-            try
-            {
-                _completion.TrySetResult(_work());
-            }
-            catch (Exception ex)
-            {
-                _completion.TrySetException(ex);
-            }
         }
     }
 }
