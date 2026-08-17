@@ -3,7 +3,6 @@ namespace LiveViewEngine.Core.Data;
 public sealed class RowCollection(CollectionSchema schema)
 {
     private readonly Dictionary<string, int> _rowKeyToIndex = new();
-    
     private readonly SlotList<string?[]> _rows = new();
     
     public CollectionSchema Schema { get; } = schema;

@@ -11,7 +11,7 @@
     <ItemGroup>
         <ProjectReference Include="..\LiveViewEngine.Poc.DataProvider\LiveViewEngine.Poc.DataProvider.csproj" />
         <ProjectReference Include="..\LiveViewEngine.Poc.Ui\LiveViewEngine.Poc.Ui.csproj" />
-        <ProjectReference Include="..\src\LiveViewEngine.WebHost\LiveViewEngine.WebHost.csproj" />
+        <ProjectReference Include="..\..\LiveViewEngine.WebHost\LiveViewEngine.WebHost.csproj" />
     </ItemGroup>
 
 </Project>

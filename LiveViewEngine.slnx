@@ -6,9 +6,9 @@
     <File Path="docs\system-design.md" />
   </Folder>
   <Folder Name="/examples/">
-    <Project Path="LiveViewEngine.Poc.AppHost/LiveViewEngine.Poc.AppHost.csproj" />
-    <Project Path="LiveViewEngine.Poc.DataProvider/LiveViewEngine.Poc.DataProvider.csproj" />
-    <Project Path="LiveViewEngine.Poc.Ui/LiveViewEngine.Poc.Ui.csproj" />
+    <Project Path="src/examples/LiveViewEngine.Poc.AppHost/LiveViewEngine.Poc.AppHost.csproj" />
+    <Project Path="src/examples/LiveViewEngine.Poc.DataProvider/LiveViewEngine.Poc.DataProvider.csproj" />
+    <Project Path="src/examples/LiveViewEngine.Poc.Ui/LiveViewEngine.Poc.Ui.csproj" />
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/LiveViewEngine.Collections/LiveViewEngine.Collections.csproj" />
@@ -17,8 +17,8 @@
     <Project Path="src/LiveViewEngine.WebHost/LiveViewEngine.WebHost.csproj" />
   </Folder>
   <Folder Name="/tests/">
-    <Project Path="LiveViewEngine.Collections.UnitTests/LiveViewEngine.Collections.UnitTests.csproj" />
-    <Project Path="src/LiveViewEngine.Core.IntegrationTests/LiveViewEngine.Core.IntegrationTests.csproj" />
-    <Project Path="src/LiveViewEngine.Core.UnitTests/LiveViewEngine.Core.UnitTests.csproj" />
+    <Project Path="src/tests/LiveViewEngine.Collections.UnitTests/LiveViewEngine.Collections.UnitTests.csproj" />
+    <Project Path="src/tests/LiveViewEngine.Core.IntegrationTests/LiveViewEngine.Core.IntegrationTests.csproj" />
+    <Project Path="src/tests/LiveViewEngine.Core.UnitTests/LiveViewEngine.Core.UnitTests.csproj" />
   </Folder>
 </Solution>

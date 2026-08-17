@@ -19,7 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\LiveViewEngine.WebHost\LiveViewEngine.WebHost.csproj" />
+    <ProjectReference Include="..\..\LiveViewEngine.WebHost\LiveViewEngine.WebHost.csproj" />
   </ItemGroup>
 
 </Project>

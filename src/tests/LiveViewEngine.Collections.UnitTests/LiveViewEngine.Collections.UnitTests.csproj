@@ -20,7 +20,7 @@
     </ItemGroup>
 
     <ItemGroup>
-      <ProjectReference Include="..\src\LiveViewEngine.Collections\LiveViewEngine.Collections.csproj" />
+      <ProjectReference Include="..\..\LiveViewEngine.Collections\LiveViewEngine.Collections.csproj" />
     </ItemGroup>
 
 </Project>
