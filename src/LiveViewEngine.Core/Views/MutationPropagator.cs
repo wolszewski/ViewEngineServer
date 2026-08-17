@@ -341,21 +341,21 @@ public sealed class MutationPropagator
 
         if (oldIn && newIn)
         {
-            AddRemoveDelta(deltas, viewId, oldFilteredPos - start);
+            AddRemoveDelta(deltas, viewId, mutation.RowId, oldFilteredPos - start);
             AddInsertDelta(deltas, viewId, collection, selectedFieldIndexes, mutation.RowIndex, newFilteredPos - start);
         }
         else if (oldBefore && newIn)
         {
             if (Exists(start - 1, n))
             {
-                AddRemoveDelta(deltas, viewId, 0);
+                AddRemoveDelta(deltas, viewId, view.GetRowIdAtPosition(start), 0);
             }
 
             AddInsertDelta(deltas, viewId, collection, selectedFieldIndexes, mutation.RowIndex, newFilteredPos - start);
         }
         else if (oldIn && newBefore)
         {
-            AddRemoveDelta(deltas, viewId, oldFilteredPos - start);
+            AddRemoveDelta(deltas, viewId, mutation.RowId, oldFilteredPos - start);
             if (Exists(start, n))
             {
                 AddInsertDelta(
@@ -372,12 +372,12 @@ public sealed class MutationPropagator
             AddInsertDelta(deltas, viewId, collection, selectedFieldIndexes, mutation.RowIndex, newFilteredPos - start);
             if (hasFinitePage && Exists(end, n))
             {
-                AddRemoveDelta(deltas, viewId, bottomPosition);
+                AddRemoveDelta(deltas, viewId, view.GetRowIdAtPosition(end), bottomPosition);
             }
         }
         else if (oldIn && !newIn && !newBefore)
         {
-            AddRemoveDelta(deltas, viewId, oldFilteredPos - start);
+            AddRemoveDelta(deltas, viewId, mutation.RowId, oldFilteredPos - start);
             if (hasFinitePage && Exists(end - 1, n))
             {
                 AddInsertDelta(
@@ -404,14 +404,14 @@ public sealed class MutationPropagator
 
             if (hasFinitePage && Exists(end, n))
             {
-                AddRemoveDelta(deltas, viewId, bottomPosition);
+                AddRemoveDelta(deltas, viewId, view.GetRowIdAtPosition(end), bottomPosition);
             }
         }
         else if (oldBefore && !newIn && !newBefore)
         {
             if (Exists(start - 1, n))
             {
-                AddRemoveDelta(deltas, viewId, 0);
+                AddRemoveDelta(deltas, viewId, view.GetRowIdAtPosition(start), 0);
             }
 
             if (hasFinitePage && Exists(end - 1, n))
@@ -461,9 +461,9 @@ public sealed class MutationPropagator
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void AddRemoveDelta(List<ViewDelta> deltas, string viewId, int position)
+    private static void AddRemoveDelta(List<ViewDelta> deltas, string viewId, string rowId, int position)
     {
-        deltas.Add(new RowRemoveDelta { ViewId = viewId, Position = position });
+        deltas.Add(new RowRemoveDelta { ViewId = viewId, RowId = rowId, Position = position });
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

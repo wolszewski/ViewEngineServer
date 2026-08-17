@@ -9,6 +9,7 @@ namespace LiveViewEngine.Core.Runtime;
 public sealed class CollectionRuntime : IDisposable
 {
     private static readonly TimeSpan StaleIndexGracePeriod = TimeSpan.FromSeconds(30);
+    private const int SnapshotBatchSize = 128;
     private readonly CollectionWorker _worker = new();
     private readonly ConcurrentDictionary<ViewKey, SharedView> _sharedViews = new();
     private readonly ConcurrentDictionary<SubscriptionKey, ViewportState> _viewports = new();
@@ -152,19 +153,34 @@ public sealed class CollectionRuntime : IDisposable
         _viewports[subscriptionKey] = viewport;
         AddConnectionSubscription(viewport);
 
-        var indexes = view.GetPageIndexes(command.StartIndex, command.PageSize);
-        return
-        [
-            new SnapshotDelta
-            {
-                ViewId = subscriptionKey.ToString(),
-                Schema = Collection.Schema,
-                TotalCount = view.GetTotalCount(),
-                StartIndex = command.StartIndex,
-                Rows = BuildRows(Collection, indexes, selectedFieldIndexes),
-                VisibleFieldIndexes = selectedFieldIndexes
-            }
-        ];
+        if (!command.SendSnapshot)
+        {
+            return [];
+        }
+
+        if (!command.StreamSnapshot)
+        {
+            var indexes = view.GetPageIndexes(command.StartIndex, command.PageSize);
+            return
+            [
+                new SnapshotDelta
+                {
+                    ViewId = subscriptionKey.ToString(),
+                    Schema = Collection.Schema,
+                    TotalCount = view.GetTotalCount(),
+                    StartIndex = command.StartIndex,
+                    Rows = BuildRows(Collection, indexes, selectedFieldIndexes),
+                    VisibleFieldIndexes = selectedFieldIndexes
+                }
+            ];
+        }
+
+        return BuildStreamingSnapshotDeltas(
+            subscriptionKey.ToString(),
+            view,
+            command.StartIndex,
+            command.PageSize,
+            selectedFieldIndexes);
     }
 
     public IReadOnlyList<ViewDelta> HandleChangeViewport(ChangeViewportCommand command)
@@ -178,19 +194,29 @@ public sealed class CollectionRuntime : IDisposable
         viewport.StartIndex = command.StartIndex;
         viewport.PageSize = command.PageSize;
 
-        var indexes = view.GetPageIndexes(command.StartIndex, command.PageSize);
-        return
-        [
-            new SnapshotDelta
-            {
-                ViewId = viewport.SubscriptionKey.ToString(),
-                Schema = Collection.Schema,
-                TotalCount = view.GetTotalCount(),
-                StartIndex = command.StartIndex,
-                Rows = BuildRows(Collection, indexes, viewport.SelectedFieldIndexes),
-                VisibleFieldIndexes = viewport.SelectedFieldIndexes
-            }
-        ];
+        if (!command.StreamSnapshot)
+        {
+            var indexes = view.GetPageIndexes(command.StartIndex, command.PageSize);
+            return
+            [
+                new SnapshotDelta
+                {
+                    ViewId = viewport.SubscriptionKey.ToString(),
+                    Schema = Collection.Schema,
+                    TotalCount = view.GetTotalCount(),
+                    StartIndex = command.StartIndex,
+                    Rows = BuildRows(Collection, indexes, viewport.SelectedFieldIndexes),
+                    VisibleFieldIndexes = viewport.SelectedFieldIndexes
+                }
+            ];
+        }
+
+        return BuildStreamingSnapshotDeltas(
+            viewport.SubscriptionKey.ToString(),
+            view,
+            command.StartIndex,
+            command.PageSize,
+            viewport.SelectedFieldIndexes);
     }
 
     public IReadOnlyList<ViewDelta> HandleUnsubscribe(UnsubscribeCommand command)
@@ -343,14 +369,7 @@ public sealed class CollectionRuntime : IDisposable
             return Enumerable.Range(0, Collection.Schema.Fields.Count).ToArray();
         }
 
-        var keyFieldName = Collection.Schema.Fields[0].Name;
-        var includeKey = !view.Fields.Any(f => string.Equals(f, keyFieldName, StringComparison.OrdinalIgnoreCase));
-        var indexes = new List<int>(view.Fields.Count + (includeKey ? 1 : 0));
-        if (includeKey)
-        {
-            indexes.Add(0);
-        }
-
+        var requestedFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var fieldName in view.Fields)
         {
             int fieldIndex = Collection.Schema.GetFieldIndex(fieldName);
@@ -361,10 +380,77 @@ public sealed class CollectionRuntime : IDisposable
                     nameof(view.Fields));
             }
 
-            indexes.Add(fieldIndex);
+            requestedFields.Add(Collection.Schema.Fields[fieldIndex].Name);
+        }
+
+        requestedFields.Add(Collection.Schema.Fields[CollectionSchema.PrimaryKeyIndex].Name);
+        var indexes = new List<int>(requestedFields.Count);
+        for (int i = 0; i < Collection.Schema.Fields.Count; i++)
+        {
+            if (requestedFields.Contains(Collection.Schema.Fields[i].Name))
+            {
+                indexes.Add(i);
+            }
         }
 
         return indexes.ToArray();
+    }
+
+    private IReadOnlyList<ViewDelta> BuildStreamingSnapshotDeltas(
+        string viewId,
+        SharedView view,
+        int startIndex,
+        int? pageSize,
+        int[] selectedFieldIndexes)
+    {
+        var deltas = new List<ViewDelta>
+        {
+            new SnapshotStartDelta
+            {
+                ViewId = viewId,
+                Schema = Collection.Schema,
+                TotalCount = view.GetTotalCount(),
+                StartIndex = startIndex,
+                VisibleFieldIndexes = selectedFieldIndexes
+            }
+        };
+
+        var batch = new List<string?[]>(SnapshotBatchSize);
+        foreach (int rowIndex in view.EnumeratePageIndexes(startIndex, pageSize))
+        {
+            batch.Add(ProjectRow(Collection.GetRowValues(rowIndex), selectedFieldIndexes));
+            if (batch.Count == SnapshotBatchSize)
+            {
+                deltas.Add(CreateSnapshotRowsDelta(viewId, selectedFieldIndexes, batch));
+                batch = new List<string?[]>(SnapshotBatchSize);
+            }
+        }
+
+        if (batch.Count > 0)
+        {
+            deltas.Add(CreateSnapshotRowsDelta(viewId, selectedFieldIndexes, batch));
+        }
+
+        deltas.Add(new EndOfSnapshotDelta
+        {
+            ViewId = viewId,
+            VisibleFieldIndexes = selectedFieldIndexes
+        });
+        return deltas;
+    }
+
+    private SnapshotRowsDelta CreateSnapshotRowsDelta(
+        string viewId,
+        int[] selectedFieldIndexes,
+        List<string?[]> batch)
+    {
+        return new SnapshotRowsDelta
+        {
+            ViewId = viewId,
+            Schema = Collection.Schema,
+            Rows = batch.ToArray(),
+            VisibleFieldIndexes = selectedFieldIndexes
+        };
     }
 
     private static IReadOnlyList<string?[]> BuildRows(RowCollection collection, int[] indexes,

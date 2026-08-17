@@ -12,4 +12,6 @@ public sealed class WsInboundMessage
     public List<string>? Fields { get; set; }
     public int StartIndex { get; set; }
     public int? PageSize { get; set; }
+    public bool? SendSnapshot { get; set; }
+    public string? MessageFormat { get; set; }
 }

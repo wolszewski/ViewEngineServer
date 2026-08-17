@@ -5,6 +5,7 @@ import { AllCommunityModule, ModuleRegistry, type ColDef, type GridApi } from 'a
 import {
     WebHostClient,
     type DeltaEvent,
+    type MessageFormat,
     type RowData,
     type RowInsertEvent,
     type RowRemoveEvent,
@@ -177,6 +178,7 @@ function App(): React.ReactElement {
     const [collectionId, setCollectionId] = useState('trades');
     const [sortColumn, setSortColumn] = useState('quantity');
     const [sortAscending, setSortAscending] = useState(true);
+    const [messageFormat, setMessageFormat] = useState<MessageFormat>('compact');
     const [pageSize, setPageSize] = useState(50);
     const [pageSizeInput, setPageSizeInput] = useState('50');
     const [pageIndex, setPageIndex] = useState(0);
@@ -371,9 +373,10 @@ function App(): React.ReactElement {
             pageSize,
             startIndex,
             filters: normalisedFilters,
-            fields: selectedFields.length > 0 ? selectedFields : undefined
+            fields: selectedFields.length > 0 ? selectedFields : undefined,
+            messageFormat
         });
-    }, [clearState, collectionId, normalisedFilters, pageIndex, pageSize, selectedFields, sortAscending, sortColumn]);
+    }, [clearState, collectionId, messageFormat, normalisedFilters, pageIndex, pageSize, selectedFields, sortAscending, sortColumn]);
 
     const disconnect = useCallback(() => {
         clientRef.current?.disconnect();
@@ -509,9 +512,10 @@ function App(): React.ReactElement {
             pageSize,
             startIndex: pageIndex * pageSize,
             filters: normalisedFilters,
-            fields: selectedFields.length > 0 ? selectedFields : undefined
+            fields: selectedFields.length > 0 ? selectedFields : undefined,
+            messageFormat
         });
-    }, [collectionId, filters, normalisedFilters, pageIndex, pageSize, selectedFields, sortAscending, sortColumn]);
+    }, [collectionId, filters, messageFormat, normalisedFilters, pageIndex, pageSize, selectedFields, sortAscending, sortColumn]);
 
     return React.createElement(
         React.Fragment,
@@ -685,6 +689,20 @@ function App(): React.ReactElement {
                     onCommit: commitPageSize,
                     inputMode: 'numeric'
                 })
+            ),
+            React.createElement(
+                'label',
+                { className: 'control-label' },
+                'Message format',
+                React.createElement(
+                    'select',
+                    {
+                        value: messageFormat,
+                        onChange: (e: Event) => setMessageFormat((e.target as HTMLSelectElement).value as MessageFormat)
+                    },
+                    React.createElement('option', { value: 'compact' }, 'Compact'),
+                    React.createElement('option', { value: 'json' }, 'JSON')
+                )
             ),
             React.createElement('button', { type: 'button', onClick: addFilter }, 'Add filter'),
             React.createElement('button', { type: 'button', onClick: openColumnSelector }, 'Select columns'),

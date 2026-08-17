@@ -34,12 +34,15 @@ public sealed class SubscribeCommand : SubscriptionCommand
     public required ViewDefinition View { get; init; }
     public int StartIndex { get; init; } = 0;
     public int? PageSize { get; init; }
+    public bool SendSnapshot { get; init; } = true;
+    public bool StreamSnapshot { get; init; }
 }
 
 public sealed class ChangeViewportCommand : SubscriptionCommand
 {
     public int StartIndex { get; init; } = 0;
     public int? PageSize { get; init; } = null;
+    public bool StreamSnapshot { get; init; }
 }
 
 public sealed class UnsubscribeCommand : SubscriptionCommand { }

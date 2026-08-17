@@ -73,11 +73,43 @@ public sealed class SharedView
         return result;
     }
 
+    public IEnumerable<int> EnumeratePageIndexes(int startIndex, int? pageSize)
+    {
+        if (startIndex < 0)
+        {
+            startIndex = 0;
+        }
+
+        if (pageSize is <= 0)
+        {
+            yield break;
+        }
+
+        int total = _activeIndex.Count;
+        if (startIndex >= total)
+        {
+            yield break;
+        }
+
+        int take = pageSize.HasValue ? Math.Min(pageSize.Value, total - startIndex) : total - startIndex;
+        for (int i = 0; i < take; i++)
+        {
+            yield return GetFilteredByIndex(startIndex + i);
+        }
+    }
+
     public int GetTotalCount() => _activeIndex.Count;
 
     internal int GetFilteredByIndex(int position)
     {
         return _activeIndex.GetByIndex(ToIndexPosition(position, _activeIndex.Count));
+    }
+
+    internal string GetRowIdAtPosition(int position)
+    {
+        int rowIndex = GetFilteredByIndex(position);
+        return _collection.GetValue(rowIndex, CollectionSchema.PrimaryKeyIndex)
+            ?? throw new InvalidOperationException("Rows in a view must have a primary key.");
     }
 
     internal int FilteredIndexOf(int rowIndex)

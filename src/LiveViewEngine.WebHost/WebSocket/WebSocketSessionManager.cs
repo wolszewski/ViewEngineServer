@@ -1,8 +1,10 @@
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using System.Linq;
 using System.Threading;
 using LiveViewEngine.Core;
+using LiveViewEngine.Core.Data;
 using LiveViewEngine.Core.Views;
 using ViewEngineServer.WebApp.WebSocket.Dto;
 
@@ -11,6 +13,7 @@ namespace ViewEngineServer.WebApp.WebSocket;
 public sealed class WebSocketSessionManager
 {
     private readonly IViewEngine _engine;
+    private readonly ICollectionStore _store;
     private readonly WebSocketOutboundPublisher _publisher;
     private readonly ILogger<WebSocketSessionManager> _logger;
     private readonly UniqueIdProvider _connectionIdProvider = new();
@@ -22,10 +25,12 @@ public sealed class WebSocketSessionManager
 
     public WebSocketSessionManager(
         IViewEngine engine,
+        ICollectionStore store,
         WebSocketOutboundPublisher publisher,
         ILogger<WebSocketSessionManager> logger)
     {
         _engine = engine;
+        _store = store;
         _publisher = publisher;
         _logger = logger;
     }
@@ -70,6 +75,8 @@ public sealed class WebSocketSessionManager
                     continue;
                 }
 
+                var messageFormat = ResolveMessageFormat(msg.MessageFormat);
+
                 var command = MapCommand(
                     connectionId,
                     msg,
@@ -81,12 +88,42 @@ public sealed class WebSocketSessionManager
                     continue;
                 }
 
-                if (command is SubscribeCommand && clientSubscriptionId > 0)
+                if (command is SubscribeCommand subscribe && clientSubscriptionId > 0)
                 {
-                    await _publisher.PublishSubscriptionAcceptedAsync(connectionId, clientSubscriptionId, ct);
+                    _publisher.ConfigureSubscription(
+                        connectionId,
+                        clientSubscriptionId,
+                        messageFormat,
+                        snapshotActive: subscribe.SendSnapshot && subscribe.StreamSnapshot);
+                }
+                else if (command is ChangeViewportCommand changeViewport && changeViewport.StreamSnapshot)
+                {
+                    _publisher.SetSnapshotActive(connectionId, command.SubscriptionId, snapshotActive: true);
                 }
 
                 var events = await _engine.SubscribeAsync(command, ct);
+                if (command is SubscribeCommand subscribeCommand && clientSubscriptionId > 0)
+                {
+                    var originalEvents = events;
+                    var start = TryExtractSnapshotStart(events, out var snapshotEvents);
+                    await _publisher.PublishSubscriptionAcceptedAsync(
+                        connectionId,
+                        messageFormat,
+                        new SubscriptionAcceptedPayload
+                        {
+                            SubscriptionId = clientSubscriptionId,
+                            Fields = ResolvePayloadFieldNames(
+                                subscribeCommand.View.CollectionId,
+                                originalEvents,
+                                subscribeCommand.View.Fields),
+                            SnapshotFollows = start is not null,
+                            StartIndex = start?.StartIndex ?? -1,
+                            TotalCount = start?.TotalCount ?? -1
+                        },
+                        ct);
+                    events = snapshotEvents ?? events;
+                }
+
                 if (events.Count > 0)
                 {
                     await _publisher.PublishAsync(
@@ -98,6 +135,7 @@ public sealed class WebSocketSessionManager
                 if (command is UnsubscribeCommand && clientSubscriptionId > 0)
                 {
                     activeSubscriptionIds.Remove(clientSubscriptionId);
+                    _publisher.RemoveSubscription(connectionId, clientSubscriptionId);
                 }
             }
         }
@@ -148,7 +186,8 @@ public sealed class WebSocketSessionManager
                     ConnectionId = connId,
                     SubscriptionId = subscriptionId,
                     StartIndex = inbound.StartIndex,
-                    PageSize = inbound.PageSize
+                    PageSize = inbound.PageSize,
+                    StreamSnapshot = true
                 }),
             "unsubscribe" => TryCreateExistingCommand(
                 connectionId,
@@ -217,6 +256,8 @@ public sealed class WebSocketSessionManager
             SubscriptionId = subscriptionId,
             StartIndex = msg.StartIndex,
             PageSize = msg.PageSize,
+            SendSnapshot = msg.SendSnapshot ?? true,
+            StreamSnapshot = true,
             View = new ViewDefinition
             {
                 CollectionId = msg.CollectionId ?? string.Empty,
@@ -232,4 +273,70 @@ public sealed class WebSocketSessionManager
         };
     }
 
+    private static SnapshotStartDelta? TryExtractSnapshotStart(
+        IReadOnlyList<ViewDelta> events,
+        out IReadOnlyList<ViewDelta>? remainingEvents)
+    {
+        if (events.Count == 0 || events[0] is not SnapshotStartDelta start)
+        {
+            remainingEvents = null;
+            return null;
+        }
+
+        remainingEvents = events.Skip(1).ToArray();
+        return start;
+    }
+
+    private IReadOnlyList<string> ResolvePayloadFieldNames(
+        string collectionId,
+        IReadOnlyList<ViewDelta> events,
+        IReadOnlyList<string>? requestedFields)
+    {
+        if (events.FirstOrDefault() is SnapshotStartDelta start)
+        {
+            IReadOnlyList<int>? visibleFieldIndexes = start.VisibleFieldIndexes;
+            return start.Schema.Fields
+                .Where((_, index) => visibleFieldIndexes?.Contains(index) == true && index != CollectionSchema.PrimaryKeyIndex)
+                .Select(static field => field.Name)
+                .ToArray();
+        }
+
+        if (_store.TryGet(collectionId, out var collection) && collection is not null)
+        {
+            return ResolveCanonicalFieldNames(collection.Schema, requestedFields);
+        }
+
+        if (requestedFields is not null)
+        {
+            return requestedFields;
+        }
+
+        return [];
+    }
+
+    private static IReadOnlyList<string> ResolveCanonicalFieldNames(
+        CollectionSchema schema,
+        IReadOnlyList<string>? requestedFields)
+    {
+        if (requestedFields is null || requestedFields.Count == 0)
+        {
+            return schema.Fields
+                .Where(static field => field.FieldIndex != CollectionSchema.PrimaryKeyIndex)
+                .Select(static field => field.Name)
+                .ToArray();
+        }
+
+        var requested = new HashSet<string>(requestedFields, StringComparer.OrdinalIgnoreCase);
+        return schema.Fields
+            .Where(field => field.FieldIndex != CollectionSchema.PrimaryKeyIndex && requested.Contains(field.Name))
+            .Select(static field => field.Name)
+            .ToArray();
+    }
+
+    private static OutboundMessageFormat ResolveMessageFormat(string? rawFormat)
+    {
+        return rawFormat?.Equals("json", StringComparison.OrdinalIgnoreCase) == true
+            ? OutboundMessageFormat.Json
+            : OutboundMessageFormat.Compact;
+    }
 }

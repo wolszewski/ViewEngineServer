@@ -17,7 +17,14 @@ async function loadTypeScriptModule(path, replacements = []) {
     return URL.createObjectURL(new Blob([transpiled], { type: 'text/javascript' }));
 }
 
-const webHostClientModuleUrl = await loadTypeScriptModule('/webHostClient.ts');
+const compactProtocolModuleUrl = await loadTypeScriptModule('/compactProtocol.ts');
+const jsonProtocolModuleUrl = await loadTypeScriptModule('/jsonProtocol.ts');
+const webHostClientModuleUrl = await loadTypeScriptModule('/webHostClient.ts', [
+    ['./compactProtocol', compactProtocolModuleUrl],
+    ["./compactProtocol.ts", compactProtocolModuleUrl],
+    ['./jsonProtocol', jsonProtocolModuleUrl],
+    ["./jsonProtocol.ts", jsonProtocolModuleUrl]
+]);
 const appModuleUrl = await loadTypeScriptModule('/app.ts', [
     ['./webHostClient', webHostClientModuleUrl],
     ["./webHostClient.ts", webHostClientModuleUrl]
@@ -26,6 +33,8 @@ const appModuleUrl = await loadTypeScriptModule('/app.ts', [
 try {
     await import(appModuleUrl);
 } finally {
+    URL.revokeObjectURL(compactProtocolModuleUrl);
+    URL.revokeObjectURL(jsonProtocolModuleUrl);
     URL.revokeObjectURL(webHostClientModuleUrl);
     URL.revokeObjectURL(appModuleUrl);
 }

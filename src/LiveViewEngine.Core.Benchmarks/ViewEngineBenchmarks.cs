@@ -274,6 +274,7 @@ public class ViewEngineModifyBenchmarks
                 int j = k + rng.Next(ModifiableFields.Length - k);
                 (arr[k], arr[j]) = (arr[j], arr[k]);
             }
+
             var fields = new Dictionary<string, string?>(fieldCount);
             for (int k = 0; k < fieldCount; k++) { fields[arr[k]] = $"mod-{i}-{arr[k]}"; }
             _modifyCommands[i] = new UpsertRowCommand { CollectionId = CollectionId, Key = $"O{i + 1:D5}", Fields = fields };
@@ -379,5 +380,50 @@ public class ViewEngineModifyBenchmarks
     [Benchmark] public async Task Modify10k_DifferentViews_10Subscribers()
     {
         foreach (var cmd in _modifyCommands) { await _engineDiff10.IngestAsync(cmd); }
+    }
+}
+
+[MemoryDiagnoser]
+[HideColumns("Error", "StdDev", "RatioSD")]
+public class ViewEngineSnapshotBenchmarks
+{
+    private const int SnapshotRowCount = 30000;
+    private ViewEngine _engine = null!;
+
+    [GlobalSetup]
+    public void GlobalSetup()
+    {
+        _engine = ViewEngineBenchmarks.CreateEngine([]);
+        foreach (var command in ViewEngineBenchmarks.BuildInsertCommands(SnapshotRowCount))
+        {
+            _engine.IngestAsync(command).GetAwaiter().GetResult();
+        }
+    }
+
+    [Benchmark]
+    public Task LegacySnapshot30k()
+    {
+        return _engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = 1,
+            SubscriptionId = 1,
+            View = new ViewDefinition { CollectionId = "objects" },
+            StartIndex = 0,
+            PageSize = SnapshotRowCount
+        });
+    }
+
+    [Benchmark]
+    public Task StreamedSnapshot30k()
+    {
+        return _engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = 2,
+            SubscriptionId = 2,
+            StreamSnapshot = true,
+            View = new ViewDefinition { CollectionId = "objects" },
+            StartIndex = 0,
+            PageSize = SnapshotRowCount
+        });
     }
 }
