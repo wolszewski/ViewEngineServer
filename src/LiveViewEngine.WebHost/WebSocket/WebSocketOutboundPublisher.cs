@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Linq;
 using System.Net.WebSockets;
 using System.Text.Json;
 using System.Threading.Channels;
@@ -11,7 +12,7 @@ public sealed class WebSocketOutboundPublisher(
     IOutboundEventFormatter formatter,
     ILogger<WebSocketOutboundPublisher> logger) : IOutboundPublisher
 {
-    private readonly ConcurrentDictionary<string, ConnectionState> _connections = new();
+    private readonly ConcurrentDictionary<int, ConnectionState> _connections = new();
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -19,7 +20,7 @@ public sealed class WebSocketOutboundPublisher(
     };
 
     // Called when a WebSocket connection is accepted; starts a background drain consumer.
-    public void Register(string connectionId, System.Net.WebSockets.WebSocket socket)
+    public void Register(int connectionId, System.Net.WebSockets.WebSocket socket)
     {
         var channel = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(512)
         {
@@ -32,7 +33,7 @@ public sealed class WebSocketOutboundPublisher(
         state.DrainTask = Task.Run(() => DrainAsync(connectionId, socket, channel.Reader));
     }
 
-    public void Unregister(string connectionId)
+    public void Unregister(int connectionId)
     {
         if (_connections.TryRemove(connectionId, out var state))
         {
@@ -40,38 +41,65 @@ public sealed class WebSocketOutboundPublisher(
         }
     }
 
-    // Serialize the deltas once, then enqueue the bytes for each connection.
+    // Serialize the deltas once per subscription id, then enqueue the bytes for each connection.
     // Returns immediately — slow clients drop stale frames, never block ingestion.
     public ValueTask PublishAsync(
-        IReadOnlyList<string> connectionIds,
+        IReadOnlyList<SubscriberTarget> targets,
         IReadOnlyList<ViewDelta> deltas,
         CancellationToken ct = default)
     {
-        byte[] payload;
-        try
+        foreach (var group in targets.GroupBy(static t => t.SubscriptionId))
         {
-            var events = formatter.Format(deltas);
-            payload = JsonSerializer.SerializeToUtf8Bytes(events, JsonOptions);
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Failed to serialise events for {Count} client(s).", connectionIds.Count);
-            return ValueTask.CompletedTask;
-        }
-
-        foreach (var connectionId in connectionIds)
-        {
-            if (_connections.TryGetValue(connectionId, out var state))
+            byte[] payload;
+            try
             {
-                state.Channel.Writer.TryWrite(payload);
+                var events = formatter.Format(deltas, group.Key);
+                payload = JsonSerializer.SerializeToUtf8Bytes(events, JsonOptions);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to serialise events for {Count} subscription target(s).", targets.Count);
+                return ValueTask.CompletedTask;
+            }
+
+            foreach (var target in group)
+            {
+                if (_connections.TryGetValue(target.ConnectionId, out var state))
+                {
+                    state.Channel.Writer.TryWrite(payload);
+                }
             }
         }
 
         return ValueTask.CompletedTask;
     }
 
+    public ValueTask PublishSubscriptionAcceptedAsync(int connectionId, int subscriptionId, CancellationToken ct = default)
+    {
+        if (!_connections.TryGetValue(connectionId, out var state))
+        {
+            return ValueTask.CompletedTask;
+        }
+
+        byte[] payload;
+        try
+        {
+            payload = JsonSerializer.SerializeToUtf8Bytes(
+                new SubscriptionAcceptedMessage { SubscriptionId = subscriptionId },
+                JsonOptions);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to serialise subscription acceptance for client '{ConnectionId}'.", connectionId);
+            return ValueTask.CompletedTask;
+        }
+
+        state.Channel.Writer.TryWrite(payload);
+        return ValueTask.CompletedTask;
+    }
+
     private async Task DrainAsync(
-        string connectionId,
+        int connectionId,
         System.Net.WebSockets.WebSocket socket,
         ChannelReader<byte[]> reader)
     {
@@ -101,5 +129,11 @@ public sealed class WebSocketOutboundPublisher(
         public readonly System.Net.WebSockets.WebSocket Socket = socket;
         public readonly Channel<byte[]> Channel = channel;
         public Task DrainTask = Task.CompletedTask;
+    }
+
+    private sealed class SubscriptionAcceptedMessage
+    {
+        public string Type { get; init; } = "subscriptionAccepted";
+        public required int SubscriptionId { get; init; }
     }
 }

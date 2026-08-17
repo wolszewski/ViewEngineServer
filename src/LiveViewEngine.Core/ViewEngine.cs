@@ -64,7 +64,7 @@ public sealed class ViewEngine : IViewEngine, IDisposable
             {
                 foreach (var group in mutationResult.Groups)
                 {
-                    await _publisher.PublishAsync(group.ConnectionIds, group.Deltas, ct);
+                    await _publisher.PublishAsync(group.Targets, group.Deltas, ct);
                 }
             }
 
@@ -81,19 +81,47 @@ public sealed class ViewEngine : IViewEngine, IDisposable
     public async Task<IReadOnlyList<ViewDelta>> SubscribeAsync(
         SubscriptionCommand command, CancellationToken ct = default)
     {
-        string? collectionId = GetCollectionIdForSubscription(command);
-
-        if (collectionId is null || !_collectionRuntimes.TryGetValue(collectionId, out var runtime))
-        {
-            return [];
-        }
-
         var started = Stopwatch.GetTimestamp();
         try
         {
+            if (command is SubscribeCommand subscribe)
+            {
+                string subscribeCollectionId = subscribe.View.CollectionId;
+                if (!_collectionRuntimes.TryGetValue(subscribeCollectionId, out var subscribeRuntime))
+                {
+                    return [];
+                }
+
+                if (TryGetRuntimeForSubscription(subscribe.EffectiveSubscriptionKey, out var previousRuntime) &&
+                    previousRuntime is not null &&
+                    !ReferenceEquals(previousRuntime, subscribeRuntime))
+                {
+                    await previousRuntime.EnqueueAsync(
+                        new UnsubscribeRuntimeWork(previousRuntime, new UnsubscribeCommand
+                        {
+                            ConnectionId = subscribe.ConnectionId,
+                            SubscriptionId = subscribe.SubscriptionId
+                        }),
+                        ct);
+                }
+
+                return await subscribeRuntime.EnqueueAsync(new SubscribeRuntimeWork(subscribeRuntime, subscribe), ct);
+            }
+
+            if (command is UnsubscribeCommand unsubscribe && unsubscribe.SubscriptionId == 0)
+            {
+                await UnsubscribeAllForConnectionAsync(unsubscribe.ConnectionId, ct);
+                return [];
+            }
+
+            string? collectionId = GetCollectionIdForSubscription(command);
+            if (collectionId is null || !_collectionRuntimes.TryGetValue(collectionId, out var runtime))
+            {
+                return [];
+            }
+
             RuntimeWorkItem<IReadOnlyList<ViewDelta>> work = command switch
             {
-                SubscribeCommand sub => new SubscribeRuntimeWork(runtime, sub),
                 ChangeViewportCommand change => new ChangeViewportRuntimeWork(runtime, change),
                 UnsubscribeCommand unsub => new UnsubscribeRuntimeWork(runtime, unsub),
                 _ => new UnknownSubscriptionRuntimeWork(command),
@@ -103,8 +131,12 @@ public sealed class ViewEngine : IViewEngine, IDisposable
         }
         finally
         {
+            string? collectionId = GetMetricsCollectionId(command);
             var durationMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
-            _metrics?.RecordSubscriptionDuration(durationMs, command.GetType().Name, collectionId!);
+            if (collectionId is not null)
+            {
+                _metrics?.RecordSubscriptionDuration(durationMs, command.GetType().Name, collectionId);
+            }
         }
     }
 
@@ -123,15 +155,59 @@ public sealed class ViewEngine : IViewEngine, IDisposable
             return sub.View.CollectionId;
         }
 
-        foreach (var runtime in _collectionRuntimes.Values)
+        if (TryGetRuntimeForSubscription(command.EffectiveSubscriptionKey, out var bySubscription) &&
+            bySubscription is not null)
         {
-            if (runtime.TryGetCollectionIdForConnection(command.ConnectionId, out var collectionId))
-            {
-                return collectionId;
-            }
+            return bySubscription.Collection.Schema.CollectionName;
         }
 
         return null;
+    }
+
+    private string? GetMetricsCollectionId(SubscriptionCommand command)
+    {
+        if (command is SubscribeCommand subscribe)
+        {
+            return subscribe.View.CollectionId;
+        }
+
+        if (TryGetRuntimeForSubscription(command.EffectiveSubscriptionKey, out var runtime) &&
+            runtime is not null)
+        {
+            return runtime.Collection.Schema.CollectionName;
+        }
+
+        return null;
+    }
+
+    private bool TryGetRuntimeForSubscription(SubscriptionKey subscriptionKey, out CollectionRuntime? runtime)
+    {
+        foreach (var candidate in _collectionRuntimes.Values)
+        {
+            if (candidate.TryGetCollectionIdForSubscription(subscriptionKey, out _))
+            {
+                runtime = candidate;
+                return true;
+            }
+        }
+
+        runtime = null;
+        return false;
+    }
+
+    private async Task UnsubscribeAllForConnectionAsync(int connectionId, CancellationToken ct)
+    {
+        foreach (var runtime in _collectionRuntimes.Values)
+        {
+            if (!runtime.TryGetCollectionIdForConnection(connectionId, out _))
+            {
+                continue;
+            }
+
+            await runtime.EnqueueAsync(
+                new UnsubscribeRuntimeWork(runtime, new UnsubscribeCommand { ConnectionId = connectionId }),
+                ct);
+        }
     }
 
     private IngestResult HandleCreateCollection(CreateCollectionCommand command)

@@ -8,6 +8,7 @@
   <Folder Name="/examples/">
     <Project Path="LiveViewEngine.Poc.AppHost/LiveViewEngine.Poc.AppHost.csproj" />
     <Project Path="LiveViewEngine.Poc.DataProvider/LiveViewEngine.Poc.DataProvider.csproj" />
+    <Project Path="LiveViewEngine.Poc.Ui/LiveViewEngine.Poc.Ui.csproj" />
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/LiveViewEngine.Collections/LiveViewEngine.Collections.csproj" />
@@ -20,5 +21,4 @@
     <Project Path="src/LiveViewEngine.Core.IntegrationTests/LiveViewEngine.Core.IntegrationTests.csproj" />
     <Project Path="src/LiveViewEngine.Core.UnitTests/LiveViewEngine.Core.UnitTests.csproj" />
   </Folder>
-  <Project Path="LiveViewEngine.Poc.Ui/LiveViewEngine.Poc.Ui.csproj" />
 </Solution>

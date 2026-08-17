@@ -58,7 +58,7 @@ public class ViewEngineConcurrencyTests
 
         var snapshot = await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "verify",
+            ConnectionId = 99,
             View = new ViewDefinition { CollectionId = "trades" },
             StartIndex = 0,
             PageSize = tasks * rowsPerTask
@@ -95,7 +95,7 @@ public class ViewEngineConcurrencyTests
         {
             var result = await engine.SubscribeAsync(new SubscribeCommand
             {
-                ConnectionId = "client1",
+                ConnectionId = 1,
                 View = new ViewDefinition { CollectionId = "trades" },
                 StartIndex = 0,
                 PageSize = totalRows
@@ -124,7 +124,7 @@ public class ViewEngineConcurrencyTests
 
         await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "client1",
+            ConnectionId = 1,
             View = new ViewDefinition { CollectionId = "trades" },
             StartIndex = 0,
             PageSize = 200
@@ -135,7 +135,7 @@ public class ViewEngineConcurrencyTests
         await Task.WhenAll(Enumerable.Range(0, rowCount).Select(i =>
             UpsertTrade(engine, $"t{i:D4}", "GOOG", i.ToString())));
 
-        var inserts = publisher.EventsFor("client1").OfType<RowInsertEvent>().ToList();
+        var inserts = publisher.EventsFor(1).OfType<RowInsertEvent>().ToList();
         Assert.Equal(rowCount, inserts.Count);
     }
 
@@ -152,7 +152,7 @@ public class ViewEngineConcurrencyTests
         await Task.WhenAll(Enumerable.Range(0, subscribers).Select(s =>
             engine.SubscribeAsync(new SubscribeCommand
             {
-                ConnectionId = $"client{s}",
+                ConnectionId = s + 1,
                 View = new ViewDefinition { CollectionId = "trades" },
                 StartIndex = 0,
                 PageSize = rowCount
@@ -164,7 +164,7 @@ public class ViewEngineConcurrencyTests
 
         for (int s = 0; s < subscribers; s++)
         {
-            var inserts = publisher.EventsFor($"client{s}").OfType<RowInsertEvent>().ToList();
+            var inserts = publisher.EventsFor(s + 1).OfType<RowInsertEvent>().ToList();
             Assert.Equal(rowCount, inserts.Count);
         }
     }
@@ -192,7 +192,7 @@ public class ViewEngineConcurrencyTests
             {
                 var result = await engine.SubscribeAsync(new SubscribeCommand
                 {
-                    ConnectionId = $"client{i}",
+                    ConnectionId = i + 1,
                     View = new ViewDefinition { CollectionId = "trades" },
                     StartIndex = 0,
                     PageSize = 10
@@ -211,22 +211,21 @@ public class ViewEngineConcurrencyTests
     private sealed class ThreadSafeCapturingPublisher : IOutboundPublisher
     {
         private readonly IOutboundEventFormatter _formatter = new JsonOutboundEventFormatter();
-        private readonly ConcurrentBag<(string ConnectionId, IReadOnlyList<DeltaEvent> Events)> _published = [];
+        private readonly ConcurrentBag<(int ConnectionId, IReadOnlyList<DeltaEvent> Events)> _published = [];
 
         public ValueTask PublishAsync(
-            IReadOnlyList<string> connectionIds,
+            IReadOnlyList<SubscriberTarget> targets,
             IReadOnlyList<ViewDelta> deltas,
             CancellationToken ct = default)
         {
-            var events = _formatter.Format(deltas);
-            foreach (var connectionId in connectionIds)
+            foreach (var target in targets)
             {
-                _published.Add((connectionId, events));
+                _published.Add((target.ConnectionId, _formatter.Format(deltas, target.SubscriptionId)));
             }
             return ValueTask.CompletedTask;
         }
 
-        public IEnumerable<DeltaEvent> EventsFor(string connectionId) =>
+        public IEnumerable<DeltaEvent> EventsFor(int connectionId) =>
             _published
                 .Where(p => p.ConnectionId == connectionId)
                 .SelectMany(p => p.Events);

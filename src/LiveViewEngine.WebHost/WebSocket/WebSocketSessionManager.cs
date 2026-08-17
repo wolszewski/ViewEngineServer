@@ -1,6 +1,7 @@
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using LiveViewEngine.Core;
 using LiveViewEngine.Core.Views;
 using ViewEngineServer.WebApp.WebSocket.Dto;
@@ -12,6 +13,7 @@ public sealed class WebSocketSessionManager
     private readonly IViewEngine _engine;
     private readonly WebSocketOutboundPublisher _publisher;
     private readonly ILogger<WebSocketSessionManager> _logger;
+    private readonly UniqueIdProvider _connectionIdProvider = new();
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -30,9 +32,11 @@ public sealed class WebSocketSessionManager
 
     public async Task HandleConnectionAsync(System.Net.WebSockets.WebSocket socket, CancellationToken ct)
     {
-        var connectionId = Guid.NewGuid().ToString("N");
+        var connectionId = _connectionIdProvider.Next();
         _publisher.Register(connectionId, socket);
         _logger.LogInformation("Client '{ConnectionId}' connected.", connectionId);
+        var activeSubscriptionIds = new HashSet<int>();
+        var subscriptionIdProvider = new UniqueIdProvider();
 
         var buffer = new byte[16_384];
         try
@@ -66,16 +70,34 @@ public sealed class WebSocketSessionManager
                     continue;
                 }
 
-                var command = MapCommand(connectionId, msg);
+                var command = MapCommand(
+                    connectionId,
+                    msg,
+                    activeSubscriptionIds,
+                    subscriptionIdProvider,
+                    out var clientSubscriptionId);
                 if (command is null)
                 {
                     continue;
                 }
 
+                if (command is SubscribeCommand && clientSubscriptionId > 0)
+                {
+                    await _publisher.PublishSubscriptionAcceptedAsync(connectionId, clientSubscriptionId, ct);
+                }
+
                 var events = await _engine.SubscribeAsync(command, ct);
                 if (events.Count > 0)
                 {
-                    await _publisher.PublishAsync([connectionId], events, ct);
+                    await _publisher.PublishAsync(
+                        [new SubscriberTarget(connectionId, command.SubscriptionId)],
+                        events,
+                        ct);
+                }
+
+                if (command is UnsubscribeCommand && clientSubscriptionId > 0)
+                {
+                    activeSubscriptionIds.Remove(clientSubscriptionId);
                 }
             }
         }
@@ -99,36 +121,115 @@ public sealed class WebSocketSessionManager
         }
     }
 
-    private static SubscriptionCommand? MapCommand(string connectionId, WsInboundMessage msg)
+    private static SubscriptionCommand? MapCommand(
+        int connectionId,
+        WsInboundMessage msg,
+        ISet<int> activeSubscriptionIds,
+        UniqueIdProvider subscriptionIdProvider,
+        out int clientSubscriptionId)
     {
+        clientSubscriptionId = 0;
+
         return msg.Type.ToLowerInvariant() switch
         {
-            "subscribe" => new SubscribeCommand
-            {
-                ConnectionId = connectionId,
-                StartIndex = msg.StartIndex,
-                PageSize = msg.PageSize,
-                View = new ViewDefinition
+            "subscribe" => CreateSubscribeCommand(
+                connectionId,
+                msg,
+                activeSubscriptionIds,
+                subscriptionIdProvider,
+                out clientSubscriptionId),
+            "setviewport" => TryCreateExistingCommand(
+                connectionId,
+                msg,
+                activeSubscriptionIds,
+                out clientSubscriptionId,
+                static (connId, subscriptionId, inbound) => new ChangeViewportCommand
                 {
-                    CollectionId = msg.CollectionId ?? string.Empty,
-                    SortColumn = msg.SortColumn,
-                    SortAscending = msg.SortAscending,
-                    Filters = msg.Filters?.Select(f => new FilterSpec(
-                        f.Field,
-                        Enum.TryParse<FilterOperator>(f.Operator, ignoreCase: true, out var op)
-                            ? op : FilterOperator.Eq,
-                        f.Value)).ToList() ?? [],
-                    Fields = msg.Fields
-                }
-            },
-            "setviewport" => new ChangeViewportCommand
-            {
-                ConnectionId = connectionId,
-                StartIndex = msg.StartIndex,
-                PageSize = msg.PageSize
-            },
-            "unsubscribe" => new UnsubscribeCommand { ConnectionId = connectionId },
+                    ConnectionId = connId,
+                    SubscriptionId = subscriptionId,
+                    StartIndex = inbound.StartIndex,
+                    PageSize = inbound.PageSize
+                }),
+            "unsubscribe" => TryCreateExistingCommand(
+                connectionId,
+                msg,
+                activeSubscriptionIds,
+                out clientSubscriptionId,
+                static (connId, subscriptionId, _) => new UnsubscribeCommand
+                {
+                    ConnectionId = connId,
+                    SubscriptionId = subscriptionId
+                }),
             _ => null
         };
     }
+
+    private static SubscribeCommand? CreateSubscribeCommand(
+        int connectionId,
+        WsInboundMessage msg,
+        ISet<int> activeSubscriptionIds,
+        UniqueIdProvider subscriptionIdProvider,
+        out int clientSubscriptionId)
+    {
+        if (msg.SubscriptionId is { } existingSubscriptionId)
+        {
+            if (!activeSubscriptionIds.Contains(existingSubscriptionId))
+            {
+                clientSubscriptionId = 0;
+                return null;
+            }
+
+            clientSubscriptionId = existingSubscriptionId;
+            return BuildSubscribeCommand(connectionId, clientSubscriptionId, msg);
+        }
+
+        clientSubscriptionId = subscriptionIdProvider.Next();
+        activeSubscriptionIds.Add(clientSubscriptionId);
+        return BuildSubscribeCommand(connectionId, clientSubscriptionId, msg);
+    }
+
+    private static SubscriptionCommand? TryCreateExistingCommand(
+        int connectionId,
+        WsInboundMessage msg,
+        ISet<int> activeSubscriptionIds,
+        out int clientSubscriptionId,
+        Func<int, int, WsInboundMessage, SubscriptionCommand> factory)
+    {
+        if (msg.SubscriptionId is not { } requestedSubscriptionId ||
+            !activeSubscriptionIds.Contains(requestedSubscriptionId))
+        {
+            clientSubscriptionId = 0;
+            return null;
+        }
+
+        clientSubscriptionId = requestedSubscriptionId;
+        return factory(connectionId, clientSubscriptionId, msg);
+    }
+
+    private static SubscribeCommand BuildSubscribeCommand(
+        int connectionId,
+        int subscriptionId,
+        WsInboundMessage msg)
+    {
+        return new SubscribeCommand
+        {
+            ConnectionId = connectionId,
+            SubscriptionId = subscriptionId,
+            StartIndex = msg.StartIndex,
+            PageSize = msg.PageSize,
+            View = new ViewDefinition
+            {
+                CollectionId = msg.CollectionId ?? string.Empty,
+                SortColumn = msg.SortColumn,
+                SortAscending = msg.SortAscending,
+                Filters = msg.Filters?.Select(f => new FilterSpec(
+                    f.Field,
+                    Enum.TryParse<FilterOperator>(f.Operator, ignoreCase: true, out var op)
+                        ? op : FilterOperator.Eq,
+                    f.Value)).ToList() ?? [],
+                Fields = msg.Fields
+            }
+        };
+    }
+
 }

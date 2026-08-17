@@ -6,23 +6,22 @@ namespace LiveViewEngine.Core.IntegrationTests;
 internal sealed class CapturingPublisher : IOutboundPublisher
 {
     private readonly IOutboundEventFormatter _formatter = new JsonOutboundEventFormatter();
-    private readonly List<(string ConnectionId, IReadOnlyList<DeltaEvent> Events)> _published = [];
-    public IReadOnlyList<(string ConnectionId, IReadOnlyList<DeltaEvent> Events)> Published => _published;
+    private readonly List<(int ConnectionId, IReadOnlyList<DeltaEvent> Events)> _published = [];
+    public IReadOnlyList<(int ConnectionId, IReadOnlyList<DeltaEvent> Events)> Published => _published;
 
     public ValueTask PublishAsync(
-        IReadOnlyList<string> connectionIds,
+        IReadOnlyList<SubscriberTarget> targets,
         IReadOnlyList<ViewDelta> deltas,
         CancellationToken ct = default)
     {
-        var events = _formatter.Format(deltas);
-        foreach (var connectionId in connectionIds)
+        foreach (var target in targets)
         {
-            _published.Add((connectionId, events));
+            _published.Add((target.ConnectionId, _formatter.Format(deltas, target.SubscriptionId)));
         }
         return ValueTask.CompletedTask;
     }
 
-    public IEnumerable<DeltaEvent> EventsFor(string connectionId) =>
+    public IEnumerable<DeltaEvent> EventsFor(int connectionId) =>
         _published
             .Where(p => p.ConnectionId == connectionId)
             .SelectMany(p => p.Events);

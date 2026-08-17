@@ -214,7 +214,7 @@ public class ViewEngineBenchmarks
         {
             engine.SubscribeAsync(new SubscribeCommand
             {
-                ConnectionId = $"client{i + 1}",
+                ConnectionId = i + 1,
                 View = views[i],
                 StartIndex = 0,
                 PageSize = 50
@@ -226,7 +226,10 @@ public class ViewEngineBenchmarks
 
     internal sealed class NullPublisher : IOutboundPublisher
     {
-        public ValueTask PublishAsync(IReadOnlyList<string> connectionIds, IReadOnlyList<ViewDelta> deltas, CancellationToken ct = default)
+        public ValueTask PublishAsync(
+            IReadOnlyList<SubscriberTarget> targets,
+            IReadOnlyList<ViewDelta> deltas,
+            CancellationToken ct = default)
             => ValueTask.CompletedTask;
     }
 }

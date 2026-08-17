@@ -12,7 +12,7 @@ public sealed class SharedView
     private readonly FilterSet _filters;
     private readonly FilteredDataIndex? _filteredIndex;
     private readonly IRowIndex _activeIndex;
-    private readonly ConcurrentDictionary<string, bool> _subscribers = new();
+    private readonly ConcurrentDictionary<SubscriptionKey, bool> _subscribers = new();
 
     public SharedView(ViewKey key, RowCollection collection, SortIndex sortIndex)
     {
@@ -31,16 +31,16 @@ public sealed class SharedView
 
     internal SortIndex SortIndex => _sortIndex;
 
-    public IEnumerable<string> Subscribers => _subscribers.Keys;
+    public IEnumerable<SubscriptionKey> Subscribers => _subscribers.Keys;
 
     public bool IsEmpty => _subscribers.IsEmpty;
 
     internal int FilteredCount => _activeIndex.Count;
 
-    public void AddSubscriber(string connectionId) => _subscribers[connectionId] = true;
+    public void AddSubscriber(SubscriptionKey subscriptionKey) => _subscribers[subscriptionKey] = true;
 
-    public bool RemoveSubscriber(string connectionId) =>
-        _subscribers.TryRemove(connectionId, out _);
+    public bool RemoveSubscriber(SubscriptionKey subscriptionKey) =>
+        _subscribers.TryRemove(subscriptionKey, out _);
 
     public int[] GetPageIndexes(int startIndex, int? pageSize)
     {

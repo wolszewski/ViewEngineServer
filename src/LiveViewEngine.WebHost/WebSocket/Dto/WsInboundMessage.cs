@@ -3,6 +3,7 @@ namespace ViewEngineServer.WebApp.WebSocket.Dto;
 public sealed class WsInboundMessage
 {
     public string Type { get; set; } = string.Empty;
+    public int? SubscriptionId { get; set; }
 
     public string? CollectionId { get; set; }
     public string? SortColumn { get; set; }

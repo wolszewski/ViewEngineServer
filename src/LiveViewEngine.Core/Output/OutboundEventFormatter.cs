@@ -2,29 +2,30 @@ namespace LiveViewEngine.Core.Output;
 
 public interface IOutboundEventFormatter
 {
-    IReadOnlyList<DeltaEvent> Format(IReadOnlyList<ViewDelta> deltas);
+    IReadOnlyList<DeltaEvent> Format(IReadOnlyList<ViewDelta> deltas, int subscriptionId = 0);
 }
 
 public sealed class JsonOutboundEventFormatter : IOutboundEventFormatter
 {
-    public IReadOnlyList<DeltaEvent> Format(IReadOnlyList<ViewDelta> deltas)
+    public IReadOnlyList<DeltaEvent> Format(IReadOnlyList<ViewDelta> deltas, int subscriptionId = 0)
     {
         var events = new DeltaEvent[deltas.Count];
         for (int i = 0; i < deltas.Count; i++)
         {
-            events[i] = Format(deltas[i]);
+            events[i] = Format(deltas[i], subscriptionId);
         }
 
         return events;
     }
 
-    private static DeltaEvent Format(ViewDelta delta)
+    private static DeltaEvent Format(ViewDelta delta, int subscriptionId)
     {
         return delta switch
         {
             SnapshotDelta snapshot => new SnapshotEvent
             {
                 ViewId = snapshot.ViewId,
+                SubscriptionId = subscriptionId,
                 TotalCount = snapshot.TotalCount,
                 StartIndex = snapshot.StartIndex,
                 Rows = FormatRows(snapshot.Schema.Fields, snapshot.Rows, snapshot.VisibleFieldIndexes)
@@ -32,12 +33,14 @@ public sealed class JsonOutboundEventFormatter : IOutboundEventFormatter
             RowInsertDelta insert => new RowInsertEvent
             {
                 ViewId = insert.ViewId,
+                SubscriptionId = subscriptionId,
                 Position = insert.Position,
                 Row = FormatRow(insert.Schema.Fields, insert.Row, insert.VisibleFieldIndexes)
             },
             RowUpdateDelta update => new RowUpdateEvent
             {
                 ViewId = update.ViewId,
+                SubscriptionId = subscriptionId,
                 RowId = update.RowId,
                 Position = update.Position,
                 ChangedFields = FormatChanges(update.Schema.Fields, update.ChangedColumns)
@@ -45,6 +48,7 @@ public sealed class JsonOutboundEventFormatter : IOutboundEventFormatter
             RowRemoveDelta remove => new RowRemoveEvent
             {
                 ViewId = remove.ViewId,
+                SubscriptionId = subscriptionId,
                 Position = remove.Position
             },
             _ => throw new ArgumentOutOfRangeException(nameof(delta), delta.GetType().Name, "Unknown delta type.")

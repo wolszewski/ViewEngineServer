@@ -11,16 +11,16 @@ public sealed class MutationPropagator
     private readonly List<MutationImpact> _impactBuffer = [];
     private readonly List<int> _oldPosBuffer = [];
 
-    // Returns groups of (deltas, connectionIds) where all connectionIds in a group share the
+    // Returns groups of (deltas, targets) where all targets in a group share the
     // same viewport and therefore receive the same delta payload — serialize once, fan out.
-    public List<(IReadOnlyList<ViewDelta> Deltas, List<string> ConnectionIds)>? Propagate(
+    public List<(IReadOnlyList<ViewDelta> Deltas, List<SubscriberTarget> Targets)>? Propagate(
         RowCollection collection,
         ConcurrentDictionary<ViewKey, SharedView> collectionViews,
-        ConcurrentDictionary<string, ViewportState> viewports,
+        ConcurrentDictionary<SubscriptionKey, ViewportState> viewports,
         MutationInfo mutation,
         bool isDelete)
     {
-        List<(IReadOnlyList<ViewDelta> Deltas, List<string> ConnectionIds)>? pending = null;
+        List<(IReadOnlyList<ViewDelta> Deltas, List<SubscriberTarget> Targets)>? pending = null;
         try
         {
             GroupViewsBySortIndex(collectionViews);
@@ -99,10 +99,10 @@ public sealed class MutationPropagator
     private void CollectViewDeltaGroups(
         RowCollection collection,
         List<SharedView> views,
-        ConcurrentDictionary<string, ViewportState> viewports,
+        ConcurrentDictionary<SubscriptionKey, ViewportState> viewports,
         MutationInfo mutation,
         bool isDelete,
-        ref List<(IReadOnlyList<ViewDelta> Deltas, List<string> ConnectionIds)>? pending)
+        ref List<(IReadOnlyList<ViewDelta> Deltas, List<SubscriberTarget> Targets)>? pending)
     {
         for (int i = 0; i < views.Count; i++)
         {
@@ -154,9 +154,9 @@ public sealed class MutationPropagator
     private static void CollectFastPathGroups(
         RowCollection collection,
         SharedView view,
-        ConcurrentDictionary<string, ViewportState> viewports,
+        ConcurrentDictionary<SubscriptionKey, ViewportState> viewports,
         MutationInfo mutation,
-        ref List<(IReadOnlyList<ViewDelta>, List<string>)>? pending)
+        ref List<(IReadOnlyList<ViewDelta>, List<SubscriberTarget>)>? pending)
     {
         if (mutation.ChangedColumns is not { Count: > 0 })
         {
@@ -169,10 +169,10 @@ public sealed class MutationPropagator
             return;
         }
 
-        Dictionary<FastPathGroupKey, List<string>>? groups = null;
-        foreach (var connectionId in view.Subscribers)
+        Dictionary<FastPathGroupKey, List<ViewportState>>? groups = null;
+        foreach (var subscriptionId in view.Subscribers)
         {
-            if (!viewports.TryGetValue(connectionId, out var viewport))
+            if (!viewports.TryGetValue(subscriptionId, out var viewport))
             {
                 continue;
             }
@@ -190,15 +190,15 @@ public sealed class MutationPropagator
             groups ??= new();
             var key = new FastPathGroupKey(viewport.StartIndex, viewport.PageSize, viewport.VisibleColumns);
             if (!groups.TryGetValue(key, out var list)) { list = []; groups[key] = list; }
-            list.Add(connectionId);
+            list.Add(viewport);
         }
 
         if (groups is null) { return; }
 
-        foreach (var (key, connIds) in groups)
+        foreach (var (key, groupViewports) in groups)
         {
             pending ??= [];
-            var viewport = viewports[connIds[0]];
+            var viewport = groupViewports[0];
             var projectedColumns = FilterChangedColumns(mutation.ChangedColumns, viewport.VisibleColumns);
             if (projectedColumns.Count == 0)
             {
@@ -213,7 +213,12 @@ public sealed class MutationPropagator
                 Position = filteredPos - key.Start,
                 ChangedColumns = projectedColumns,
                 VisibleFieldIndexes = viewport.SelectedFieldIndexes
-            }], connIds));
+            }],
+                groupViewports
+                    .Select(static v => new SubscriberTarget(
+                        v.SubscriptionKey.ConnectionId,
+                        v.SubscriptionKey.SubscriptionId))
+                    .ToList()));
         }
     }
 
@@ -222,17 +227,17 @@ public sealed class MutationPropagator
     private static void CollectPositionGroups(
         RowCollection collection,
         SharedView view,
-        ConcurrentDictionary<string, ViewportState> viewports,
+        ConcurrentDictionary<SubscriptionKey, ViewportState> viewports,
         MutationInfo mutation,
         int oldFilteredPos,
         int newFilteredPos,
         bool isDelete,
-        ref List<(IReadOnlyList<ViewDelta>, List<string>)>? pending)
+        ref List<(IReadOnlyList<ViewDelta>, List<SubscriberTarget>)>? pending)
     {
-        Dictionary<ViewportGroupKey, List<string>>? groups = null;
-        foreach (var connectionId in view.Subscribers)
+        Dictionary<ViewportGroupKey, List<ViewportState>>? groups = null;
+        foreach (var subscriptionId in view.Subscribers)
         {
-            if (!viewports.TryGetValue(connectionId, out var viewport))
+            if (!viewports.TryGetValue(subscriptionId, out var viewport))
             {
                 continue;
             }
@@ -244,14 +249,14 @@ public sealed class MutationPropagator
                 viewport.VisibleColumns,
                 viewport.SelectedFieldIndexes);
             if (!groups.TryGetValue(key, out var list)) { list = []; groups[key] = list; }
-            list.Add(connectionId);
+            list.Add(viewport);
         }
 
         if (groups is null) { return; }
 
-        foreach (var (key, connIds) in groups)
+        foreach (var (key, groupViewports) in groups)
         {
-            var visibleViewport = viewports[connIds[0]];
+            var visibleViewport = groupViewports[0];
             var deltas = ComputePositionDeltas(
                 view, collection, view.Key.Id, mutation,
                 oldFilteredPos, newFilteredPos, key.Start, key.PageSize,
@@ -259,7 +264,12 @@ public sealed class MutationPropagator
             if (deltas.Count == 0) { continue; }
 
             pending ??= [];
-            pending.Add((deltas, connIds));
+            pending.Add((deltas,
+                groupViewports
+                    .Select(static v => new SubscriberTarget(
+                        v.SubscriptionKey.ConnectionId,
+                        v.SubscriptionKey.SubscriptionId))
+                    .ToList()));
         }
     }
 

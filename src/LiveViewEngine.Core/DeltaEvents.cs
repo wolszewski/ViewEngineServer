@@ -10,6 +10,7 @@ namespace LiveViewEngine.Core;
 public abstract class DeltaEvent
 {
     public required string ViewId { get; init; }
+    public required int SubscriptionId { get; init; }
 }
 
 public sealed class SnapshotEvent : DeltaEvent

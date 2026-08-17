@@ -71,7 +71,7 @@ public class ViewEngineBlotterTests
     }
 
     // Collects all ids from a view by paging through the full result set.
-    private static async Task<HashSet<string>> CollectAllIds(ViewEngine engine, string connectionId,
+    private static async Task<HashSet<string>> CollectAllIds(ViewEngine engine, int connectionId,
         ViewDefinition view, int total)
     {
         var allIds = new HashSet<string>(total);
@@ -80,7 +80,7 @@ public class ViewEngineBlotterTests
         {
             var evts = await engine.SubscribeAsync(new SubscribeCommand
             {
-                ConnectionId = $"{connectionId}-page-{start}",
+                ConnectionId = checked(connectionId * 100_000 + start + 1),
                 View = view,
                 StartIndex = start,
                 PageSize = pageSize
@@ -104,7 +104,7 @@ public class ViewEngineBlotterTests
         await InsertObjectsAsync(engine, 10000);
 
         var view = new ViewDefinition { CollectionId = CollectionId };
-        var allIds = await CollectAllIds(engine, "client", view, 10000);
+        var allIds = await CollectAllIds(engine, 1, view, 10000);
 
         Assert.Equal(10000, allIds.Count);
         for (int i = 1; i <= 10000; i++)
@@ -123,7 +123,7 @@ public class ViewEngineBlotterTests
         var view = new ViewDefinition { CollectionId = CollectionId, SortColumn = "date", SortAscending = false };
 
         // Verify all ids present
-        var allIds = await CollectAllIds(engine, "client", view, 10000);
+        var allIds = await CollectAllIds(engine, 1, view, 10000);
         Assert.Equal(10000, allIds.Count);
         for (int i = 1; i <= 10000; i++)
         {
@@ -133,14 +133,14 @@ public class ViewEngineBlotterTests
         // Verify page boundary ordering: last row of page N <= first row of page N+1 (desc)
         var evts0 = await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "order-check-0",
+            ConnectionId = 101,
             View = view,
             StartIndex = 0,
             PageSize = 500
         });
         var evts1 = await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "order-check-1",
+            ConnectionId = 102,
             View = view,
             StartIndex = 500,
             PageSize = 500
@@ -174,7 +174,7 @@ public class ViewEngineBlotterTests
         };
 
         // 10000 / 4 = 2500 category1 objects (i % 4 == 0 → i = 0,4,8,...,9996)
-        var allIds = await CollectAllIds(engine, "client", view, 2500);
+        var allIds = await CollectAllIds(engine, 1, view, 2500);
         Assert.Equal(2500, allIds.Count);
 
         // Every category1 id: O00001, O00005, O00009, ... (i%4==0 → i+1 = 1,5,9,...)
@@ -202,7 +202,7 @@ public class ViewEngineBlotterTests
             Filters = [new FilterSpec("category", FilterOperator.Eq, "category1")]
         };
 
-        var allIds = await CollectAllIds(engine, "client", view, 2500);
+        var allIds = await CollectAllIds(engine, 1, view, 2500);
         Assert.Equal(2500, allIds.Count);
         for (int i = 0; i < 10000; i++)
         {
@@ -215,7 +215,7 @@ public class ViewEngineBlotterTests
         // Spot-check ordering on first page
         var evts = await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "order-check",
+            ConnectionId = 103,
             View = view,
             StartIndex = 0,
             PageSize = 500
@@ -240,7 +240,7 @@ public class ViewEngineBlotterTests
         // Sort descending so each new object enters at position 0, exercising the position-based delta path.
         await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "client1",
+            ConnectionId = 1,
             View = new ViewDefinition { CollectionId = CollectionId, SortColumn = "id", SortAscending = false },
             StartIndex = 0,
             PageSize = 50
@@ -250,8 +250,8 @@ public class ViewEngineBlotterTests
 
         // Each insert goes to position 0 (descending sort, new id is always largest).
         // First 50: no remove. Subsequent 9950: 1 remove each.
-        Assert.Equal(10000, publisher.EventsFor("client1").OfType<RowInsertEvent>().Count());
-        Assert.Equal(9950, publisher.EventsFor("client1").OfType<RowRemoveEvent>().Count());
+        Assert.Equal(10000, publisher.EventsFor(1).OfType<RowInsertEvent>().Count());
+        Assert.Equal(9950, publisher.EventsFor(1).OfType<RowRemoveEvent>().Count());
     }
 
     [Fact]
@@ -265,14 +265,14 @@ public class ViewEngineBlotterTests
         // Subscribe both clients before inserts
         await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "clientA",
+            ConnectionId = 1,
             View = view,
             StartIndex = 0,
             PageSize = 50
         });
         await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "clientB",
+            ConnectionId = 2,
             View = view,
             StartIndex = 0,
             PageSize = 50
@@ -281,22 +281,22 @@ public class ViewEngineBlotterTests
         await InsertObjectsAsync(engine, 10000);
 
         // Both clients receive 10k inserts and 9950 removes (same logic as single-subscriber test)
-        Assert.Equal(10000, publisher.EventsFor("clientA").OfType<RowInsertEvent>().Count());
-        Assert.Equal(9950, publisher.EventsFor("clientA").OfType<RowRemoveEvent>().Count());
-        Assert.Equal(10000, publisher.EventsFor("clientB").OfType<RowInsertEvent>().Count());
-        Assert.Equal(9950, publisher.EventsFor("clientB").OfType<RowRemoveEvent>().Count());
+        Assert.Equal(10000, publisher.EventsFor(1).OfType<RowInsertEvent>().Count());
+        Assert.Equal(9950, publisher.EventsFor(1).OfType<RowRemoveEvent>().Count());
+        Assert.Equal(10000, publisher.EventsFor(2).OfType<RowInsertEvent>().Count());
+        Assert.Equal(9950, publisher.EventsFor(2).OfType<RowRemoveEvent>().Count());
 
         // After all inserts, verify both see the same final snapshot
         var evtsA = await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "verifyA",
+            ConnectionId = 101,
             View = view,
             StartIndex = 0,
             PageSize = 50
         });
         var evtsB = await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "verifyB",
+            ConnectionId = 102,
             View = view,
             StartIndex = 0,
             PageSize = 50
@@ -334,8 +334,8 @@ public class ViewEngineBlotterTests
             Filters = [new FilterSpec("category", FilterOperator.Eq, "category2")]
         };
 
-        var idsCat1 = await CollectAllIds(engine, "cat1", viewCat1, 2500);
-        var idsCat2 = await CollectAllIds(engine, "cat2", viewCat2, 2500);
+        var idsCat1 = await CollectAllIds(engine, 1, viewCat1, 2500);
+        var idsCat2 = await CollectAllIds(engine, 2, viewCat2, 2500);
 
         Assert.Equal(2500, idsCat1.Count);
         Assert.Equal(2500, idsCat2.Count);
@@ -429,7 +429,7 @@ public class ViewEngineBlotterTests
 
         var events = await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "client",
+            ConnectionId = 1,
             View = new ViewDefinition
             {
                 CollectionId = CollectionId,
@@ -457,7 +457,7 @@ public class ViewEngineBlotterTests
 
         await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "client",
+            ConnectionId = 1,
             View = new ViewDefinition
             {
                 CollectionId = CollectionId,
@@ -478,7 +478,7 @@ public class ViewEngineBlotterTests
             }
         });
 
-        var updates = publisher.EventsFor("client").OfType<RowUpdateEvent>().ToList();
+        var updates = publisher.EventsFor(1).OfType<RowUpdateEvent>().ToList();
         Assert.Single(updates);
         Assert.Equal("O00001", updates[0].RowId);
         Assert.Equal("modified-value", updates[0].ChangedFields["f01"]);
@@ -494,7 +494,7 @@ public class ViewEngineBlotterTests
 
         await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "client",
+            ConnectionId = 1,
             View = new ViewDefinition { CollectionId = CollectionId },
             StartIndex = 0,
             PageSize = 50
@@ -507,7 +507,7 @@ public class ViewEngineBlotterTests
             Fields = new Dictionary<string, string?> { ["f01"] = "modified-value" }
         });
 
-        var updates = publisher.EventsFor("client").OfType<RowUpdateEvent>().ToList();
+        var updates = publisher.EventsFor(1).OfType<RowUpdateEvent>().ToList();
         Assert.Single(updates);
         Assert.Equal("O00001", updates[0].RowId);
         Assert.Equal("modified-value", updates[0].ChangedFields["f01"]);
@@ -523,7 +523,7 @@ public class ViewEngineBlotterTests
 
         await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "client",
+            ConnectionId = 1,
             View = new ViewDefinition { CollectionId = CollectionId },
             StartIndex = 0,
             PageSize = 50
@@ -537,7 +537,7 @@ public class ViewEngineBlotterTests
             Fields = changed
         });
 
-        var updates = publisher.EventsFor("client").OfType<RowUpdateEvent>().ToList();
+        var updates = publisher.EventsFor(1).OfType<RowUpdateEvent>().ToList();
         Assert.Single(updates);
         Assert.Equal(3, updates[0].ChangedFields.Count);
         Assert.Equal("x", updates[0].ChangedFields["f03"]);
@@ -554,7 +554,7 @@ public class ViewEngineBlotterTests
 
         await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "client",
+            ConnectionId = 1,
             View = new ViewDefinition { CollectionId = CollectionId },
             StartIndex = 0,
             PageSize = 50
@@ -566,7 +566,7 @@ public class ViewEngineBlotterTests
             await engine.IngestAsync(cmd);
         }
 
-        var updates = publisher.EventsFor("client").OfType<RowUpdateEvent>().ToList();
+        var updates = publisher.EventsFor(1).OfType<RowUpdateEvent>().ToList();
         Assert.Equal(50, updates.Count);
 
         var expected = mods.ToDictionary(m => m.Command.Key, m => m.Fields);
@@ -590,7 +590,7 @@ public class ViewEngineBlotterTests
 
         await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "client",
+            ConnectionId = 1,
             View = new ViewDefinition { CollectionId = CollectionId, SortColumn = "id", SortAscending = true },
             StartIndex = 0,
             PageSize = 25
@@ -602,7 +602,7 @@ public class ViewEngineBlotterTests
             await engine.IngestAsync(cmd);
         }
 
-        var updates = publisher.EventsFor("client").OfType<RowUpdateEvent>().ToList();
+        var updates = publisher.EventsFor(1).OfType<RowUpdateEvent>().ToList();
 
         Assert.Equal(25, updates.Count);
         var inViewport = new HashSet<string>(Enumerable.Range(1, 25).Select(i => $"O{i:D5}"));
@@ -620,7 +620,7 @@ public class ViewEngineBlotterTests
 
         await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "earlyClient",
+            ConnectionId = 1,
             View = view,
             StartIndex = 0,
             PageSize = 100
@@ -634,13 +634,13 @@ public class ViewEngineBlotterTests
         }
 
         // Early client should have received exactly 60 update events (all 60 are in viewport)
-        var earlyUpdates = publisher.EventsFor("earlyClient").OfType<RowUpdateEvent>().ToList();
+        var earlyUpdates = publisher.EventsFor(1).OfType<RowUpdateEvent>().ToList();
         Assert.Equal(60, earlyUpdates.Count);
 
         // Late subscriber joins after all modifications
         var lateDeltas = await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "lateClient",
+            ConnectionId = 2,
             View = view,
             StartIndex = 0,
             PageSize = 100
@@ -650,7 +650,7 @@ public class ViewEngineBlotterTests
         // Subscribe a third connection to get a definitive snapshot for comparison
         var verifyDeltas = await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "verify",
+            ConnectionId = 3,
             View = view,
             StartIndex = 0,
             PageSize = 100
@@ -697,7 +697,7 @@ public class ViewEngineBlotterTests
 
         var events = await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "client",
+            ConnectionId = 1,
             View = new ViewDefinition
             {
                 CollectionId = CollectionId,
@@ -721,7 +721,7 @@ public class ViewEngineBlotterTests
 
         var events = await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "client",
+            ConnectionId = 1,
             View = new ViewDefinition
             {
                 CollectionId = CollectionId,
@@ -745,7 +745,7 @@ public class ViewEngineBlotterTests
 
         await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "client",
+            ConnectionId = 1,
             View = new ViewDefinition
             {
                 CollectionId = CollectionId,
@@ -762,7 +762,7 @@ public class ViewEngineBlotterTests
             Fields = new Dictionary<string, string?> { ["f05"] = "changed", ["f10"] = "changed" }
         });
 
-        var updates = publisher.EventsFor("client").OfType<RowUpdateEvent>().ToList();
+        var updates = publisher.EventsFor(1).OfType<RowUpdateEvent>().ToList();
         Assert.Empty(updates);
     }
 
@@ -775,7 +775,7 @@ public class ViewEngineBlotterTests
 
         await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "client",
+            ConnectionId = 1,
             View = new ViewDefinition
             {
                 CollectionId = CollectionId,
@@ -798,7 +798,7 @@ public class ViewEngineBlotterTests
             }
         });
 
-        var updates = publisher.EventsFor("client").OfType<RowUpdateEvent>().ToList();
+        var updates = publisher.EventsFor(1).OfType<RowUpdateEvent>().ToList();
         Assert.Single(updates);
         Assert.Equal(2, updates[0].ChangedFields.Count);
         Assert.Equal("selected-changed", updates[0].ChangedFields["f01"]);
@@ -814,7 +814,7 @@ public class ViewEngineBlotterTests
 
         await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "client",
+            ConnectionId = 1,
             View = new ViewDefinition
             {
                 CollectionId = CollectionId,
@@ -830,7 +830,7 @@ public class ViewEngineBlotterTests
             Key = "O00001"
         });
 
-        var removes = publisher.EventsFor("client").OfType<RowRemoveEvent>().ToList();
+        var removes = publisher.EventsFor(1).OfType<RowRemoveEvent>().ToList();
         Assert.Single(removes);
     }
 
@@ -843,7 +843,7 @@ public class ViewEngineBlotterTests
 
         await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "client",
+            ConnectionId = 1,
             View = new ViewDefinition
             {
                 CollectionId = CollectionId,
@@ -855,7 +855,7 @@ public class ViewEngineBlotterTests
 
         await UpsertObject(engine, 1);
 
-        var inserts = publisher.EventsFor("client").OfType<RowInsertEvent>().ToList();
+        var inserts = publisher.EventsFor(1).OfType<RowInsertEvent>().ToList();
         Assert.Single(inserts);
         Assert.Contains("key", inserts[0].Row.Keys);
         Assert.Contains("f01", inserts[0].Row.Keys);
@@ -871,7 +871,7 @@ public class ViewEngineBlotterTests
 
         await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "clientA",
+            ConnectionId = 1,
             View = new ViewDefinition { CollectionId = CollectionId, Fields = ["f01", "f02"] },
             StartIndex = 0,
             PageSize = 50
@@ -879,7 +879,7 @@ public class ViewEngineBlotterTests
 
         await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "clientB",
+            ConnectionId = 2,
             View = new ViewDefinition { CollectionId = CollectionId, Fields = ["f03", "f04"] },
             StartIndex = 0,
             PageSize = 50
@@ -896,8 +896,8 @@ public class ViewEngineBlotterTests
             }
         });
 
-        var updatesA = publisher.EventsFor("clientA").OfType<RowUpdateEvent>().ToList();
-        var updatesB = publisher.EventsFor("clientB").OfType<RowUpdateEvent>().ToList();
+        var updatesA = publisher.EventsFor(1).OfType<RowUpdateEvent>().ToList();
+        var updatesB = publisher.EventsFor(2).OfType<RowUpdateEvent>().ToList();
 
         Assert.Single(updatesA);
         Assert.Contains("f01", updatesA[0].ChangedFields.Keys);

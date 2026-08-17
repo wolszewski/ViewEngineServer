@@ -77,7 +77,7 @@ public class ViewEngineIngestTests
 
         var events = await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "client1",
+            ConnectionId = 1,
             View = new ViewDefinition { CollectionId = "orders" },
             StartIndex = 0,
             PageSize = 50
@@ -97,7 +97,7 @@ public class ViewEngineIngestTests
         await Upsert(engine, "o1", "Alice", "100");
         await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "client1",
+            ConnectionId = 1,
             View = new ViewDefinition { CollectionId = "orders" },
             StartIndex = 0,
             PageSize = 10
@@ -110,7 +110,7 @@ public class ViewEngineIngestTests
             Fields = new Dictionary<string, string?> { ["amount"] = "250" }
         });
 
-        var updateEvents = publisher.EventsFor("client1").OfType<RowUpdateEvent>().ToList();
+        var updateEvents = publisher.EventsFor(1).OfType<RowUpdateEvent>().ToList();
         Assert.NotEmpty(updateEvents);
         var evt = updateEvents.First();
         Assert.Equal("o1", evt.RowId);
@@ -125,7 +125,7 @@ public class ViewEngineIngestTests
         await Upsert(engine, "o1", "Alice", "100");
         await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "client1",
+            ConnectionId = 1,
             View = new ViewDefinition { CollectionId = "orders" },
             StartIndex = 0,
             PageSize = 10
@@ -137,7 +137,7 @@ public class ViewEngineIngestTests
             Key = "o1"
         });
 
-        Assert.NotEmpty(publisher.EventsFor("client1").OfType<RowRemoveEvent>());
+        Assert.NotEmpty(publisher.EventsFor(1).OfType<RowRemoveEvent>());
     }
 
     [Fact]
@@ -150,7 +150,7 @@ public class ViewEngineIngestTests
 
         var events = await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "client1",
+            ConnectionId = 1,
             View = new ViewDefinition
             {
                 CollectionId = "orders",
@@ -178,7 +178,7 @@ public class ViewEngineIngestTests
 
         var ascendingEvents = await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "clientAsc",
+            ConnectionId = 1,
             View = new ViewDefinition
             {
                 CollectionId = "orders",
@@ -191,7 +191,7 @@ public class ViewEngineIngestTests
 
         var descendingEvents = await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "clientDesc",
+            ConnectionId = 2,
             View = new ViewDefinition
             {
                 CollectionId = "orders",
@@ -224,7 +224,7 @@ public class ViewEngineIngestTests
 
         await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "clientAsc",
+            ConnectionId = 1,
             View = new ViewDefinition
             {
                 CollectionId = "orders",
@@ -237,7 +237,7 @@ public class ViewEngineIngestTests
 
         await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "clientDesc",
+            ConnectionId = 2,
             View = new ViewDefinition
             {
                 CollectionId = "orders",
@@ -266,7 +266,7 @@ public class ViewEngineIngestTests
 
         var ascendingEvents = await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "clientAsc",
+            ConnectionId = 1,
             View = new ViewDefinition
             {
                 CollectionId = "orders",
@@ -279,7 +279,7 @@ public class ViewEngineIngestTests
 
         var descendingEvents = await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "clientDesc",
+            ConnectionId = 2,
             View = new ViewDefinition
             {
                 CollectionId = "orders",
@@ -302,6 +302,169 @@ public class ViewEngineIngestTests
     }
 
     [Fact]
+    public async Task Subscribe_SameConnectionDifferentSubscriptionIds_TracksIndependentSubscriptions()
+    {
+        var (engine, publisher, store) = CreateEngine();
+        await CreateOrders(engine);
+        await Upsert(engine, "o1", "Alice", "100", "open");
+        await Upsert(engine, "o2", "Bob", "200", "closed");
+
+        var openSnapshot = await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = 1,
+            SubscriptionId = 1,
+            View = new ViewDefinition
+            {
+                CollectionId = "orders",
+                Filters = [new FilterSpec("status", FilterOperator.Eq, "open")]
+            },
+            StartIndex = 0,
+            PageSize = 10
+        });
+
+        var closedSnapshot = await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = 1,
+            SubscriptionId = 2,
+            View = new ViewDefinition
+            {
+                CollectionId = "orders",
+                Filters = [new FilterSpec("status", FilterOperator.Eq, "closed")]
+            },
+            StartIndex = 0,
+            PageSize = 10
+        });
+
+        Assert.Equal(1, Assert.IsType<SnapshotDelta>(openSnapshot.Single()).TotalCount);
+        Assert.Equal(1, Assert.IsType<SnapshotDelta>(closedSnapshot.Single()).TotalCount);
+
+        Assert.True(store.TryGetRuntime("orders", out var runtime));
+        Assert.NotNull(runtime);
+        Assert.Equal(2, runtime.ActiveSubscriptionCount);
+        Assert.Equal(2, runtime.ActiveSharedViewCount);
+
+        await Upsert(engine, "o3", "Carol", "300", "open");
+
+        var insertEvents = publisher.EventsFor(1).OfType<RowInsertEvent>().ToList();
+        Assert.Contains(insertEvents, static e => e.SubscriptionId == 1);
+        Assert.DoesNotContain(insertEvents, static e => e.SubscriptionId == 2);
+    }
+
+    [Fact]
+    public async Task Unsubscribe_WithoutSubscriptionId_RemovesAllSubscriptionsForConnection()
+    {
+        var (engine, publisher, store) = CreateEngine();
+        await CreateOrders(engine);
+        await Upsert(engine, "o1", "Alice", "100", "open");
+        await Upsert(engine, "o2", "Bob", "200", "closed");
+
+        await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = 1,
+            SubscriptionId = 1,
+            View = new ViewDefinition
+            {
+                CollectionId = "orders",
+                Filters = [new FilterSpec("status", FilterOperator.Eq, "open")]
+            },
+            StartIndex = 0,
+            PageSize = 10
+        });
+
+        await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = 1,
+            SubscriptionId = 2,
+            View = new ViewDefinition
+            {
+                CollectionId = "orders",
+                Filters = [new FilterSpec("status", FilterOperator.Eq, "closed")]
+            },
+            StartIndex = 0,
+            PageSize = 10
+        });
+
+        await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = 2,
+            SubscriptionId = 1,
+            View = new ViewDefinition
+            {
+                CollectionId = "orders",
+                Filters = [new FilterSpec("status", FilterOperator.Eq, "open")]
+            },
+            StartIndex = 0,
+            PageSize = 10
+        });
+
+        await engine.SubscribeAsync(new UnsubscribeCommand
+        {
+            ConnectionId = 1
+        });
+
+        Assert.True(store.TryGetRuntime("orders", out var runtime));
+        Assert.NotNull(runtime);
+        Assert.Equal(1, runtime.ActiveSubscriptionCount);
+        Assert.Equal(1, runtime.ActiveSharedViewCount);
+
+        await Upsert(engine, "o3", "Carol", "300", "open");
+
+        var socket1Events = publisher.EventsFor(1).OfType<RowInsertEvent>().ToList();
+        var socket2Events = publisher.EventsFor(2).OfType<RowInsertEvent>().ToList();
+        Assert.DoesNotContain(socket1Events, static e => e.Row["key"] == "o3");
+        Assert.Contains(socket2Events, static e => e.SubscriptionId == 1 && e.Row["key"] == "o3");
+    }
+
+    [Fact]
+    public async Task Subscribe_SameSubscriptionId_ReplacesViewAndCleansUpOldSharedView()
+    {
+        var (engine, _, store) = CreateEngine();
+        await CreateOrders(engine);
+        await Upsert(engine, "o1", "Alice", "100", "open");
+        await Upsert(engine, "o2", "Bob", "200", "closed");
+        await Upsert(engine, "o3", "Carol", "300", "open");
+
+        await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = 1,
+            SubscriptionId = 1,
+            View = new ViewDefinition
+            {
+                CollectionId = "orders",
+                SortColumn = "amount",
+                SortAscending = true
+            },
+            StartIndex = 0,
+            PageSize = 10
+        });
+
+        var replacement = await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = 1,
+            SubscriptionId = 1,
+            View = new ViewDefinition
+            {
+                CollectionId = "orders",
+                SortColumn = "amount",
+                SortAscending = true,
+                Filters = [new FilterSpec("status", FilterOperator.Eq, "open")]
+            },
+            StartIndex = 0,
+            PageSize = 10
+        });
+
+        var snapshot = Assert.IsType<SnapshotDelta>(replacement.Single());
+        Assert.Equal("1:1", snapshot.ViewId);
+        Assert.Equal(2, snapshot.TotalCount);
+
+        Assert.True(store.TryGetRuntime("orders", out var runtime));
+        Assert.NotNull(runtime);
+        Assert.Equal(1, runtime.ActiveSubscriptionCount);
+        Assert.Equal(1, runtime.ActiveSharedViewCount);
+        Assert.Equal(1, runtime.SortIndexCount);
+    }
+
+    [Fact]
     public async Task Subscribe_WithFilter_ReturnsMatchingRows()
     {
         var (engine, _, _) = CreateEngine();
@@ -312,7 +475,7 @@ public class ViewEngineIngestTests
 
         var events = await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "client1",
+            ConnectionId = 1,
             View = new ViewDefinition
             {
                 CollectionId = "orders",
@@ -336,7 +499,7 @@ public class ViewEngineIngestTests
         await Upsert(engine, "o1", "Alice", "100");
         await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "client1",
+            ConnectionId = 1,
             View = new ViewDefinition { CollectionId = "orders" },
             StartIndex = 0,
             PageSize = 10
@@ -350,7 +513,7 @@ public class ViewEngineIngestTests
             Fields = new Dictionary<string, string?> { ["amount"] = "999" }
         });
 
-        var published = publisher.EventsFor("client1").ToList();
+        var published = publisher.EventsFor(1).ToList();
         Assert.Single(published, e => e is RowUpdateEvent { RowId: "o1" });
         Assert.DoesNotContain(published, e => e is RowInsertEvent);
         Assert.DoesNotContain(published, e => e is RowRemoveEvent);
@@ -364,7 +527,7 @@ public class ViewEngineIngestTests
         await Upsert(engine, "o1", "Alice", "100", "closed");
         await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "client1",
+            ConnectionId = 1,
             View = new ViewDefinition
             {
                 CollectionId = "orders",
@@ -375,7 +538,7 @@ public class ViewEngineIngestTests
         });
 
         // Snapshot should be empty (no open orders)
-        publisher.EventsFor("client1").ToList(); // consume snapshot
+        publisher.EventsFor(1).ToList(); // consume snapshot
 
         // Change status so the row now matches the filter
         await engine.IngestAsync(new UpsertRowCommand
@@ -385,7 +548,7 @@ public class ViewEngineIngestTests
             Fields = new Dictionary<string, string?> { ["status"] = "open" }
         });
 
-        var afterMutation = publisher.EventsFor("client1").ToList();
+        var afterMutation = publisher.EventsFor(1).ToList();
         Assert.Contains(afterMutation, e => e is RowInsertEvent i && i.Position == 0);
         Assert.DoesNotContain(afterMutation, e => e is RowRemoveEvent);
     }
@@ -398,7 +561,7 @@ public class ViewEngineIngestTests
         await Upsert(engine, "o1", "Alice", "100", "open");
         await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "client1",
+            ConnectionId = 1,
             View = new ViewDefinition
             {
                 CollectionId = "orders",
@@ -415,7 +578,7 @@ public class ViewEngineIngestTests
             Fields = new Dictionary<string, string?> { ["status"] = "closed" }
         });
 
-        Assert.Contains(publisher.EventsFor("client1"), e => e is RowRemoveEvent r && r.Position == 0);
+        Assert.Contains(publisher.EventsFor(1), e => e is RowRemoveEvent r && r.Position == 0);
     }
 
     [Fact]
@@ -425,14 +588,14 @@ public class ViewEngineIngestTests
         await CreateOrders(engine);
         await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "clientA",
+            ConnectionId = 1,
             View = new ViewDefinition { CollectionId = "orders" },
             StartIndex = 0,
             PageSize = 10
         });
         await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "clientB",
+            ConnectionId = 2,
             View = new ViewDefinition { CollectionId = "orders" },
             StartIndex = 0,
             PageSize = 10
@@ -440,8 +603,8 @@ public class ViewEngineIngestTests
 
         await Upsert(engine, "o1", "Alice", "100");
 
-        Assert.Contains(publisher.EventsFor("clientA"), e => e is RowInsertEvent);
-        Assert.Contains(publisher.EventsFor("clientB"), e => e is RowInsertEvent);
+        Assert.Contains(publisher.EventsFor(1), e => e is RowInsertEvent);
+        Assert.Contains(publisher.EventsFor(2), e => e is RowInsertEvent);
     }
 
     [Fact]
@@ -452,14 +615,14 @@ public class ViewEngineIngestTests
         await Upsert(engine, "o1", "Alice", "100");
         await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "clientA",
+            ConnectionId = 1,
             View = new ViewDefinition { CollectionId = "orders" },
             StartIndex = 0,
             PageSize = 10
         });
         await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "clientB",
+            ConnectionId = 2,
             View = new ViewDefinition { CollectionId = "orders" },
             StartIndex = 0,
             PageSize = 10
@@ -472,8 +635,8 @@ public class ViewEngineIngestTests
             Fields = new Dictionary<string, string?> { ["amount"] = "500" }
         });
 
-        Assert.Contains(publisher.EventsFor("clientA"), e => e is RowUpdateEvent u && u.RowId == "o1");
-        Assert.Contains(publisher.EventsFor("clientB"), e => e is RowUpdateEvent u && u.RowId == "o1");
+        Assert.Contains(publisher.EventsFor(1), e => e is RowUpdateEvent u && u.RowId == "o1");
+        Assert.Contains(publisher.EventsFor(2), e => e is RowUpdateEvent u && u.RowId == "o1");
     }
 
     [Fact]
@@ -485,7 +648,7 @@ public class ViewEngineIngestTests
         await Upsert(engine, "o2", "Bob", "200");
         await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "client1",
+            ConnectionId = 1,
             View = new ViewDefinition
             {
                 CollectionId = "orders",
@@ -506,7 +669,7 @@ public class ViewEngineIngestTests
 
         // Row order should have changed: o2(200), o1(300) → snapshot was o1(100), o2(200)
         // Position 0 should now be o2, position 1 o1; so o1 removed from pos 0, inserted at pos 1
-        var events = publisher.EventsFor("client1").ToList();
+        var events = publisher.EventsFor(1).ToList();
         Assert.NotEmpty(events);
     }
 
@@ -524,7 +687,7 @@ public class ViewEngineIngestTests
 
         await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "client1",
+            ConnectionId = 1,
             View = new ViewDefinition
             {
                 CollectionId = "orders",
@@ -542,7 +705,7 @@ public class ViewEngineIngestTests
             Fields = new Dictionary<string, string?> { ["amount"] = "999" }
         });
 
-        var events = publisher.EventsFor("client1").ToList();
+        var events = publisher.EventsFor(1).ToList();
         Assert.Equal(2, events.Count);
 
         var remove = Assert.IsType<RowRemoveEvent>(events[0]);
@@ -563,7 +726,7 @@ public class ViewEngineIngestTests
         await Upsert(engine, "o3", "Carol", "300");
         await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "client1",
+            ConnectionId = 1,
             View = new ViewDefinition { CollectionId = "orders" },
             StartIndex = 0,
             PageSize = 2  // only o1, o2 visible
@@ -577,7 +740,7 @@ public class ViewEngineIngestTests
             Fields = new Dictionary<string, string?> { ["amount"] = "999" }
         });
 
-        Assert.Empty(publisher.EventsFor("client1"));
+        Assert.Empty(publisher.EventsFor(1));
     }
 
     [Fact]
@@ -589,7 +752,7 @@ public class ViewEngineIngestTests
         await Upsert(engine, "o2", "Bob", "200", "open");
         await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "client1",
+            ConnectionId = 1,
             View = new ViewDefinition
             {
                 CollectionId = "orders",
@@ -618,7 +781,7 @@ public class ViewEngineIngestTests
         // After re-entering, the view should still be sorted by amount asc: o1(100), o2(200)
         var events = await engine.SubscribeAsync(new SubscribeCommand
         {
-            ConnectionId = "verify",
+            ConnectionId = 99,
             View = new ViewDefinition
             {
                 CollectionId = "orders",
