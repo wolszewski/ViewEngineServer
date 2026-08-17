@@ -17,6 +17,10 @@ ModuleRegistry.registerModules([AllCommunityModule]);
 
 const defaultTotalCountAssumption = 10_000;
 const defaultPageSizes = [25, 50, 100];
+const defaultCollectionId = 'trades';
+const defaultSortColumn = 'quantity';
+const defaultPageSize = 50;
+const defaultMessageFormat: MessageFormat = 'compact';
 const filterOperators = [
     { label: 'equals', value: 'eq' },
     { label: 'not equals', value: 'notEq' },
@@ -50,6 +54,124 @@ const columnGroups: Array<{ label: string; columns: string[] }> = [
     { label: 'enum',    columns: ['side', 'status', ...Array.from({ length: 20 }, (_, i) => `enumField${i.toString().padStart(2, '0')}`)] },
     { label: 'date',    columns: ['createdDate', 'updatedDate'] }
 ];
+const knownTradeColumnSet = new Set(knownTradeColumns);
+const filterOperatorSet = new Set(filterOperators.map((operator) => operator.value));
+
+interface AppliedFilter {
+    field: string;
+    operator: string;
+    value: string;
+}
+
+interface AppUrlState {
+    collectionId: string;
+    sortColumn: string;
+    sortAscending: boolean;
+    messageFormat: MessageFormat;
+    pageSize: number;
+    pageIndex: number;
+    filters: AppliedFilter[];
+    selectedFields: string[];
+}
+
+function parsePositiveInteger(value: string | null, fallback: number): number {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 1) {
+        return fallback;
+    }
+
+    return Math.floor(parsed);
+}
+
+function getInitialUrlState(): AppUrlState {
+    const params = new URLSearchParams(window.location.search);
+    const filterFields = params.getAll('filterField');
+    const filterOperatorsFromUrl = params.getAll('filterOperator');
+    const filterValues = params.getAll('filterValue');
+    const filterCount = Math.min(filterFields.length, filterOperatorsFromUrl.length, filterValues.length);
+    const filters: AppliedFilter[] = [];
+
+    for (let index = 0; index < filterCount; index += 1) {
+        const field = filterFields[index];
+        if (!knownTradeColumnSet.has(field)) {
+            continue;
+        }
+
+        const operator = filterOperatorSet.has(filterOperatorsFromUrl[index])
+            ? filterOperatorsFromUrl[index]
+            : 'eq';
+        filters.push({
+            field,
+            operator,
+            value: filterValues[index]
+        });
+    }
+
+    const selectedColumnSet = new Set(params.getAll('column').filter((column) => knownTradeColumnSet.has(column)));
+    const selectedFields = selectedColumnSet.size === 0 || selectedColumnSet.size === knownTradeColumns.length
+        ? []
+        : knownTradeColumns.filter((column) => selectedColumnSet.has(column));
+    const sortColumn = params.get('sort');
+
+    return {
+        collectionId: params.get('collection')?.trim() || defaultCollectionId,
+        sortColumn: sortColumn && knownTradeColumnSet.has(sortColumn) ? sortColumn : defaultSortColumn,
+        sortAscending: params.get('dir') !== 'desc',
+        messageFormat: params.get('format') === 'json' ? 'json' : defaultMessageFormat,
+        pageSize: parsePositiveInteger(params.get('pageSize'), defaultPageSize),
+        pageIndex: Math.max(0, parsePositiveInteger(params.get('page'), 1) - 1),
+        filters,
+        selectedFields
+    };
+}
+
+function syncUrlState(state: AppUrlState): void {
+    const params = new URLSearchParams();
+
+    if (state.collectionId !== defaultCollectionId) {
+        params.set('collection', state.collectionId);
+    }
+
+    if (state.sortColumn !== defaultSortColumn) {
+        params.set('sort', state.sortColumn);
+    }
+
+    if (!state.sortAscending) {
+        params.set('dir', 'desc');
+    }
+
+    if (state.messageFormat !== defaultMessageFormat) {
+        params.set('format', state.messageFormat);
+    }
+
+    if (state.pageSize !== defaultPageSize) {
+        params.set('pageSize', String(state.pageSize));
+    }
+
+    if (state.pageIndex > 0) {
+        params.set('page', String(state.pageIndex + 1));
+    }
+
+    for (const filter of state.filters) {
+        params.append('filterField', filter.field);
+        params.append('filterOperator', filter.operator);
+        params.append('filterValue', filter.value);
+    }
+
+    for (const column of state.selectedFields) {
+        params.append('column', column);
+    }
+
+    const nextSearch = params.toString();
+    const nextUrl = nextSearch.length > 0
+        ? `${window.location.pathname}?${nextSearch}${window.location.hash}`
+        : `${window.location.pathname}${window.location.hash}`;
+    const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+
+    if (nextUrl !== currentUrl) {
+        window.history.replaceState(null, '', nextUrl);
+    }
+}
 
 interface SearchableDropdownProps {
     id: string;
@@ -174,22 +296,23 @@ function SearchableDropdown({
 }
 
 function App(): React.ReactElement {
+    const initialUrlState = useMemo(() => getInitialUrlState(), []);
     const [status, setStatus] = useState('Disconnected');
-    const [collectionId, setCollectionId] = useState('trades');
-    const [sortColumn, setSortColumn] = useState('quantity');
-    const [sortAscending, setSortAscending] = useState(true);
-    const [messageFormat, setMessageFormat] = useState<MessageFormat>('compact');
-    const [pageSize, setPageSize] = useState(50);
-    const [pageSizeInput, setPageSizeInput] = useState('50');
-    const [pageIndex, setPageIndex] = useState(0);
-    const [filters, setFilters] = useState<Array<{ field: string; operator: string; value: string }>>([]);
+    const [collectionId, setCollectionId] = useState(initialUrlState.collectionId);
+    const [sortColumn, setSortColumn] = useState(initialUrlState.sortColumn);
+    const [sortAscending, setSortAscending] = useState(initialUrlState.sortAscending);
+    const [messageFormat, setMessageFormat] = useState<MessageFormat>(initialUrlState.messageFormat);
+    const [pageSize, setPageSize] = useState(initialUrlState.pageSize);
+    const [pageSizeInput, setPageSizeInput] = useState(String(initialUrlState.pageSize));
+    const [pageIndex, setPageIndex] = useState(initialUrlState.pageIndex);
+    const [filters, setFilters] = useState<AppliedFilter[]>(initialUrlState.filters);
     const [isAddingFilter, setIsAddingFilter] = useState(false);
     const [draftFilter, setDraftFilter] = useState({
         field: knownTradeColumns[0],
         operator: 'eq',
         value: ''
     });
-    const [selectedFields, setSelectedFields] = useState<string[]>([]);
+    const [selectedFields, setSelectedFields] = useState<string[]>(initialUrlState.selectedFields);
     const [isSelectingColumns, setIsSelectingColumns] = useState(false);
     const [draftColumns, setDraftColumns] = useState<Set<string>>(new Set());
     const [totalCount, setTotalCount] = useState<number | null>(null);
@@ -498,6 +621,19 @@ function App(): React.ReactElement {
     useEffect(() => {
         setPageSizeInput(String(pageSize));
     }, [pageSize]);
+
+    useEffect(() => {
+        syncUrlState({
+            collectionId,
+            sortColumn,
+            sortAscending,
+            messageFormat,
+            pageSize,
+            pageIndex,
+            filters: normalisedFilters,
+            selectedFields
+        });
+    }, [collectionId, messageFormat, normalisedFilters, pageIndex, pageSize, selectedFields, sortAscending, sortColumn]);
 
     useEffect(() => {
         const client = clientRef.current;
