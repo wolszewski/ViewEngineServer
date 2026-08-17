@@ -2,6 +2,7 @@ export type RowData = Record<string, string | null>;
 
 export interface SnapshotEvent {
     type: 'snapshot';
+    subscriptionId: number;
     totalCount: number;
     startIndex: number;
     rows: RowData[];
@@ -9,6 +10,7 @@ export interface SnapshotEvent {
 
 export interface RowUpdateEvent {
     type: 'rowUpdate';
+    subscriptionId: number;
     rowId: string;
     position: number;
     changedFields: RowData;
@@ -16,16 +18,23 @@ export interface RowUpdateEvent {
 
 export interface RowInsertEvent {
     type: 'rowInsert';
+    subscriptionId: number;
     position: number;
     row: RowData;
 }
 
 export interface RowRemoveEvent {
     type: 'rowRemove';
+    subscriptionId: number;
     position: number;
 }
 
 export type DeltaEvent = SnapshotEvent | RowUpdateEvent | RowInsertEvent | RowRemoveEvent;
+
+interface SubscriptionAcceptedMessage {
+    type: 'subscriptionAccepted';
+    subscriptionId: number;
+}
 
 export interface FilterRequest {
     field: string;
@@ -56,6 +65,7 @@ export class WebHostClient {
     private subscribeRetryHandle: number | null = null;
     private hasReceivedSnapshot = false;
     private lastSubscribe: SubscribeRequest | null = null;
+    private activeSubscriptionId: number | null = null;
 
     public constructor(webSocketUrl: string, callbacks: ClientCallbacks) {
         this.webSocketUrl = webSocketUrl;
@@ -75,6 +85,7 @@ export class WebHostClient {
         this.disconnect();
         this.lastSubscribe = request;
         this.hasReceivedSnapshot = false;
+        this.activeSubscriptionId = null;
         this.callbacks.onStatus('Connecting...');
 
         const socket = new WebSocket(this.webSocketUrl);
@@ -88,8 +99,19 @@ export class WebHostClient {
         });
 
         socket.addEventListener('message', (event) => {
-            const parsed = JSON.parse(String(event.data)) as DeltaEvent[];
+            const parsed = JSON.parse(String(event.data)) as SubscriptionAcceptedMessage | DeltaEvent[];
+            if (!Array.isArray(parsed)) {
+                if (parsed.type === 'subscriptionAccepted') {
+                    this.activeSubscriptionId = parsed.subscriptionId;
+                }
+                return;
+            }
+
             for (const delta of parsed) {
+                if (this.activeSubscriptionId !== null && delta.subscriptionId !== this.activeSubscriptionId) {
+                    continue;
+                }
+
                 if (delta.type === 'snapshot') {
                     this.hasReceivedSnapshot = true;
                     this.stopSubscribeRetry();
@@ -123,10 +145,16 @@ export class WebHostClient {
             return;
         }
 
-        if (this.lastSubscribe) {
+        if (!this.lastSubscribe) {
+            return;
+        }
+
+        if (this.activeSubscriptionId === null) {
             this.sendSubscribe(this.lastSubscribe);
             return;
         }
+
+        this.sendSetViewport(startIndex, pageSize);
     }
 
     public disconnect(): void {
@@ -134,6 +162,7 @@ export class WebHostClient {
         const socket = this.socket;
         this.socket = null;
         this.hasReceivedSnapshot = false;
+        this.activeSubscriptionId = null;
         if (socket) {
             socket.close();
         }
@@ -159,6 +188,10 @@ export class WebHostClient {
             }))
         };
 
+        if (this.activeSubscriptionId !== null) {
+            message.subscriptionId = this.activeSubscriptionId;
+        }
+
         if (request.fields && request.fields.length > 0) {
             message.fields = request.fields;
         }
@@ -176,6 +209,19 @@ export class WebHostClient {
         }
 
         this.sendSubscribe(this.lastSubscribe);
+    }
+
+    private sendSetViewport(startIndex: number, pageSize: number): void {
+        if (!this.socket || this.socket.readyState !== WebSocket.OPEN || this.activeSubscriptionId === null) {
+            return;
+        }
+
+        this.socket.send(JSON.stringify({
+            type: 'setviewport',
+            subscriptionId: this.activeSubscriptionId,
+            startIndex,
+            pageSize
+        }));
     }
 
     private startSubscribeRetry(): void {
