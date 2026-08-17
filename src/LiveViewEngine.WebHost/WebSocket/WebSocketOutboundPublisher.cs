@@ -1,6 +1,4 @@
 using System.Collections.Concurrent;
-using System.Net.WebSockets;
-using System.Threading.Channels;
 using LiveViewEngine.Core;
 
 namespace ViewEngineServer.WebApp.WebSocket;
@@ -15,31 +13,26 @@ public sealed class WebSocketOutboundPublisher(
             [OutboundMessageFormat.Json] = new JsonOutboundProtocolEncoder()
         };
 
-    private readonly ConcurrentDictionary<int, ConnectionState> _connections = new();
+    private readonly OutboundFlushPolicy _flushPolicy = new();
+    private readonly ConcurrentDictionary<int, WebSocketConnection> _connections = new();
 
     public void Register(int connectionId, System.Net.WebSockets.WebSocket socket)
     {
-        var channel = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(512)
-        {
-            FullMode = BoundedChannelFullMode.DropOldest,
-            SingleReader = true
-        });
-
-        var state = new ConnectionState(socket, channel);
-        _connections[connectionId] = state;
-        state.DrainTask = Task.Run(() => DrainAsync(connectionId, socket, channel.Reader));
+        var connection = new WebSocketConnection(connectionId, socket, logger);
+        _connections[connectionId] = connection;
+        connection.StartDrain();
     }
 
     public void Unregister(int connectionId)
     {
-        if (_connections.TryRemove(connectionId, out var state))
+        if (_connections.TryRemove(connectionId, out var connection))
         {
-            lock (state.Gate)
+            lock (connection.Gate)
             {
-                state.Subscriptions.Clear();
+                connection.Subscriptions.Clear();
             }
 
-            state.Channel.Writer.TryComplete();
+            connection.Complete();
         }
     }
 
@@ -49,53 +42,59 @@ public sealed class WebSocketOutboundPublisher(
         OutboundMessageFormat format,
         bool snapshotActive)
     {
-        if (!_connections.TryGetValue(connectionId, out var state))
+        if (!_connections.TryGetValue(connectionId, out var connection))
         {
             return;
         }
 
-        lock (state.Gate)
+        lock (connection.Gate)
         {
-            if (!state.Subscriptions.TryGetValue(subscriptionId, out var subscription))
+            if (!connection.Subscriptions.TryGetValue(subscriptionId, out var subscription))
             {
                 subscription = new SubscriptionState(format);
-                state.Subscriptions[subscriptionId] = subscription;
+                connection.Subscriptions[subscriptionId] = subscription;
             }
 
             subscription.Format = format;
             subscription.IsSnapshotActive = snapshotActive;
+            subscription.PendingLiveDeltas.Clear();
             subscription.BufferedFrames.Clear();
         }
     }
 
     public void RemoveSubscription(int connectionId, int subscriptionId)
     {
-        if (!_connections.TryGetValue(connectionId, out var state))
+        if (!_connections.TryGetValue(connectionId, out var connection))
         {
             return;
         }
 
-        lock (state.Gate)
+        lock (connection.Gate)
         {
-            state.Subscriptions.Remove(subscriptionId);
+            if (connection.Subscriptions.Remove(subscriptionId, out var subscription))
+            {
+                subscription.PendingLiveDeltas.Clear();
+                subscription.BufferedFrames.Clear();
+            }
         }
     }
 
     public void SetSnapshotActive(int connectionId, int subscriptionId, bool snapshotActive)
     {
-        if (!_connections.TryGetValue(connectionId, out var state))
+        if (!_connections.TryGetValue(connectionId, out var connection))
         {
             return;
         }
 
-        lock (state.Gate)
+        lock (connection.Gate)
         {
-            if (!state.Subscriptions.TryGetValue(subscriptionId, out var subscription))
+            if (!connection.Subscriptions.TryGetValue(subscriptionId, out var subscription))
             {
                 return;
             }
 
             subscription.IsSnapshotActive = snapshotActive;
+            subscription.PendingLiveDeltas.Clear();
             if (snapshotActive)
             {
                 subscription.BufferedFrames.Clear();
@@ -109,7 +108,7 @@ public sealed class WebSocketOutboundPublisher(
         SubscriptionAcceptedPayload payload,
         CancellationToken ct = default)
     {
-        if (!_connections.TryGetValue(connectionId, out var state))
+        if (!_connections.TryGetValue(connectionId, out var connection))
         {
             return ValueTask.CompletedTask;
         }
@@ -125,9 +124,9 @@ public sealed class WebSocketOutboundPublisher(
             return ValueTask.CompletedTask;
         }
 
-        lock (state.Gate)
+        lock (connection.Gate)
         {
-            TryWrite(state, message);
+            connection.TryWrite(message);
         }
 
         return ValueTask.CompletedTask;
@@ -140,22 +139,27 @@ public sealed class WebSocketOutboundPublisher(
     {
         foreach (var target in targets)
         {
-            if (!_connections.TryGetValue(target.ConnectionId, out var state))
+            if (!_connections.TryGetValue(target.ConnectionId, out var connection))
             {
                 continue;
             }
 
-            lock (state.Gate)
+            lock (connection.Gate)
             {
-                if (!state.Subscriptions.TryGetValue(target.SubscriptionId, out var subscription))
+                if (!connection.Subscriptions.TryGetValue(target.SubscriptionId, out var subscription))
                 {
                     subscription = new SubscriptionState(OutboundMessageFormat.Compact);
-                    state.Subscriptions[target.SubscriptionId] = subscription;
+                    connection.Subscriptions[target.SubscriptionId] = subscription;
                 }
 
                 foreach (var delta in deltas)
                 {
-                    PublishDelta(state, subscription, target.SubscriptionId, delta);
+                    PublishDelta(connection, subscription, target.SubscriptionId, delta);
+                }
+
+                if (!subscription.IsSnapshotActive)
+                {
+                    _flushPolicy.FlushPendingLiveDeltas(connection, target.SubscriptionId, subscription, _encoders);
                 }
             }
         }
@@ -164,7 +168,7 @@ public sealed class WebSocketOutboundPublisher(
     }
 
     private void PublishDelta(
-        ConnectionState state,
+        WebSocketConnection connection,
         SubscriptionState subscription,
         int subscriptionId,
         ViewDelta delta)
@@ -172,30 +176,44 @@ public sealed class WebSocketOutboundPublisher(
         try
         {
             var encoder = _encoders[subscription.Format];
-            if (IsSnapshotControlOrData(delta))
+            if (_flushPolicy.IsSnapshotControlOrData(delta))
             {
+                _flushPolicy.FlushPendingLiveDeltas(connection, subscriptionId, subscription, _encoders);
+
                 foreach (var payload in encoder.EncodeFrames(delta, subscriptionId))
                 {
-                    TryWrite(state, payload);
+                    connection.TryWrite(payload);
                 }
 
                 if (delta is EndOfSnapshotDelta or SnapshotDelta)
                 {
-                    CompleteSnapshot(state, subscriptionId, subscription);
+                    _flushPolicy.CompleteSnapshot(connection, subscription);
                 }
 
                 return;
             }
 
-            foreach (var payload in encoder.EncodeFrames(delta, subscriptionId))
+            if (subscription.IsSnapshotActive)
             {
-                if (subscription.IsSnapshotActive)
+                foreach (var payload in encoder.EncodeFrames(delta, subscriptionId))
                 {
                     subscription.BufferedFrames.Enqueue(payload);
-                    continue;
                 }
 
-                TryWrite(state, payload);
+                return;
+            }
+
+            if (!LiveDeltaCoalescer.TryQueueCoalescedDelta(subscription, delta))
+            {
+                foreach (var payload in encoder.EncodeFrames(delta, subscriptionId))
+                {
+                    connection.TryWrite(payload);
+                }
+            }
+
+            if (_flushPolicy.ShouldFlushPendingLiveDeltas(subscription))
+            {
+                _flushPolicy.FlushPendingLiveDeltas(connection, subscriptionId, subscription, _encoders);
             }
         }
         catch (Exception ex)
@@ -204,65 +222,4 @@ public sealed class WebSocketOutboundPublisher(
         }
     }
 
-    private static bool IsSnapshotControlOrData(ViewDelta delta) =>
-        delta is SnapshotStartDelta or SnapshotRowsDelta or EndOfSnapshotDelta or SnapshotDelta;
-
-    private void CompleteSnapshot(ConnectionState state, int subscriptionId, SubscriptionState subscription)
-    {
-        subscription.IsSnapshotActive = false;
-        while (subscription.BufferedFrames.Count > 0)
-        {
-            TryWrite(state, subscription.BufferedFrames.Dequeue());
-        }
-    }
-
-    private void TryWrite(ConnectionState state, byte[] payload)
-    {
-        if (!state.Channel.Writer.TryWrite(payload))
-        {
-            logger.LogDebug("Dropping outbound frame for a slow WebSocket client.");
-        }
-    }
-
-    private async Task DrainAsync(
-        int connectionId,
-        System.Net.WebSockets.WebSocket socket,
-        ChannelReader<byte[]> reader)
-    {
-        await foreach (var payload in reader.ReadAllAsync())
-        {
-            if (socket.State != WebSocketState.Open)
-            {
-                break;
-            }
-
-            try
-            {
-                await socket.SendAsync(payload, WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None);
-            }
-            catch (WebSocketException ex)
-            {
-                logger.LogDebug(ex, "WebSocket send failed for client '{ConnectionId}'.", connectionId);
-                break;
-            }
-        }
-    }
-
-    private sealed class ConnectionState(
-        System.Net.WebSockets.WebSocket socket,
-        Channel<byte[]> channel)
-    {
-        public readonly Lock Gate = new();
-        public readonly Dictionary<int, SubscriptionState> Subscriptions = [];
-        public readonly System.Net.WebSockets.WebSocket Socket = socket;
-        public readonly Channel<byte[]> Channel = channel;
-        public Task DrainTask = Task.CompletedTask;
-    }
-
-    private sealed class SubscriptionState(OutboundMessageFormat format)
-    {
-        public OutboundMessageFormat Format { get; set; } = format;
-        public bool IsSnapshotActive { get; set; }
-        public Queue<byte[]> BufferedFrames { get; } = new();
-    }
 }
