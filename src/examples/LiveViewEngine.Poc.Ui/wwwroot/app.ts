@@ -15,7 +15,6 @@ import {
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
-const defaultTotalCountAssumption = 10_000;
 const defaultPageSizes = [25, 50, 100];
 const defaultCollectionId = 'trades';
 const defaultSortColumn = 'quantity';
@@ -52,6 +51,9 @@ const numericTradeColumnSet = new Set([
 ]);
 const dateTradeColumnSet = new Set(columnGroups.find((group) => group.label === 'date')?.columns ?? []);
 const filterOperatorSet = new Set(['eq', 'notEq', 'gt', 'gte', 'lt', 'lte', 'contains']);
+const placeholderKeyPrefix = '__ph_';
+const scrollBoundaryThreshold = 0.3;
+const scrollDebounceMs = 150;
 const textFilterOptions = ['contains', 'equals', 'notEqual'] as const;
 const orderedFilterOptions = ['equals', 'notEqual', 'greaterThan', 'greaterThanOrEqual', 'lessThan', 'lessThanOrEqual'] as const;
 const sharedFilterParams = {
@@ -81,7 +83,6 @@ interface AppUrlState {
     sortAscending: boolean;
     messageFormat: MessageFormat;
     pageSize: number;
-    pageIndex: number;
     filters: AppliedFilter[];
     selectedFields: string[];
 }
@@ -131,7 +132,6 @@ function getInitialUrlState(): AppUrlState {
         sortAscending: params.get('dir') !== 'desc',
         messageFormat: params.get('format') === 'json' ? 'json' : defaultMessageFormat,
         pageSize: parsePositiveInteger(params.get('pageSize'), defaultPageSize),
-        pageIndex: Math.max(0, parsePositiveInteger(params.get('page'), 1) - 1),
         filters,
         selectedFields
     };
@@ -158,10 +158,6 @@ function syncUrlState(state: AppUrlState): void {
 
     if (state.pageSize !== defaultPageSize) {
         params.set('pageSize', String(state.pageSize));
-    }
-
-    if (state.pageIndex > 0) {
-        params.set('page', String(state.pageIndex + 1));
     }
 
     for (const filter of state.filters) {
@@ -368,6 +364,10 @@ function areFiltersEqual(left: AppliedFilter[], right: AppliedFilter[]): boolean
         });
 }
 
+function makePlaceholder(index: number): RowData {
+    return { key: `${placeholderKeyPrefix}${index}` };
+}
+
 function buildColumnDef(field: string, sortColumn: string, sortAscending: boolean): ColDef<RowData> {
     const filter = getAgGridFilterType(field);
     const columnDef: ColDef<RowData> = {
@@ -532,7 +532,6 @@ function App(): React.ReactElement {
     const [messageFormat, setMessageFormat] = useState<MessageFormat>(initialUrlState.messageFormat);
     const [pageSize, setPageSize] = useState(initialUrlState.pageSize);
     const [pageSizeInput, setPageSizeInput] = useState(String(initialUrlState.pageSize));
-    const [pageIndex, setPageIndex] = useState(initialUrlState.pageIndex);
     const [filters, setFilters] = useState<AppliedFilter[]>(initialUrlState.filters);
     const [selectedFields, setSelectedFields] = useState<string[]>(initialUrlState.selectedFields);
     const [isSelectingColumns, setIsSelectingColumns] = useState(false);
@@ -546,11 +545,15 @@ function App(): React.ReactElement {
     const [gridVisible, setGridVisible] = useState(true);
     const gridVisibleRef = useRef(true);
 
-    const effectiveTotalCount = totalCount ?? defaultTotalCountAssumption;
-    const maxPageIndex = Math.max(0, Math.ceil(effectiveTotalCount / pageSize) - 1);
-
     const gridApiRef = useRef<GridApi<RowData> | null>(null);
     const isApplyingGridStateRef = useRef(false);
+    const virtualRowsRef = useRef<RowData[]>([]);
+    const loadedWindowRef = useRef<{ start: number; end: number } | null>(null);
+    const scrollDebounceRef = useRef<number | null>(null);
+    const pageSizeRef = useRef(pageSize);
+    const totalCountRef = useRef<number | null>(totalCount);
+    pageSizeRef.current = pageSize;
+    totalCountRef.current = totalCount;
     const clientRef = useRef<WebHostClient | null>(null);
     const handleDeltaEventRef = useRef<(event: DeltaEvent) => void>(() => {});
     const initialRowData = useMemo<RowData[]>(() => [], []);
@@ -569,6 +572,12 @@ function App(): React.ReactElement {
     const clearState = useCallback(() => {
         rowsByIdRef.current.clear();
         orderedIdsRef.current = [];
+        virtualRowsRef.current = [];
+        loadedWindowRef.current = null;
+        if (scrollDebounceRef.current !== null) {
+            clearTimeout(scrollDebounceRef.current);
+            scrollDebounceRef.current = null;
+        }
         setColumnDefs([]);
         setTotalCount(null);
         setSnapshotStats(null);
@@ -623,6 +632,9 @@ function App(): React.ReactElement {
 
     const applySnapshot = useCallback((snapshot: SnapshotEvent) => {
         const rows = (snapshot.rows ?? []).map((row) => ({ ...row }));
+        const snapStart = snapshot.startIndex ?? 0;
+        const newTotalCount = snapshot.totalCount;
+
         rowsByIdRef.current.clear();
         orderedIdsRef.current = [];
         for (const row of rows) {
@@ -634,8 +646,27 @@ function App(): React.ReactElement {
             orderedIdsRef.current.push(rowId);
         }
 
-        setTotalCount(snapshot.totalCount);
-        setPageIndex(Math.floor((snapshot.startIndex ?? 0) / pageSize));
+        if (virtualRowsRef.current.length !== newTotalCount) {
+            const newBuffer = Array.from({ length: newTotalCount }, (_, i) => makePlaceholder(i));
+            for (let i = 0; i < rows.length && snapStart + i < newTotalCount; i++) {
+                newBuffer[snapStart + i] = rows[i];
+            }
+            virtualRowsRef.current = newBuffer;
+        } else {
+            const old = loadedWindowRef.current;
+            if (old) {
+                for (let i = old.start; i < old.end && i < virtualRowsRef.current.length; i++) {
+                    virtualRowsRef.current[i] = makePlaceholder(i);
+                }
+            }
+            for (let i = 0; i < rows.length && snapStart + i < newTotalCount; i++) {
+                virtualRowsRef.current[snapStart + i] = rows[i];
+            }
+        }
+
+        loadedWindowRef.current = { start: snapStart, end: snapStart + rows.length };
+
+        setTotalCount(newTotalCount);
         setSnapshotStats({ rowCount: rows.length, loadMs: snapshot.loadMs });
         setIsLoadingSnapshot(false);
 
@@ -646,9 +677,9 @@ function App(): React.ReactElement {
         }
 
         if (gridApiRef.current && gridVisibleRef.current) {
-            gridApiRef.current.setGridOption('rowData', rows);
+            gridApiRef.current.setGridOption('rowData', [...virtualRowsRef.current]);
         }
-    }, [pageSize, setColumnsFromRow]);
+    }, [setColumnsFromRow]);
 
     const applyUpdate = useCallback((update: RowUpdateEvent) => {
         const rowId = update.rowId;
@@ -700,9 +731,10 @@ function App(): React.ReactElement {
         rowsByIdRef.current.set(rowId, row);
 
         if (gridApiRef.current && gridVisibleRef.current) {
+            const loadedStart = loadedWindowRef.current?.start ?? 0;
             gridApiRef.current.applyTransaction({
                 add: [row],
-                addIndex: clampedPosition
+                addIndex: loadedStart + clampedPosition
             });
         }
     }, [columnDefs.length, setColumnsFromRow]);
@@ -752,18 +784,17 @@ function App(): React.ReactElement {
     const connect = useCallback(() => {
         clearState();
         setIsLoadingSnapshot(true);
-        const startIndex = pageIndex * pageSize;
         clientRef.current?.connect({
             collectionId,
             sortColumn,
             sortAscending,
             pageSize,
-            startIndex,
+            startIndex: 0,
             filters: normalisedFilters,
             fields: selectedFields.length > 0 ? selectedFields : undefined,
             messageFormat
         });
-    }, [clearState, collectionId, messageFormat, normalisedFilters, pageIndex, pageSize, selectedFields, sortAscending, sortColumn]);
+    }, [clearState, collectionId, messageFormat, normalisedFilters, pageSize, selectedFields, sortAscending, sortColumn]);
 
     const disconnect = useCallback(() => {
         clientRef.current?.disconnect();
@@ -772,19 +803,12 @@ function App(): React.ReactElement {
         clearState();
     }, [clearState]);
 
-    const goToPage = useCallback((nextPageIndex: number) => {
-        const clamped = Math.max(0, Math.min(nextPageIndex, maxPageIndex));
-        setPageIndex(clamped);
-    }, [maxPageIndex]);
-
     const onPageSizeChanged = useCallback((nextPageSize: number) => {
         if (!Number.isFinite(nextPageSize) || nextPageSize < 1) {
             return;
         }
 
-        const normalizedPageSize = Math.floor(nextPageSize);
-        setPageSize(normalizedPageSize);
-        setPageIndex(0);
+        setPageSize(Math.floor(nextPageSize));
     }, []);
 
     const commitPageSize = useCallback((nextPageSize: string) => {
@@ -881,11 +905,10 @@ function App(): React.ReactElement {
             sortAscending,
             messageFormat,
             pageSize,
-            pageIndex,
             filters: normalisedFilters,
             selectedFields
         });
-    }, [collectionId, messageFormat, normalisedFilters, pageIndex, pageSize, selectedFields, sortAscending, sortColumn]);
+    }, [collectionId, messageFormat, normalisedFilters, pageSize, selectedFields, sortAscending, sortColumn]);
 
     useEffect(() => {
         const client = clientRef.current;
@@ -893,18 +916,19 @@ function App(): React.ReactElement {
             return;
         }
 
+        clearState();
         setIsLoadingSnapshot(true);
         client.connect({
             collectionId,
             sortColumn,
             sortAscending,
             pageSize,
-            startIndex: pageIndex * pageSize,
+            startIndex: 0,
             filters: normalisedFilters,
             fields: selectedFields.length > 0 ? selectedFields : undefined,
             messageFormat
         });
-    }, [collectionId, filters, messageFormat, normalisedFilters, pageIndex, pageSize, selectedFields, sortAscending, sortColumn]);
+    }, [clearState, collectionId, filters, messageFormat, normalisedFilters, pageSize, selectedFields, sortAscending, sortColumn]);
 
     return React.createElement(
         React.Fragment,
@@ -983,12 +1007,6 @@ function App(): React.ReactElement {
                 padding: 0.75rem;
                 background: #f0f6ff;
                 border-radius: 0.25rem;
-            }
-            .pager {
-                display: flex;
-                align-items: center;
-                gap: 0.75rem;
-                margin-bottom: 1rem;
             }
             .filters {
                 display: flex;
@@ -1175,18 +1193,10 @@ function App(): React.ReactElement {
         ),
         React.createElement(
             'div',
-            { className: 'pager' },
-            React.createElement('button', { onClick: () => goToPage(pageIndex - 1), disabled: pageIndex <= 0 }, 'Prev'),
-            React.createElement(
-                'span',
-                null,
-                `Page ${pageIndex + 1} / ${maxPageIndex + 1} (${effectiveTotalCount.toLocaleString()} rows)`
-            ),
-            React.createElement(
-                'button',
-                { onClick: () => goToPage(pageIndex + 1), disabled: pageIndex >= maxPageIndex },
-                'Next'
-            )
+            { className: 'status' },
+            totalCount !== null
+                ? `${totalCount.toLocaleString()} rows total`
+                : ''
         ),
         React.createElement(
             'div',
@@ -1232,7 +1242,6 @@ function App(): React.ReactElement {
                         if (nextSortAscending !== sortAscending) {
                             setSortAscending(nextSortAscending);
                         }
-                        setPageIndex(0);
                     },
                     onFilterChanged: (event) => {
                         if (isApplyingGridStateRef.current) {
@@ -1241,7 +1250,47 @@ function App(): React.ReactElement {
 
                         const nextFilters = buildAppliedFiltersFromGridModel(event.api.getFilterModel());
                         setFilters((current) => areFiltersEqual(current, nextFilters) ? current : nextFilters);
-                        setPageIndex(0);
+                    },
+                    onBodyScroll: (event) => {
+                        const loadedWindow = loadedWindowRef.current;
+                        const currentTotalCount = totalCountRef.current;
+                        if (!loadedWindow || currentTotalCount === null || !clientRef.current?.isConnected) {
+                            return;
+                        }
+
+                        const firstVisible = event.api.getFirstDisplayedRowIndex();
+                        const lastVisible = event.api.getLastDisplayedRowIndex();
+                        const currentPageSize = pageSizeRef.current;
+                        const threshold = Math.max(5, Math.floor(currentPageSize * scrollBoundaryThreshold));
+                        const nearBottom = lastVisible >= loadedWindow.end - threshold;
+                        const nearTop = firstVisible <= loadedWindow.start + threshold && loadedWindow.start > 0;
+
+                        if (!nearBottom && !nearTop) {
+                            return;
+                        }
+
+                        if (scrollDebounceRef.current !== null) {
+                            clearTimeout(scrollDebounceRef.current);
+                        }
+
+                        scrollDebounceRef.current = window.setTimeout(() => {
+                            scrollDebounceRef.current = null;
+                            const api = gridApiRef.current;
+                            if (!api || !clientRef.current?.isConnected) {
+                                return;
+                            }
+
+                            const first = api.getFirstDisplayedRowIndex();
+                            const last = api.getLastDisplayedRowIndex();
+                            const mid = Math.floor((first + last) / 2);
+                            const newStart = Math.max(0, mid - Math.floor(currentPageSize / 2));
+                            const clampedStart = Math.min(newStart, Math.max(0, currentTotalCount - currentPageSize));
+
+                            if (clampedStart !== loadedWindowRef.current?.start) {
+                                setIsLoadingSnapshot(true);
+                                clientRef.current.setViewport(clampedStart, currentPageSize);
+                            }
+                        }, scrollDebounceMs);
                     },
                     rowData: initialRowData,
                     columnDefs,
