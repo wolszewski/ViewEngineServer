@@ -106,6 +106,8 @@ public sealed class WebSocketSessionManager
                 {
                     var originalEvents = events;
                     var start = TryExtractSnapshotStart(events, out var snapshotEvents);
+                    var snapshotFollows = start is not null ||
+                                          ShouldWaitForDeferredSnapshot(subscribeCommand, originalEvents);
                     await _publisher.PublishSubscriptionAcceptedAsync(
                         connectionId,
                         messageFormat,
@@ -116,8 +118,8 @@ public sealed class WebSocketSessionManager
                                 subscribeCommand.View.CollectionId,
                                 originalEvents,
                                 subscribeCommand.View.Fields),
-                            SnapshotFollows = start is not null,
-                            StartIndex = start?.StartIndex ?? -1,
+                            SnapshotFollows = snapshotFollows,
+                            StartIndex = start?.StartIndex ?? subscribeCommand.StartIndex,
                             TotalCount = start?.TotalCount ?? -1
                         },
                         ct);
@@ -285,6 +287,18 @@ public sealed class WebSocketSessionManager
 
         remainingEvents = events.Skip(1).ToArray();
         return start;
+    }
+
+    private bool ShouldWaitForDeferredSnapshot(
+        SubscribeCommand subscribeCommand,
+        IReadOnlyList<ViewDelta> events)
+    {
+        if (!subscribeCommand.SendSnapshot || !subscribeCommand.StreamSnapshot || events.Count > 0)
+        {
+            return false;
+        }
+
+        return !_store.TryGet(subscribeCommand.View.CollectionId, out _);
     }
 
     private IReadOnlyList<string> ResolvePayloadFieldNames(

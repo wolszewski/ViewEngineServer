@@ -47,6 +47,7 @@ export class WebHostClient {
     private currentFields: string[] = [];
     private currentMessageFormat: MessageFormat = 'compact';
     private pendingSnapshot: PendingSnapshot | null = null;
+    private subscribeTime: number | null = null;
 
     public constructor(webSocketUrl: string, callbacks: ClientCallbacks) {
         this.webSocketUrl = webSocketUrl;
@@ -186,12 +187,15 @@ export class WebHostClient {
                 }
 
                 {
+                    const loadMs = this.subscribeTime !== null ? performance.now() - this.subscribeTime : 0;
+                    this.subscribeTime = null;
                     const snapshot: SnapshotEvent = {
                         type: 'snapshot',
                         subscriptionId: frame.subscriptionId,
                         totalCount: this.pendingSnapshot.totalCount,
                         startIndex: this.pendingSnapshot.startIndex,
-                        rows: this.pendingSnapshot.rows
+                        rows: this.pendingSnapshot.rows,
+                        loadMs
                     };
 
                     this.pendingSnapshot = null;
@@ -252,6 +256,8 @@ export class WebHostClient {
         this.socket.send(JSON.stringify(message));
         if (request.sendSnapshot === false) {
             this.hasReceivedSnapshot = true;
+        } else {
+            this.subscribeTime = performance.now();
         }
     }
 

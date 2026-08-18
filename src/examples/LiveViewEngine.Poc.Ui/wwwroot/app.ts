@@ -318,6 +318,11 @@ function App(): React.ReactElement {
     const [totalCount, setTotalCount] = useState<number | null>(null);
     const [columnDefs, setColumnDefs] = useState<ColDef<RowData>[]>([]);
     const [latencySummary, setLatencySummary] = useState({ maxMs: 0, avgMs: 0, sampleCount: 0 });
+    const latencyAccRef = useRef({ maxMs: 0, avgMs: 0, sampleCount: 0 });
+    const [isLoadingSnapshot, setIsLoadingSnapshot] = useState(false);
+    const [snapshotStats, setSnapshotStats] = useState<{ rowCount: number; loadMs: number } | null>(null);
+    const [gridVisible, setGridVisible] = useState(true);
+    const gridVisibleRef = useRef(true);
 
     const effectiveTotalCount = totalCount ?? defaultTotalCountAssumption;
     const maxPageIndex = Math.max(0, Math.ceil(effectiveTotalCount / pageSize) - 1);
@@ -341,6 +346,9 @@ function App(): React.ReactElement {
         orderedIdsRef.current = [];
         setColumnDefs([]);
         setTotalCount(null);
+        setSnapshotStats(null);
+        latencyAccRef.current = { maxMs: 0, avgMs: 0, sampleCount: 0 };
+        setLatencySummary({ maxMs: 0, avgMs: 0, sampleCount: 0 });
         if (gridApiRef.current) {
             gridApiRef.current.setGridOption('rowData', []);
         }
@@ -374,18 +382,16 @@ function App(): React.ReactElement {
         }
 
         const latencyMs = Date.now() - timestamp;
-        setLatencySummary((current) => {
-            const nextCount = current.sampleCount + 1;
-            const nextAverage = nextCount === 1
-                ? latencyMs
-                : ((current.avgMs * current.sampleCount) + latencyMs) / nextCount;
-
-            return {
-                sampleCount: nextCount,
-                maxMs: Math.max(current.maxMs, latencyMs),
-                avgMs: nextAverage
-            };
-        });
+        const acc = latencyAccRef.current;
+        const nextCount = acc.sampleCount + 1;
+        const nextAverage = nextCount === 1
+            ? latencyMs
+            : ((acc.avgMs * acc.sampleCount) + latencyMs) / nextCount;
+        latencyAccRef.current = {
+            sampleCount: nextCount,
+            maxMs: Math.max(acc.maxMs, latencyMs),
+            avgMs: nextAverage
+        };
     }, []);
 
     const applySnapshot = useCallback((snapshot: SnapshotEvent) => {
@@ -399,11 +405,12 @@ function App(): React.ReactElement {
             }
             rowsByIdRef.current.set(rowId, row);
             orderedIdsRef.current.push(rowId);
-            recordLatency(row);
         }
 
         setTotalCount(snapshot.totalCount);
         setPageIndex(Math.floor((snapshot.startIndex ?? 0) / pageSize));
+        setSnapshotStats({ rowCount: rows.length, loadMs: snapshot.loadMs });
+        setIsLoadingSnapshot(false);
 
         if (rows.length > 0) {
             setColumnsFromRow(rows[0]);
@@ -411,10 +418,10 @@ function App(): React.ReactElement {
             setColumnDefs([]);
         }
 
-        if (gridApiRef.current) {
+        if (gridApiRef.current && gridVisibleRef.current) {
             gridApiRef.current.setGridOption('rowData', rows);
         }
-    }, [pageSize, recordLatency, setColumnsFromRow]);
+    }, [pageSize, setColumnsFromRow]);
 
     const applyUpdate = useCallback((update: RowUpdateEvent) => {
         const rowId = update.rowId;
@@ -430,10 +437,9 @@ function App(): React.ReactElement {
         const changedFields = update.changedFields ?? {};
         const updated: RowData = { ...existing, ...changedFields };
         rowsByIdRef.current.set(rowId, updated);
-        recordLatency(updated);
 
         const api = gridApiRef.current;
-        if (!api) {
+        if (!api || !gridVisibleRef.current) {
             return;
         }
 
@@ -447,7 +453,7 @@ function App(): React.ReactElement {
                 fadeDuration: 1_000
             });
         }
-    }, [recordLatency]);
+    }, []);
 
     const applyInsert = useCallback((insert: RowInsertEvent) => {
         const row = { ...(insert.row ?? {}) };
@@ -466,7 +472,7 @@ function App(): React.ReactElement {
         orderedIdsRef.current.splice(clampedPosition, 0, rowId);
         rowsByIdRef.current.set(rowId, row);
 
-        if (gridApiRef.current) {
+        if (gridApiRef.current && gridVisibleRef.current) {
             gridApiRef.current.applyTransaction({
                 add: [row],
                 addIndex: clampedPosition
@@ -484,7 +490,7 @@ function App(): React.ReactElement {
         orderedIdsRef.current.splice(position, 1);
         const row = rowsByIdRef.current.get(rowId);
         rowsByIdRef.current.delete(rowId);
-        if (!row || !gridApiRef.current) {
+        if (!row || !gridApiRef.current || !gridVisibleRef.current) {
             return;
         }
 
@@ -495,13 +501,14 @@ function App(): React.ReactElement {
         if (event.type === 'snapshot') {
             applySnapshot(event);
         } else if (event.type === 'rowUpdate') {
+            recordLatency(event.changedFields ?? {});
             applyUpdate(event);
         } else if (event.type === 'rowInsert') {
             applyInsert(event);
         } else if (event.type === 'rowRemove') {
             applyRemove(event);
         }
-    }, [applyInsert, applyRemove, applySnapshot, applyUpdate]);
+    }, [applyInsert, applyRemove, applySnapshot, applyUpdate, recordLatency]);
     handleDeltaEventRef.current = handleDeltaEvent;
 
     const normalisedFilters = useMemo(
@@ -517,6 +524,7 @@ function App(): React.ReactElement {
 
     const connect = useCallback(() => {
         clearState();
+        setIsLoadingSnapshot(true);
         const startIndex = pageIndex * pageSize;
         clientRef.current?.connect({
             collectionId,
@@ -533,6 +541,7 @@ function App(): React.ReactElement {
     const disconnect = useCallback(() => {
         clientRef.current?.disconnect();
         setStatus('Disconnected');
+        setIsLoadingSnapshot(false);
         clearState();
     }, [clearState]);
 
@@ -648,6 +657,13 @@ function App(): React.ReactElement {
     }, []);
 
     useEffect(() => {
+        const handle = window.setInterval(() => {
+            setLatencySummary({ ...latencyAccRef.current });
+        }, 500);
+        return () => clearInterval(handle);
+    }, []);
+
+    useEffect(() => {
         setPageSizeInput(String(pageSize));
     }, [pageSize]);
 
@@ -670,6 +686,7 @@ function App(): React.ReactElement {
             return;
         }
 
+        setIsLoadingSnapshot(true);
         client.connect({
             collectionId,
             sortColumn,
@@ -799,6 +816,35 @@ function App(): React.ReactElement {
             .ag-theme-balham {
                 --ag-value-change-value-highlight-background-color: #b7f7b7;
             }
+            .grid-wrapper {
+                position: relative;
+                width: 100%;
+                height: 70vh;
+            }
+            .grid-loader {
+                position: absolute;
+                inset: 0;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                background: rgba(255, 255, 255, 0.75);
+                z-index: 100;
+                gap: 0.75rem;
+                font-size: 1rem;
+                color: #334155;
+            }
+            .grid-loader-spinner {
+                width: 2rem;
+                height: 2rem;
+                border: 3px solid #cbd5e1;
+                border-top-color: #3b82f6;
+                border-radius: 50%;
+                animation: spin 0.7s linear infinite;
+            }
+            @keyframes spin {
+                to { transform: rotate(360deg); }
+            }
             `
         ),
         React.createElement('h1', null, 'LiveViewEngine PoC UI'),
@@ -806,7 +852,14 @@ function App(): React.ReactElement {
         React.createElement(
             'div',
             { className: 'status' },
-            `Max latency: ${latencySummary.maxMs.toFixed(0)} ms • Avg latency: ${latencySummary.avgMs.toFixed(0)} ms • Samples: ${latencySummary.sampleCount}`
+            snapshotStats !== null
+                ? `Snapshot: ${snapshotStats.rowCount.toLocaleString()} rows loaded in ${snapshotStats.loadMs.toFixed(0)} ms`
+                : 'Snapshot: —'
+        ),
+        React.createElement(
+            'div',
+            { className: 'status' },
+            `Live updates — Max latency: ${latencySummary.maxMs.toFixed(0)} ms • Avg latency: ${latencySummary.avgMs.toFixed(0)} ms • Samples: ${latencySummary.sampleCount}`
         ),
         React.createElement(
             'div',
@@ -877,7 +930,21 @@ function App(): React.ReactElement {
             React.createElement('button', { type: 'button', onClick: addFilter }, 'Add filter'),
             React.createElement('button', { type: 'button', onClick: openColumnSelector }, 'Select columns'),
             React.createElement('button', { type: 'button', onClick: connect }, 'Connect'),
-            React.createElement('button', { type: 'button', onClick: disconnect }, 'Disconnect')
+            React.createElement('button', { type: 'button', onClick: disconnect }, 'Disconnect'),
+            React.createElement(
+                'label',
+                { className: 'control-label', style: { flexDirection: 'row', alignItems: 'center', gap: '0.4rem' } },
+                React.createElement('input', {
+                    type: 'checkbox',
+                    checked: gridVisible,
+                    onChange: (e: Event) => {
+                        const checked = (e.target as HTMLInputElement).checked;
+                        gridVisibleRef.current = checked;
+                        setGridVisible(checked);
+                    }
+                }),
+                'Show grid'
+            )
         ),
         React.createElement(
             'div',
@@ -999,20 +1066,32 @@ function App(): React.ReactElement {
         ),
         React.createElement(
             'div',
-            { className: 'ag-theme-balham', style: { width: '100%', height: '70vh' } },
-            React.createElement(AgGridReact<RowData>, {
-                onGridReady: (params) => {
-                    gridApiRef.current = params.api;
-                },
-                rowData: initialRowData,
-                columnDefs,
-                defaultColDef,
-                getRowId: (params) => String(params.data.key ?? params.data.id ?? ''),
-                suppressFieldDotNotation: true,
-                animateRows: true,
-                cellFlashDuration: 1,
-                cellFadeDuration: 1_000
-            })
+            { className: 'grid-wrapper', style: gridVisible ? undefined : { display: 'none' } },
+            isLoadingSnapshot
+                ? React.createElement(
+                    'div',
+                    { className: 'grid-loader' },
+                    React.createElement('div', { className: 'grid-loader-spinner' }),
+                    'Loading snapshot…'
+                )
+                : null,
+            React.createElement(
+                'div',
+                { className: 'ag-theme-balham', style: { width: '100%', height: '100%' } },
+                React.createElement(AgGridReact<RowData>, {
+                    onGridReady: (params) => {
+                        gridApiRef.current = params.api;
+                    },
+                    rowData: initialRowData,
+                    columnDefs,
+                    defaultColDef,
+                    getRowId: (params) => String(params.data.key ?? params.data.id ?? ''),
+                    suppressFieldDotNotation: true,
+                    animateRows: true,
+                    cellFlashDuration: 1,
+                    cellFadeDuration: 1_000
+                })
+            )
         )
     );
 }

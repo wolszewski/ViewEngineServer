@@ -8,6 +8,7 @@ export interface SnapshotEvent {
     totalCount: number;
     startIndex: number;
     rows: RowData[];
+    loadMs: number;
 }
 
 export interface RowUpdateEvent {
