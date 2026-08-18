@@ -96,6 +96,46 @@ public class SortIndexTests
     }
 
     [Fact]
+    public void GetPageIndexes_UsesTypedScalarComparison_ForDeclaredIntField()
+    {
+        var schema = new CollectionSchema("scores", ["score"], [ScalarFieldType.Int32]);
+        var collection = new RowCollection(schema);
+        var index = new SortIndex(collection, schema.GetFieldIndex("score"), true);
+
+        var upsertOne = collection.AddOrUpdate("a", new Dictionary<string, string?> { ["score"] = "12" });
+        index.OnUpsert(upsertOne.RowIndex);
+        var upsertTwo = collection.AddOrUpdate("b", new Dictionary<string, string?> { ["score"] = "2" });
+        index.OnUpsert(upsertTwo.RowIndex);
+        var upsertThree = collection.AddOrUpdate("c", new Dictionary<string, string?> { ["score"] = "8" });
+        index.OnUpsert(upsertThree.RowIndex);
+
+        var indexes = GetPage(index, 0, 10);
+        var scores = indexes.Select(i => collection.GetValue(i, schema.GetFieldIndex("score"))).ToList();
+
+        Assert.Equal(["2", "8", "12"], scores);
+    }
+
+    [Fact]
+    public void GetPageIndexes_UsesTypedDateOnlyComparison_ForDeclaredDateOnlyField()
+    {
+        var schema = new CollectionSchema("events", ["day"], [ScalarFieldType.DateOnly]);
+        var collection = new RowCollection(schema);
+        var index = new SortIndex(collection, schema.GetFieldIndex("day"), true);
+
+        var upsertOne = collection.AddOrUpdate("a", new Dictionary<string, string?> { ["day"] = "2025-01-15" });
+        index.OnUpsert(upsertOne.RowIndex);
+        var upsertTwo = collection.AddOrUpdate("b", new Dictionary<string, string?> { ["day"] = "2025-01-05" });
+        index.OnUpsert(upsertTwo.RowIndex);
+        var upsertThree = collection.AddOrUpdate("c", new Dictionary<string, string?> { ["day"] = "2025-01-10" });
+        index.OnUpsert(upsertThree.RowIndex);
+
+        var indexes = GetPage(index, 0, 10);
+        var days = indexes.Select(i => collection.GetValue(i, schema.GetFieldIndex("day"))).ToList();
+
+        Assert.Equal(["2025-01-05", "2025-01-10", "2025-01-15"], days);
+    }
+
+    [Fact]
     public void OnUpsert_UpdatedValue_ReordersIndex()
     {
         var (col, idx, scoreFieldIndex, _) = CreateSortedByScore(true);
@@ -138,7 +178,7 @@ public class SortIndexTests
         Upsert(col, idx, "c", "30", "true");
 
         var filter = new FilterSpec("active", FilterOperator.Eq, "true");
-        var indexes = GetPage(idx, 0, 10, new FilterSet([filter], [activeFieldIndex]));
+        var indexes = GetPage(idx, 0, 10, FilterSet.Create([filter], col.Schema));
 
         Assert.Equal(2, indexes.Length);
     }
@@ -226,9 +266,56 @@ public class SortIndexTests
         Upsert(col, idx, "d", "40", "false");
 
         var filter = new FilterSpec("active", FilterOperator.Eq, "true");
-        var indexes = GetPage(idx, 1, 10, new FilterSet([filter], [activeFieldIndex]));
+        var indexes = GetPage(idx, 1, 10, FilterSet.Create([filter], col.Schema));
         var scores = indexes.Select(i => col.GetValue(i, scoreFieldIndex)).ToList();
 
         Assert.Equal(["20", "30"], scores);
+    }
+
+    [Fact]
+    public void OnUpsert_UpdatedTypedValue_ReordersIndex()
+    {
+        var schema = new CollectionSchema("scores", ["score"], [ScalarFieldType.Int32]);
+        var col = new RowCollection(schema);
+        var scoreFieldIndex = schema.GetFieldIndex("score");
+        var idx = new SortIndex(col, scoreFieldIndex, true);
+
+        var m1 = col.AddOrUpdate("a", new Dictionary<string, string?> { ["score"] = "10" });
+        idx.OnUpsert(m1.RowIndex);
+        var m2 = col.AddOrUpdate("b", new Dictionary<string, string?> { ["score"] = "20" });
+        idx.OnUpsert(m2.RowIndex);
+        var m3 = col.AddOrUpdate("c", new Dictionary<string, string?> { ["score"] = "30" });
+        idx.OnUpsert(m3.RowIndex);
+
+        // Update "c" from 30 to 5 — must reposition from last to first
+        col.TryGetRowIndex("c", out var cIndex);
+        idx.CaptureOldValue(cIndex);
+        var updated = col.AddOrUpdate("c", new Dictionary<string, string?> { ["score"] = "5" });
+        idx.OnUpsert(updated.RowIndex);
+
+        var indexes = GetPage(idx, 0, 10);
+        var scores = indexes.Select(i => col.GetValue(i, scoreFieldIndex)).ToList();
+
+        Assert.Equal(["5", "10", "20"], scores);
+    }
+
+    [Fact]
+    public void OnUpsert_ReusedSlot_TypedColumnClearedBeforeNewValues()
+    {
+        var schema = new CollectionSchema("scores", ["score"], [ScalarFieldType.Int32]);
+        var col = new RowCollection(schema);
+        var scoreFieldIndex = schema.GetFieldIndex("score");
+        col.ActivateTypedField(scoreFieldIndex);
+
+        // Insert and delete "a" (score=99) to free its slot
+        var m1 = col.AddOrUpdate("a", new Dictionary<string, string?> { ["score"] = "99" });
+        var deleted = col.Delete("a");
+
+        // Insert "b" without a score into the reused slot — typed value must be null, not stale 99
+        col.AddOrUpdate("b", new Dictionary<string, string?> { });
+        col.TryGetRowIndex("b", out var bIndex);
+
+        Assert.Equal(m1.RowIndex, bIndex); // confirm slot was reused
+        Assert.Null(col.GetInt32(bIndex, scoreFieldIndex));
     }
 }

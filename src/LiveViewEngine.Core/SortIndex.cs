@@ -9,6 +9,7 @@ public sealed class SortIndex : IRowIndex
     private readonly RowCollection _collection;
     private readonly int _fieldIndex;
     private readonly bool _ascending;
+    private readonly Comparison<int> _comparison;
     private readonly NodeArrayTree<RowComparer> _tree;
     private bool _hasPending;
     private bool _pendingWasExisting;
@@ -24,6 +25,23 @@ public sealed class SortIndex : IRowIndex
         _collection = collection;
         _fieldIndex = fieldIndex;
         _ascending = ascending;
+        var fieldType = collection.Schema.GetFieldDefinition(fieldIndex).Type;
+        if (fieldType != ScalarFieldType.String)
+        {
+            collection.ActivateTypedField(fieldIndex);
+        }
+
+        _comparison = fieldType switch
+        {
+            ScalarFieldType.Int32 => CompareInt32,
+            ScalarFieldType.Int64 => CompareInt64,
+            ScalarFieldType.Double => CompareDouble,
+            ScalarFieldType.Decimal => CompareDecimal,
+            ScalarFieldType.DateOnly => CompareDateOnly,
+            ScalarFieldType.DateTime => CompareDateTime,
+            ScalarFieldType.DateTimeOffset => CompareDateTimeOffset,
+            _ => CompareString
+        };
         _tree = new NodeArrayTree<RowComparer>(new RowComparer(this, ascending));
 
         foreach (var kv in collection.GetAllLiveIndexes())
@@ -160,6 +178,151 @@ public sealed class SortIndex : IRowIndex
 
     public int GetByIndex(int index) => _tree.GetByIndex(index);
 
+    private int? GetInt32WithOverride(int rowIndex) =>
+        rowIndex == _overrideRowIndex
+            ? (ScalarValueConverter.TryConvertInt32(_overrideValue, out var v) ? v : null)
+            : _collection.GetInt32(rowIndex, _fieldIndex);
+
+    private long? GetInt64WithOverride(int rowIndex) =>
+        rowIndex == _overrideRowIndex
+            ? (ScalarValueConverter.TryConvertInt64(_overrideValue, out var v) ? v : null)
+            : _collection.GetInt64(rowIndex, _fieldIndex);
+
+    private double? GetDoubleWithOverride(int rowIndex) =>
+        rowIndex == _overrideRowIndex
+            ? (ScalarValueConverter.TryConvertDouble(_overrideValue, out var v) ? v : null)
+            : _collection.GetDouble(rowIndex, _fieldIndex);
+
+    private decimal? GetDecimalWithOverride(int rowIndex) =>
+        rowIndex == _overrideRowIndex
+            ? (ScalarValueConverter.TryConvertDecimal(_overrideValue, out var v) ? v : null)
+            : _collection.GetDecimal(rowIndex, _fieldIndex);
+
+    private DateOnly? GetDateOnlyWithOverride(int rowIndex) =>
+        rowIndex == _overrideRowIndex
+            ? (ScalarValueConverter.TryConvertDateOnly(_overrideValue, out var v) ? v : null)
+            : _collection.GetDateOnly(rowIndex, _fieldIndex);
+
+    private DateTime? GetDateTimeWithOverride(int rowIndex) =>
+        rowIndex == _overrideRowIndex
+            ? (ScalarValueConverter.TryConvertDateTime(_overrideValue, out var v) ? v : null)
+            : _collection.GetDateTime(rowIndex, _fieldIndex);
+
+    private DateTimeOffset? GetDateTimeOffsetWithOverride(int rowIndex) =>
+        rowIndex == _overrideRowIndex
+            ? (ScalarValueConverter.TryConvertDateTimeOffset(_overrideValue, out var v) ? v : null)
+            : _collection.GetDateTimeOffset(rowIndex, _fieldIndex);
+
+    private int CompareInt32(int leftRowIndex, int rightRowIndex)
+    {
+        var left = GetInt32WithOverride(leftRowIndex);
+        var right = GetInt32WithOverride(rightRowIndex);
+        if (left.HasValue && right.HasValue)
+        {
+            return left.Value.CompareTo(right.Value);
+        }
+
+        return CompareStringFallback(GetRawWithOverride(leftRowIndex), GetRawWithOverride(rightRowIndex));
+    }
+
+    private int CompareInt64(int leftRowIndex, int rightRowIndex)
+    {
+        var left = GetInt64WithOverride(leftRowIndex);
+        var right = GetInt64WithOverride(rightRowIndex);
+        if (left.HasValue && right.HasValue)
+        {
+            return left.Value.CompareTo(right.Value);
+        }
+
+        return CompareStringFallback(GetRawWithOverride(leftRowIndex), GetRawWithOverride(rightRowIndex));
+    }
+
+    private int CompareDouble(int leftRowIndex, int rightRowIndex)
+    {
+        var left = GetDoubleWithOverride(leftRowIndex);
+        var right = GetDoubleWithOverride(rightRowIndex);
+        if (left.HasValue && right.HasValue)
+        {
+            return left.Value.CompareTo(right.Value);
+        }
+
+        return CompareStringFallback(GetRawWithOverride(leftRowIndex), GetRawWithOverride(rightRowIndex));
+    }
+
+    private int CompareDecimal(int leftRowIndex, int rightRowIndex)
+    {
+        var left = GetDecimalWithOverride(leftRowIndex);
+        var right = GetDecimalWithOverride(rightRowIndex);
+        if (left.HasValue && right.HasValue)
+        {
+            return left.Value.CompareTo(right.Value);
+        }
+
+        return CompareStringFallback(GetRawWithOverride(leftRowIndex), GetRawWithOverride(rightRowIndex));
+    }
+
+    private int CompareDateOnly(int leftRowIndex, int rightRowIndex)
+    {
+        var left = GetDateOnlyWithOverride(leftRowIndex);
+        var right = GetDateOnlyWithOverride(rightRowIndex);
+        if (left.HasValue && right.HasValue)
+        {
+            return left.Value.CompareTo(right.Value);
+        }
+
+        return CompareStringFallback(GetRawWithOverride(leftRowIndex), GetRawWithOverride(rightRowIndex));
+    }
+
+    private int CompareDateTime(int leftRowIndex, int rightRowIndex)
+    {
+        var left = GetDateTimeWithOverride(leftRowIndex);
+        var right = GetDateTimeWithOverride(rightRowIndex);
+        if (left.HasValue && right.HasValue)
+        {
+            return left.Value.CompareTo(right.Value);
+        }
+
+        return CompareStringFallback(GetRawWithOverride(leftRowIndex), GetRawWithOverride(rightRowIndex));
+    }
+
+    private int CompareDateTimeOffset(int leftRowIndex, int rightRowIndex)
+    {
+        var left = GetDateTimeOffsetWithOverride(leftRowIndex);
+        var right = GetDateTimeOffsetWithOverride(rightRowIndex);
+        if (left.HasValue && right.HasValue)
+        {
+            return left.Value.CompareTo(right.Value);
+        }
+
+        return CompareStringFallback(GetRawWithOverride(leftRowIndex), GetRawWithOverride(rightRowIndex));
+    }
+
+    private string? GetRawWithOverride(int rowIndex) =>
+        rowIndex == _overrideRowIndex ? _overrideValue : _collection.GetValue(rowIndex, _fieldIndex);
+
+    private int CompareString(int leftRowIndex, int rightRowIndex) =>
+        CompareStringFallback(GetRawWithOverride(leftRowIndex), GetRawWithOverride(rightRowIndex));
+
+    private static int CompareStringFallback(string? left, string? right)
+    {
+        if (left is null && right is null)
+        {
+            return 0;
+        }
+
+        if (left is null)
+        {
+            return -1;
+        }
+
+        if (right is null)
+        {
+            return 1;
+        }
+
+        return string.Compare(left, right, StringComparison.Ordinal);
+    }
+
     internal readonly struct RowComparer : IComparer<int>
     {
         private readonly SortIndex _owner;
@@ -173,29 +336,7 @@ public sealed class SortIndex : IRowIndex
 
         public int Compare(int a, int b)
         {
-            string? va = a == _owner._overrideRowIndex
-                ? _owner._overrideValue
-                : _owner._collection.GetValue(a, _owner._fieldIndex);
-            string? vb = b == _owner._overrideRowIndex
-                ? _owner._overrideValue
-                : _owner._collection.GetValue(b, _owner._fieldIndex);
-            int cmp;
-            if (va is null)
-            {
-                if (vb is null)
-                {
-                    return 0;
-                }
-
-                return _ascending ? -1 : 1;
-            }
-
-            if (vb is null)
-            {
-                return _ascending ? 1 : -1;
-            }
-
-            cmp = string.Compare(va, vb, StringComparison.Ordinal);
+            int cmp = _owner._comparison(a, b);
             if (!_ascending)
             {
                 cmp = -cmp;

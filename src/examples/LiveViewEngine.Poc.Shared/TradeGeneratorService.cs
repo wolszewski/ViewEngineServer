@@ -145,7 +145,8 @@ public class TradeGeneratorService(
             status.UpdateFrequencyHz = settings.UpdateFrequencyHz;
         });
 
-        if (!await ingestionClient.CreateCollectionAsync(CollectionName, fieldNames, ct))
+        var fieldTypes = _fieldDefinitions.Select(static field => MapFieldType(field.Type)).ToList();
+        if (!await ingestionClient.CreateCollectionAsync(CollectionName, fieldNames, fieldTypes, ct))
         {
             logger.LogWarning("Could not create collection '{CollectionName}'. Continuing with the assumption that it already exists.", CollectionName);
         }
@@ -362,6 +363,20 @@ public class TradeGeneratorService(
 
         return defaultValue;
     }
+
+    private static string MapFieldType(string typeName) => typeName switch
+    {
+        "string" => "string",
+        "enum" => "string",
+        "int" => "int",
+        "long" => "long",
+        "double" => "double",
+        "decimal" => "decimal",
+        "dateonly" => "dateonly",
+        "datetime" => "datetime",
+        "datetimeoffset" => "datetimeoffset",
+        _ => "string"
+    };
 
     private static string CreateTimestamp() => DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
 

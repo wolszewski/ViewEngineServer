@@ -89,7 +89,15 @@ public static class HttpIngestAdapter
             return (IngestResult.Fail("At least one field must be defined."), null);
         }
 
-        var schema = new CollectionSchema(request.CollectionName, request.Fields);
+        if (request.FieldTypes is { Count: > 0 } && request.FieldTypes.Count != request.Fields.Count)
+        {
+            return (IngestResult.Fail("'fieldTypes' count must match the number of fields."), null);
+        }
+
+        var schema = new CollectionSchema(
+            request.CollectionName,
+            request.Fields,
+            request.FieldTypes is null ? null : ParseFieldTypes(request.FieldTypes));
 
         var command = new CreateCollectionCommand
         {
@@ -101,6 +109,41 @@ public static class HttpIngestAdapter
         return (result, null);
     }
 
+    private static List<ScalarFieldType> ParseFieldTypes(IReadOnlyList<string> fieldTypes)
+    {
+        var parsed = new List<ScalarFieldType>(fieldTypes.Count);
+        foreach (var fieldType in fieldTypes)
+        {
+           parsed.Add(ParseScalarFieldType(fieldType));
+        }
+
+        return parsed;
+    }
+
+    private static ScalarFieldType ParseScalarFieldType(string fieldType)
+    {
+        if (string.IsNullOrWhiteSpace(fieldType))
+        {
+           return ScalarFieldType.String;
+        }
+
+        return fieldType.Trim() switch
+        {
+           "string" => ScalarFieldType.String,
+           "enum" => ScalarFieldType.String,
+           "int" => ScalarFieldType.Int32,
+           "int32" => ScalarFieldType.Int32,
+           "long" => ScalarFieldType.Int64,
+           "int64" => ScalarFieldType.Int64,
+           "double" => ScalarFieldType.Double,
+           "decimal" => ScalarFieldType.Decimal,
+           "dateonly" => ScalarFieldType.DateOnly,
+           "datetime" => ScalarFieldType.DateTime,
+           "datetimeoffset" => ScalarFieldType.DateTimeOffset,
+           _ => ScalarFieldType.String
+        };
+    }
+
     private static bool TryMapUpsertCommand(
         string collectionName,
         IngestRequestDto dto,
@@ -109,8 +152,8 @@ public static class HttpIngestAdapter
     {
         error = null;
         var fields = dto.Fields is null
-            ? new Dictionary<string, string?>()
-            : new Dictionary<string, string?>(dto.Fields);
+           ? new Dictionary<string, string?>()
+           : new Dictionary<string, string?>(dto.Fields);
 
         var rowKey = dto.PrimaryKeyValue;
         if (string.IsNullOrWhiteSpace(rowKey))
