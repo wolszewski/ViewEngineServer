@@ -53,17 +53,27 @@ public class TradeGeneratorService(
 
     public async Task StartGenerationAsync(TradeGenerationSettings settings, CancellationToken ct = default)
     {
+        logger.LogInformation(
+            "Trade generation requested. InitialTradeCount={InitialTradeCount}, UpdateFieldCount={UpdateFieldCount}, UpdateFrequencyHz={UpdateFrequencyHz}, UpdatableFieldCount={UpdatableFieldCount}",
+            settings.InitialTradeCount,
+            settings.UpdateFieldCount,
+            settings.UpdateFrequencyHz,
+            settings.UpdatableFields?.Count ?? _fieldDefinitions.Count(static field => field.IsUserUpdatable));
+
         CancellationTokenSource? newRun;
         lock (_sync)
         {
             if (_activeRun is not null)
             {
+                logger.LogWarning("Trade generation request ignored because a run is already active.");
                 return;
             }
 
             newRun = CancellationTokenSource.CreateLinkedTokenSource(ct);
             _activeRun = newRun;
         }
+
+        logger.LogInformation("Trade generation accepted and starting.");
 
         UpdateStatus(status =>
         {
@@ -72,9 +82,15 @@ public class TradeGeneratorService(
             status.LastError = null;
         });
 
+        await Task.Yield();
+
         try
         {
             await RunGenerationAsync(settings, newRun.Token);
+        }
+        catch (OperationCanceledException) when (newRun.IsCancellationRequested)
+        {
+            logger.LogInformation("Trade generation canceled.");
         }
         catch (Exception ex)
         {

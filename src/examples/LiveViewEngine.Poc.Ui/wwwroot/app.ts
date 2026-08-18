@@ -21,6 +21,7 @@ const defaultCollectionId = 'trades';
 const defaultSortColumn = 'quantity';
 const defaultPageSize = 50;
 const defaultMessageFormat: MessageFormat = 'compact';
+const latencyWindowSize = 500;
 const filterOperators = [
     { label: 'equals', value: 'eq' },
     { label: 'not equals', value: 'notEq' },
@@ -318,7 +319,7 @@ function App(): React.ReactElement {
     const [totalCount, setTotalCount] = useState<number | null>(null);
     const [columnDefs, setColumnDefs] = useState<ColDef<RowData>[]>([]);
     const [latencySummary, setLatencySummary] = useState({ maxMs: 0, avgMs: 0, sampleCount: 0 });
-    const latencyAccRef = useRef({ maxMs: 0, avgMs: 0, sampleCount: 0 });
+    const latencyAccRef = useRef({ maxMs: 0, avgMs: 0, sampleCount: 0, recentLatencies: [] as number[], recentTotalMs: 0 });
     const [isLoadingSnapshot, setIsLoadingSnapshot] = useState(false);
     const [snapshotStats, setSnapshotStats] = useState<{ rowCount: number; loadMs: number } | null>(null);
     const [gridVisible, setGridVisible] = useState(true);
@@ -347,7 +348,7 @@ function App(): React.ReactElement {
         setColumnDefs([]);
         setTotalCount(null);
         setSnapshotStats(null);
-        latencyAccRef.current = { maxMs: 0, avgMs: 0, sampleCount: 0 };
+        latencyAccRef.current = { maxMs: 0, avgMs: 0, sampleCount: 0, recentLatencies: [], recentTotalMs: 0 };
         setLatencySummary({ maxMs: 0, avgMs: 0, sampleCount: 0 });
         if (gridApiRef.current) {
             gridApiRef.current.setGridOption('rowData', []);
@@ -383,14 +384,19 @@ function App(): React.ReactElement {
 
         const latencyMs = Date.now() - timestamp;
         const acc = latencyAccRef.current;
-        const nextCount = acc.sampleCount + 1;
-        const nextAverage = nextCount === 1
-            ? latencyMs
-            : ((acc.avgMs * acc.sampleCount) + latencyMs) / nextCount;
+        const recentLatencies = [...acc.recentLatencies, latencyMs];
+        let recentTotalMs = acc.recentTotalMs + latencyMs;
+        if (recentLatencies.length > latencyWindowSize) {
+            recentTotalMs -= recentLatencies.shift() ?? 0;
+        }
+        const nextCount = recentLatencies.length;
+        const nextAverage = nextCount === 0 ? 0 : recentTotalMs / nextCount;
         latencyAccRef.current = {
             sampleCount: nextCount,
             maxMs: Math.max(acc.maxMs, latencyMs),
-            avgMs: nextAverage
+            avgMs: nextAverage,
+            recentLatencies,
+            recentTotalMs
         };
     }, []);
 
@@ -859,7 +865,7 @@ function App(): React.ReactElement {
         React.createElement(
             'div',
             { className: 'status' },
-            `Live updates — Max latency: ${latencySummary.maxMs.toFixed(0)} ms • Avg latency: ${latencySummary.avgMs.toFixed(0)} ms • Samples: ${latencySummary.sampleCount}`
+            `Live updates — Max latency: ${latencySummary.maxMs.toFixed(0)} ms • Avg latency (last ${latencyWindowSize}): ${latencySummary.avgMs.toFixed(0)} ms • Window samples: ${latencySummary.sampleCount}`
         ),
         React.createElement(
             'div',
