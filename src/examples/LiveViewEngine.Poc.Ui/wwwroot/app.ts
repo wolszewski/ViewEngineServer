@@ -317,6 +317,7 @@ function App(): React.ReactElement {
     const [draftColumns, setDraftColumns] = useState<Set<string>>(new Set());
     const [totalCount, setTotalCount] = useState<number | null>(null);
     const [columnDefs, setColumnDefs] = useState<ColDef<RowData>[]>([]);
+    const [latencySummary, setLatencySummary] = useState({ maxMs: 0, avgMs: 0, sampleCount: 0 });
 
     const effectiveTotalCount = totalCount ?? defaultTotalCountAssumption;
     const maxPageIndex = Math.max(0, Math.ceil(effectiveTotalCount / pageSize) - 1);
@@ -361,6 +362,32 @@ function App(): React.ReactElement {
         })));
     }, []);
 
+    const recordLatency = useCallback((row: RowData) => {
+        const updatedDate = typeof row.updatedDate === 'string' ? row.updatedDate : null;
+        if (!updatedDate) {
+            return;
+        }
+
+        const timestamp = Date.parse(updatedDate);
+        if (!Number.isFinite(timestamp)) {
+            return;
+        }
+
+        const latencyMs = Date.now() - timestamp;
+        setLatencySummary((current) => {
+            const nextCount = current.sampleCount + 1;
+            const nextAverage = nextCount === 1
+                ? latencyMs
+                : ((current.avgMs * current.sampleCount) + latencyMs) / nextCount;
+
+            return {
+                sampleCount: nextCount,
+                maxMs: Math.max(current.maxMs, latencyMs),
+                avgMs: nextAverage
+            };
+        });
+    }, []);
+
     const applySnapshot = useCallback((snapshot: SnapshotEvent) => {
         const rows = (snapshot.rows ?? []).map((row) => ({ ...row }));
         rowsByIdRef.current.clear();
@@ -372,6 +399,7 @@ function App(): React.ReactElement {
             }
             rowsByIdRef.current.set(rowId, row);
             orderedIdsRef.current.push(rowId);
+            recordLatency(row);
         }
 
         setTotalCount(snapshot.totalCount);
@@ -386,7 +414,7 @@ function App(): React.ReactElement {
         if (gridApiRef.current) {
             gridApiRef.current.setGridOption('rowData', rows);
         }
-    }, [pageSize, setColumnsFromRow]);
+    }, [pageSize, recordLatency, setColumnsFromRow]);
 
     const applyUpdate = useCallback((update: RowUpdateEvent) => {
         const rowId = update.rowId;
@@ -402,6 +430,7 @@ function App(): React.ReactElement {
         const changedFields = update.changedFields ?? {};
         const updated: RowData = { ...existing, ...changedFields };
         rowsByIdRef.current.set(rowId, updated);
+        recordLatency(updated);
 
         const api = gridApiRef.current;
         if (!api) {
@@ -418,7 +447,7 @@ function App(): React.ReactElement {
                 fadeDuration: 1_000
             });
         }
-    }, []);
+    }, [recordLatency]);
 
     const applyInsert = useCallback((insert: RowInsertEvent) => {
         const row = { ...(insert.row ?? {}) };
@@ -774,6 +803,11 @@ function App(): React.ReactElement {
         ),
         React.createElement('h1', null, 'LiveViewEngine PoC UI'),
         React.createElement('div', { className: 'status' }, status),
+        React.createElement(
+            'div',
+            { className: 'status' },
+            `Max latency: ${latencySummary.maxMs.toFixed(0)} ms • Avg latency: ${latencySummary.avgMs.toFixed(0)} ms • Samples: ${latencySummary.sampleCount}`
+        ),
         React.createElement(
             'div',
             { className: 'controls' },
