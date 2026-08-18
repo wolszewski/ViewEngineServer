@@ -28,7 +28,7 @@ public sealed class SortIndex : IRowIndex
         var fieldType = collection.Schema.GetFieldDefinition(fieldIndex).Type;
         if (fieldType != ScalarFieldType.String)
         {
-            collection.ActivateTypedField(fieldIndex);
+            collection.AddTypedFieldRef(fieldIndex);
         }
 
         _comparison = fieldType switch

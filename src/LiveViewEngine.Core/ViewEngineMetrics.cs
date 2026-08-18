@@ -9,6 +9,8 @@ public interface IViewEngineMetrics
         Func<int> activeSharedViews,
         Func<int> activeSortIndexes);
 
+    void RegisterTypedColumnGaugeSource(Func<IEnumerable<Measurement<int>>> source);
+
     void RecordInsert(double durationMs, string collectionId);
     void RecordUpdate(double durationMs, string collectionId);
     void RecordSubscriptionDuration(double durationMs, string commandType, string collectionId);
@@ -68,6 +70,14 @@ public sealed class ViewEngineMetrics : IDisposable, IViewEngineMetrics
             "viewengine.active_sort_indexes",
             activeSortIndexes,
             description: "Number of active sort indexes across all collections.");
+    }
+
+    public void RegisterTypedColumnGaugeSource(Func<IEnumerable<Measurement<int>>> source)
+    {
+        _meter.CreateObservableGauge(
+            "viewengine.typed_columns.ref_count",
+            source,
+            description: "Ref count per active typed column, tagged by collectionId and fieldName.");
     }
 
     public void RecordInsert(double durationMs, string collectionId)

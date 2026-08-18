@@ -21,6 +21,8 @@ internal sealed class CapturingPublisher : IOutboundPublisher
         return ValueTask.CompletedTask;
     }
 
+    public ValueTask FlushAsync(CancellationToken ct = default) => ValueTask.CompletedTask;
+
     public IEnumerable<DeltaEvent> EventsFor(int connectionId) =>
         _published
             .Where(p => p.ConnectionId == connectionId)

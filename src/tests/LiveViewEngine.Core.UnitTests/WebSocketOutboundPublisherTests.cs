@@ -160,6 +160,7 @@ public class WebSocketOutboundPublisherTests
                 }
             ]);
 
+        await publisher.FlushAsync();
         await socket.WaitForMessagesAsync(1);
 
         var message = Assert.Single(socket.Messages);
@@ -176,11 +177,11 @@ public class WebSocketOutboundPublisherTests
         publisher.Register(1, socket);
         publisher.ConfigureSubscription(1, 7, OutboundMessageFormat.Compact, snapshotActive: false);
 
-        var schema = new LiveViewEngine.Core.Data.CollectionSchema("orders", ["customer", "amount"]);
+        var schema = new Data.CollectionSchema("orders", ["customer", "amount"]);
         await publisher.PublishAsync(
-            [new LiveViewEngine.Core.SubscriberTarget(1, 7)],
+            [new SubscriberTarget(1, 7)],
             [
-                new LiveViewEngine.Core.RowInsertDelta
+                new RowInsertDelta
                 {
                     ViewId = "1:7",
                     Schema = schema,
@@ -191,9 +192,9 @@ public class WebSocketOutboundPublisherTests
             ]);
 
         await publisher.PublishAsync(
-            [new LiveViewEngine.Core.SubscriberTarget(1, 7)],
+            [new SubscriberTarget(1, 7)],
             [
-                new LiveViewEngine.Core.RowRemoveDelta
+                new RowRemoveDelta
                 {
                     ViewId = "1:7",
                     RowId = "o1",

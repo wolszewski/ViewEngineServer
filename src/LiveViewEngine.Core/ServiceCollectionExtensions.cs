@@ -8,11 +8,12 @@ namespace LiveViewEngine.Core;
 
 public static class ServiceCollectionExtensions
 {
-    public static IServiceCollection AddLiveViewEngineCore(this IServiceCollection services)
+    public static IServiceCollection AddLiveViewEngineCore(this IServiceCollection services, LiveViewEngineOptions? options = null)
     {
         services.AddSingleton<IViewEngineMetrics, ViewEngineMetrics>();
         services.AddSingleton<ICollectionStore, CollectionStore>();
         services.AddSingleton<IOutboundEventFormatter, JsonOutboundEventFormatter>();
+        services.AddSingleton(options ?? new LiveViewEngineOptions());
         services.AddSingleton<IViewEngine, ViewEngine>();
         services.AddHostedService<StaleIndexReaperService>();
         return services;

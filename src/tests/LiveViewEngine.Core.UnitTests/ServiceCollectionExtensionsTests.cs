@@ -44,9 +44,8 @@ public class ServiceCollectionExtensionsTests
         public ValueTask PublishAsync(
             IReadOnlyList<SubscriberTarget> targets,
             IReadOnlyList<ViewDelta> deltas,
-            CancellationToken ct = default)
-        {
-            return ValueTask.CompletedTask;
-        }
+            CancellationToken ct = default) => ValueTask.CompletedTask;
+
+        public ValueTask FlushAsync(CancellationToken ct = default) => ValueTask.CompletedTask;
     }
 }

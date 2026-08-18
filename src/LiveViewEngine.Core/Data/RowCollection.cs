@@ -125,6 +125,46 @@ public sealed class RowCollection(CollectionSchema schema)
         _typedColumns.ActivateField(fieldIndex, fieldDefinition.Type, _rows.Capacity, rowValues);
     }
 
+    public void AddTypedFieldRef(int fieldIndex)
+    {
+        var fieldDefinition = Schema.GetFieldDefinition(fieldIndex);
+        if (fieldDefinition.Type == ScalarFieldType.String)
+        {
+            return;
+        }
+
+        var rowValues = new Dictionary<int, string?>();
+        foreach (var pair in _rowKeyToIndex)
+        {
+            var row = _rows[pair.Value];
+            if (row is not null)
+            {
+                rowValues[pair.Value] = row[fieldIndex];
+            }
+        }
+
+        _typedColumns.AddRef(fieldIndex, fieldDefinition.Type, _rows.Capacity, rowValues);
+    }
+
+    public void ReleaseTypedFieldRef(int fieldIndex) => _typedColumns.ReleaseRef(fieldIndex);
+
+    public bool IsTypedFieldActivated(int fieldIndex) => _typedColumns.IsActivated(fieldIndex);
+
+    public IEnumerable<(int FieldIndex, DateTime FlaggedAt)> GetPendingTypedColumnDeactivations() =>
+        _typedColumns.GetPendingDeactivations();
+
+    public void TryDeactivatePendingTypedColumn(int fieldIndex) => _typedColumns.TryDeactivatePending(fieldIndex);
+
+    public int GetTypedFieldRefCount(int fieldIndex) => _typedColumns.GetRefCount(fieldIndex);
+
+    public IEnumerable<(string FieldName, int RefCount)> GetActiveTypedColumns()
+    {
+        foreach (var (fieldIndex, refCount) in _typedColumns.GetActiveColumns())
+        {
+            yield return (Schema.GetFieldDefinition(fieldIndex).Name, refCount);
+        }
+    }
+
     public string? GetRowId(int index)
     {
         return _rows[index]?[CollectionSchema.PrimaryKeyIndex];

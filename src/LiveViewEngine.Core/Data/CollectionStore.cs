@@ -12,14 +12,14 @@ public interface ICollectionStore
     ICollection<string> CollectionIds { get; }
 }
 
-public sealed class CollectionStore(IViewEngineMetrics? metrics) : ICollectionStore
+public sealed class CollectionStore(IViewEngineMetrics? metrics, LiveViewEngineOptions? options = null) : ICollectionStore
 {
     private readonly ConcurrentDictionary<string, CollectionRuntime> _collections = new();
 
     public bool TryCreate(CollectionSchema schema)
     {
         var collection = new RowCollection(schema);
-        var runtime = new CollectionRuntime(collection, metrics);
+        var runtime = new CollectionRuntime(collection, metrics, options);
         return _collections.TryAdd(schema.CollectionName, runtime);
     }
 
