@@ -22,15 +22,6 @@ const defaultSortColumn = 'quantity';
 const defaultPageSize = 50;
 const defaultMessageFormat: MessageFormat = 'compact';
 const latencyWindowSize = 500;
-const filterOperators = [
-    { label: 'equals', value: 'eq' },
-    { label: 'not equals', value: 'notEq' },
-    { label: 'greater than', value: 'gt' },
-    { label: 'greater than or equal', value: 'gte' },
-    { label: 'less than', value: 'lt' },
-    { label: 'less than or equal', value: 'lte' },
-    { label: 'contains', value: 'contains' }
-] as const;
 const impliedFields = new Set(['key']);
 const knownTradeColumns = [
     'tradeId',
@@ -47,7 +38,6 @@ const knownTradeColumns = [
     ...Array.from({ length: 20 }, (_, index) => `decimalField${index.toString().padStart(2, '0')}`),
     ...Array.from({ length: 20 }, (_, index) => `enumField${index.toString().padStart(2, '0')}`)
 ];
-
 const columnGroups: Array<{ label: string; columns: string[] }> = [
     { label: 'string',  columns: ['tradeId', ...Array.from({ length: 30 }, (_, i) => `stringField${i.toString().padStart(2, '0')}`)] },
     { label: 'int',     columns: ['accountId', 'quantity', ...Array.from({ length: 23 }, (_, i) => `intField${i.toString().padStart(2, '0')}`)] },
@@ -56,13 +46,34 @@ const columnGroups: Array<{ label: string; columns: string[] }> = [
     { label: 'date',    columns: ['createdDate', 'updatedDate'] }
 ];
 const knownTradeColumnSet = new Set(knownTradeColumns);
-const filterOperatorSet = new Set(filterOperators.map((operator) => operator.value));
+const numericTradeColumnSet = new Set([
+    ...columnGroups.find((group) => group.label === 'int')?.columns ?? [],
+    ...columnGroups.find((group) => group.label === 'decimal')?.columns ?? []
+]);
+const dateTradeColumnSet = new Set(columnGroups.find((group) => group.label === 'date')?.columns ?? []);
+const filterOperatorSet = new Set(['eq', 'notEq', 'gt', 'gte', 'lt', 'lte', 'contains']);
+const textFilterOptions = ['contains', 'equals', 'notEqual'] as const;
+const orderedFilterOptions = ['equals', 'notEqual', 'greaterThan', 'greaterThanOrEqual', 'lessThan', 'lessThanOrEqual'] as const;
+const sharedFilterParams = {
+    buttons: ['apply', 'clear'],
+    closeOnApply: true,
+    maxNumConditions: 1
+} as const;
 
 interface AppliedFilter {
     field: string;
     operator: string;
     value: string;
 }
+
+interface GridFilterConditionModel {
+    type?: string;
+    filter?: string | number | null;
+    dateFrom?: string | null;
+    conditions?: GridFilterConditionModel[];
+}
+
+type GridFilterModelState = Record<string, GridFilterConditionModel>;
 
 interface AppUrlState {
     collectionId: string;
@@ -172,6 +183,222 @@ function syncUrlState(state: AppUrlState): void {
     if (nextUrl !== currentUrl) {
         window.history.replaceState(null, '', nextUrl);
     }
+}
+
+function isGridFilterConditionModel(value: unknown): value is GridFilterConditionModel {
+    return typeof value === 'object' && value !== null;
+}
+
+function getAgGridFilterType(field: string): NonNullable<ColDef<RowData>['filter']> {
+    if (numericTradeColumnSet.has(field)) {
+        return 'agNumberColumnFilter';
+    }
+
+    if (dateTradeColumnSet.has(field)) {
+        return 'agDateColumnFilter';
+    }
+
+    return 'agTextColumnFilter';
+}
+
+function toAgGridFilterOperator(operator: string): string | null {
+    switch (operator) {
+        case 'eq':
+            return 'equals';
+        case 'notEq':
+            return 'notEqual';
+        case 'gt':
+            return 'greaterThan';
+        case 'gte':
+            return 'greaterThanOrEqual';
+        case 'lt':
+            return 'lessThan';
+        case 'lte':
+            return 'lessThanOrEqual';
+        case 'contains':
+            return 'contains';
+        default:
+            return null;
+    }
+}
+
+function fromAgGridFilterOperator(operator: string | undefined): string | null {
+    switch (operator) {
+        case 'equals':
+            return 'eq';
+        case 'notEqual':
+            return 'notEq';
+        case 'greaterThan':
+            return 'gt';
+        case 'greaterThanOrEqual':
+            return 'gte';
+        case 'lessThan':
+            return 'lt';
+        case 'lessThanOrEqual':
+            return 'lte';
+        case 'contains':
+            return 'contains';
+        default:
+            return null;
+    }
+}
+
+function parseNumberValue(raw: string | null | undefined): number | null {
+    if (typeof raw !== 'string') {
+        return null;
+    }
+
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseDateValue(raw: string | null | undefined): Date | null {
+    if (typeof raw !== 'string') {
+        return null;
+    }
+
+    const timestamp = Date.parse(raw);
+    return Number.isFinite(timestamp) ? new Date(timestamp) : null;
+}
+
+function compareNullableNumbers(left: string | null | undefined, right: string | null | undefined): number {
+    const leftValue = parseNumberValue(left);
+    const rightValue = parseNumberValue(right);
+    if (leftValue === null && rightValue === null) {
+        return 0;
+    }
+
+    if (leftValue === null) {
+        return -1;
+    }
+
+    if (rightValue === null) {
+        return 1;
+    }
+
+    return leftValue - rightValue;
+}
+
+function compareNullableDates(left: string | null | undefined, right: string | null | undefined): number {
+    const leftValue = parseDateValue(left)?.getTime() ?? null;
+    const rightValue = parseDateValue(right)?.getTime() ?? null;
+    if (leftValue === null && rightValue === null) {
+        return 0;
+    }
+
+    if (leftValue === null) {
+        return -1;
+    }
+
+    if (rightValue === null) {
+        return 1;
+    }
+
+    return leftValue - rightValue;
+}
+
+function buildGridFilterModel(filters: AppliedFilter[]): GridFilterModelState {
+    const model: GridFilterModelState = {};
+
+    for (const filter of filters) {
+        const operator = toAgGridFilterOperator(filter.operator);
+        if (!operator || !knownTradeColumnSet.has(filter.field)) {
+            continue;
+        }
+
+        model[filter.field] = dateTradeColumnSet.has(filter.field)
+            ? {
+                type: operator,
+                dateFrom: filter.value
+            }
+            : {
+                type: operator,
+                filter: numericTradeColumnSet.has(filter.field) ? Number(filter.value) : filter.value
+            };
+    }
+
+    return model;
+}
+
+function getGridFilterValue(field: string, model: GridFilterConditionModel): string | null {
+    if (dateTradeColumnSet.has(field)) {
+        return typeof model.dateFrom === 'string' && model.dateFrom.trim().length > 0 ? model.dateFrom : null;
+    }
+
+    if (typeof model.filter === 'number') {
+        return String(model.filter);
+    }
+
+    return typeof model.filter === 'string' && model.filter.trim().length > 0 ? model.filter : null;
+}
+
+function buildAppliedFiltersFromGridModel(model: Record<string, unknown>): AppliedFilter[] {
+    const filters: AppliedFilter[] = [];
+
+    for (const [field, rawModel] of Object.entries(model)) {
+        if (!knownTradeColumnSet.has(field) || !isGridFilterConditionModel(rawModel)) {
+            continue;
+        }
+
+        const condition = Array.isArray(rawModel.conditions) ? rawModel.conditions[0] : rawModel;
+        if (!isGridFilterConditionModel(condition)) {
+            continue;
+        }
+
+        const operator = fromAgGridFilterOperator(condition.type);
+        const value = getGridFilterValue(field, condition);
+        if (!operator || value === null) {
+            continue;
+        }
+
+        filters.push({ field, operator, value });
+    }
+
+    return filters;
+}
+
+function areFiltersEqual(left: AppliedFilter[], right: AppliedFilter[]): boolean {
+    return left.length === right.length
+        && left.every((filter, index) => {
+            const other = right[index];
+            return other !== undefined
+                && filter.field === other.field
+                && filter.operator === other.operator
+                && filter.value === other.value;
+        });
+}
+
+function buildColumnDef(field: string, sortColumn: string, sortAscending: boolean): ColDef<RowData> {
+    const filter = getAgGridFilterType(field);
+    const columnDef: ColDef<RowData> = {
+        field,
+        headerName: field,
+        filter,
+        floatingFilter: true,
+        sort: field === sortColumn ? (sortAscending ? 'asc' : 'desc') : undefined,
+        filterParams: {
+            ...sharedFilterParams,
+            filterOptions: filter === 'agTextColumnFilter' ? textFilterOptions : orderedFilterOptions
+        }
+    };
+
+    if (numericTradeColumnSet.has(field)) {
+        columnDef.comparator = (left, right) => compareNullableNumbers(
+            typeof left === 'string' ? left : left == null ? null : String(left),
+            typeof right === 'string' ? right : right == null ? null : String(right)
+        );
+        columnDef.filterValueGetter = (params) => parseNumberValue(params.data?.[field] ?? null);
+    }
+
+    if (dateTradeColumnSet.has(field)) {
+        columnDef.comparator = (left, right) => compareNullableDates(
+            typeof left === 'string' ? left : left == null ? null : String(left),
+            typeof right === 'string' ? right : right == null ? null : String(right)
+        );
+        columnDef.filterValueGetter = (params) => parseDateValue(params.data?.[field] ?? null);
+    }
+
+    return columnDef;
 }
 
 interface SearchableDropdownProps {
@@ -307,12 +534,6 @@ function App(): React.ReactElement {
     const [pageSizeInput, setPageSizeInput] = useState(String(initialUrlState.pageSize));
     const [pageIndex, setPageIndex] = useState(initialUrlState.pageIndex);
     const [filters, setFilters] = useState<AppliedFilter[]>(initialUrlState.filters);
-    const [isAddingFilter, setIsAddingFilter] = useState(false);
-    const [draftFilter, setDraftFilter] = useState({
-        field: knownTradeColumns[0],
-        operator: 'eq',
-        value: ''
-    });
     const [selectedFields, setSelectedFields] = useState<string[]>(initialUrlState.selectedFields);
     const [isSelectingColumns, setIsSelectingColumns] = useState(false);
     const [draftColumns, setDraftColumns] = useState<Set<string>>(new Set());
@@ -329,6 +550,7 @@ function App(): React.ReactElement {
     const maxPageIndex = Math.max(0, Math.ceil(effectiveTotalCount / pageSize) - 1);
 
     const gridApiRef = useRef<GridApi<RowData> | null>(null);
+    const isApplyingGridStateRef = useRef(false);
     const clientRef = useRef<WebHostClient | null>(null);
     const handleDeltaEventRef = useRef<(event: DeltaEvent) => void>(() => {});
     const initialRowData = useMemo<RowData[]>(() => [], []);
@@ -338,8 +560,10 @@ function App(): React.ReactElement {
     const defaultColDef = useMemo<ColDef<RowData>>(() => ({
         sortable: true,
         filter: true,
+        floatingFilter: true,
         resizable: true,
-        enableCellChangeFlash: true
+        enableCellChangeFlash: true,
+        sortingOrder: ['asc', 'desc']
     }), []);
 
     const clearState = useCallback(() => {
@@ -365,11 +589,8 @@ function App(): React.ReactElement {
             return;
         }
 
-        setColumnDefs(fields.map((field) => ({
-            field,
-            headerName: field
-        })));
-    }, []);
+        setColumnDefs(fields.map((field) => buildColumnDef(field, sortColumn, sortAscending)));
+    }, [sortAscending, sortColumn]);
 
     const recordLatency = useCallback((row: RowData) => {
         const updatedDate = typeof row.updatedDate === 'string' ? row.updatedDate : null;
@@ -580,43 +801,6 @@ function App(): React.ReactElement {
         }
     }, [onPageSizeChanged, pageSize]);
 
-    const addFilter = useCallback(() => {
-        setIsAddingFilter(true);
-    }, []);
-
-    const commitFilter = useCallback(() => {
-        const nextFilter = {
-            field: draftFilter.field,
-            operator: draftFilter.operator,
-            value: draftFilter.value
-        };
-
-        if (!nextFilter.field || !nextFilter.field.trim()) {
-            return;
-        }
-
-        setFilters((current) => [...current, nextFilter]);
-        setDraftFilter({
-            field: knownTradeColumns[0],
-            operator: 'eq',
-            value: ''
-        });
-        setIsAddingFilter(false);
-    }, [draftFilter]);
-
-    const cancelFilter = useCallback(() => {
-        setIsAddingFilter(false);
-        setDraftFilter({
-            field: knownTradeColumns[0],
-            operator: 'eq',
-            value: ''
-        });
-    }, []);
-
-    const removeFilter = useCallback((index: number) => {
-        setFilters((current) => current.filter((_, currentIndex) => currentIndex !== index));
-    }, []);
-
     const openColumnSelector = useCallback(() => {
         setDraftColumns(new Set(selectedFields.length > 0 ? selectedFields : knownTradeColumns));
         setIsSelectingColumns(true);
@@ -672,6 +856,23 @@ function App(): React.ReactElement {
     useEffect(() => {
         setPageSizeInput(String(pageSize));
     }, [pageSize]);
+
+    useEffect(() => {
+        const api = gridApiRef.current;
+        if (!api || columnDefs.length === 0) {
+            return;
+        }
+
+        isApplyingGridStateRef.current = true;
+        api.applyColumnState({
+            defaultState: { sort: null },
+            state: [{ colId: sortColumn, sort: sortAscending ? 'asc' : 'desc' }]
+        });
+        api.setFilterModel(buildGridFilterModel(normalisedFilters));
+        window.setTimeout(() => {
+            isApplyingGridStateRef.current = false;
+        }, 0);
+    }, [columnDefs, normalisedFilters, sortAscending, sortColumn]);
 
     useEffect(() => {
         syncUrlState({
@@ -882,33 +1083,6 @@ function App(): React.ReactElement {
             React.createElement(
                 'label',
                 { className: 'control-label' },
-                'Sort column',
-                React.createElement(
-                    'select',
-                    {
-                        value: sortColumn,
-                        onChange: (e: Event) => setSortColumn((e.target as HTMLSelectElement).value)
-                    },
-                    ...knownTradeColumns.map((column) => React.createElement('option', { key: column, value: column }, column))
-                )
-            ),
-            React.createElement(
-                'label',
-                { className: 'control-label' },
-                'Sort direction',
-                React.createElement(
-                    'select',
-                    {
-                        value: sortAscending ? 'asc' : 'desc',
-                        onChange: (e: Event) => setSortAscending((e.target as HTMLSelectElement).value === 'asc')
-                    },
-                    React.createElement('option', { value: 'asc' }, 'Ascending'),
-                    React.createElement('option', { value: 'desc' }, 'Descending')
-                )
-            ),
-            React.createElement(
-                'label',
-                { className: 'control-label' },
                 'Page size',
                 React.createElement(SearchableDropdown, {
                     id: 'page-size',
@@ -933,7 +1107,6 @@ function App(): React.ReactElement {
                     React.createElement('option', { value: 'json' }, 'JSON')
                 )
             ),
-            React.createElement('button', { type: 'button', onClick: addFilter }, 'Add filter'),
             React.createElement('button', { type: 'button', onClick: openColumnSelector }, 'Select columns'),
             React.createElement('button', { type: 'button', onClick: connect }, 'Connect'),
             React.createElement('button', { type: 'button', onClick: disconnect }, 'Disconnect'),
@@ -951,61 +1124,6 @@ function App(): React.ReactElement {
                 }),
                 'Show grid'
             )
-        ),
-        React.createElement(
-            'div',
-            { className: 'filters' },
-            isAddingFilter
-                ? React.createElement(
-                    'div',
-                    { className: 'filter-row' },
-                    React.createElement(
-                        'label',
-                        { className: 'control-label' },
-                        'Field',
-                        React.createElement(
-                            'select',
-                            {
-                                value: draftFilter.field,
-                                onChange: (e: Event) => setDraftFilter((current) => ({ ...current, field: (e.target as HTMLSelectElement).value }))
-                            },
-                            ...knownTradeColumns.map((column) => React.createElement('option', { key: column, value: column }, column))
-                        )
-                    ),
-                    React.createElement(
-                        'label',
-                        { className: 'control-label' },
-                        'Operator',
-                        React.createElement(
-                            'select',
-                            {
-                                value: draftFilter.operator,
-                                onChange: (e: Event) => setDraftFilter((current) => ({ ...current, operator: (e.target as HTMLSelectElement).value }))
-                            },
-                            ...filterOperators.map((operator) => React.createElement('option', { key: operator.value, value: operator.value }, operator.label))
-                        )
-                    ),
-                    React.createElement(
-                        'label',
-                        { className: 'control-label' },
-                        'Value',
-                        React.createElement('input', {
-                            value: draftFilter.value,
-                            onChange: (e: Event) => setDraftFilter((current) => ({ ...current, value: (e.target as HTMLInputElement).value }))
-                        })
-                    ),
-                    React.createElement('button', { type: 'button', onClick: commitFilter }, 'Add'),
-                    React.createElement('button', { type: 'button', onClick: cancelFilter }, 'Cancel')
-                )
-                : null,
-            filters.length === 0
-                ? React.createElement('div', { className: 'empty-filters' }, 'No filters added.')
-                : filters.map((filter, index) => React.createElement(
-                    'div',
-                    { key: `${filter.field}-${filter.operator}-${index}`, className: 'filter-chip' },
-                    React.createElement('span', null, `${filter.field} ${filterOperators.find((operator) => operator.value === filter.operator)?.label ?? filter.operator} ${filter.value}`),
-                    React.createElement('button', { type: 'button', onClick: () => removeFilter(index) }, 'Remove')
-                ))
         ),
         React.createElement(
             'div',
@@ -1087,6 +1205,43 @@ function App(): React.ReactElement {
                 React.createElement(AgGridReact<RowData>, {
                     onGridReady: (params) => {
                         gridApiRef.current = params.api;
+                        isApplyingGridStateRef.current = true;
+                        params.api.applyColumnState({
+                            defaultState: { sort: null },
+                            state: [{ colId: sortColumn, sort: sortAscending ? 'asc' : 'desc' }]
+                        });
+                        params.api.setFilterModel(buildGridFilterModel(normalisedFilters));
+                        window.setTimeout(() => {
+                            isApplyingGridStateRef.current = false;
+                        }, 0);
+                    },
+                    onSortChanged: (event) => {
+                        if (isApplyingGridStateRef.current) {
+                            return;
+                        }
+
+                        const sortedColumn = event.api.getColumnState()
+                            .find((columnState) => columnState.sort === 'asc' || columnState.sort === 'desc');
+                        const nextSortColumn = sortedColumn?.colId && knownTradeColumnSet.has(sortedColumn.colId)
+                            ? sortedColumn.colId
+                            : defaultSortColumn;
+                        const nextSortAscending = sortedColumn?.sort !== 'desc';
+                        if (nextSortColumn !== sortColumn) {
+                            setSortColumn(nextSortColumn);
+                        }
+                        if (nextSortAscending !== sortAscending) {
+                            setSortAscending(nextSortAscending);
+                        }
+                        setPageIndex(0);
+                    },
+                    onFilterChanged: (event) => {
+                        if (isApplyingGridStateRef.current) {
+                            return;
+                        }
+
+                        const nextFilters = buildAppliedFiltersFromGridModel(event.api.getFilterModel());
+                        setFilters((current) => areFiltersEqual(current, nextFilters) ? current : nextFilters);
+                        setPageIndex(0);
                     },
                     rowData: initialRowData,
                     columnDefs,
