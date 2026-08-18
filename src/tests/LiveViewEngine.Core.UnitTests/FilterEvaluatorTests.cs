@@ -1,3 +1,6 @@
+using System.Globalization;
+using LiveViewEngine.Core.Data;
+
 namespace LiveViewEngine.Core.UnitTests;
 
 public class FilterEvaluatorTests
@@ -87,6 +90,98 @@ public class FilterEvaluatorTests
         Assert.Equal(expected, FilterEvaluator.Matches(fieldValue, filter));
     }
 
+    [Fact]
+    public void Gt_UsesTypedNumericComparison_WhenFieldIsDeclaredAsInt32()
+    {
+        var schema = new CollectionSchema("scores", ["score"], [ScalarFieldType.Int32]);
+        var filter = new FilterSpec("score", FilterOperator.Gt, "3");
+
+        Assert.True(FilterEvaluator.Matches("5", filter, schema.GetFieldDefinition("score")));
+        Assert.False(FilterEvaluator.Matches("2", filter, schema.GetFieldDefinition("score")));
+    }
+
+    [Fact]
+    public void Lte_UsesTypedDateComparison_WhenFieldIsDeclaredAsDateTime()
+    {
+        var schema = new CollectionSchema("events", ["createdOn"], [ScalarFieldType.DateTime]);
+        var filter = new FilterSpec("createdOn", FilterOperator.Lte, "2025-01-15T00:00:00Z");
+
+        Assert.True(FilterEvaluator.Matches("2025-01-10T00:00:00Z", filter, schema.GetFieldDefinition("createdOn")));
+        Assert.False(FilterEvaluator.Matches("2025-01-20T00:00:00Z", filter, schema.GetFieldDefinition("createdOn")));
+    }
+
+    [Fact]
+    public void Gte_UsesTypedDateOnlyComparison_WhenFieldIsDeclaredAsDateOnly()
+    {
+        var schema = new CollectionSchema("events", ["day"], [ScalarFieldType.DateOnly]);
+        var filter = new FilterSpec("day", FilterOperator.Gte, "2025-01-15");
+
+        Assert.True(FilterEvaluator.Matches("2025-01-16", filter, schema.GetFieldDefinition("day")));
+        Assert.False(FilterEvaluator.Matches("2025-01-14", filter, schema.GetFieldDefinition("day")));
+    }
+
+    [Fact]
+    public void TypedConverters_Parses_AllSupportedScalarTypes()
+    {
+        Assert.True(ScalarValueConverter.TryConvertInt32("42", out var int32Value));
+        Assert.Equal(42, int32Value);
+
+        Assert.True(ScalarValueConverter.TryConvertInt64("9223372036854775807", out var int64Value));
+        Assert.Equal(9223372036854775807L, int64Value);
+
+        Assert.True(ScalarValueConverter.TryConvertDouble("3.5", out var doubleValue));
+        Assert.Equal(3.5d, doubleValue);
+
+        Assert.True(ScalarValueConverter.TryConvertDecimal("12.75", out var decimalValue));
+        Assert.Equal(12.75m, decimalValue);
+
+        Assert.True(ScalarValueConverter.TryConvertDateOnly("2025-01-15", out var dateOnlyValue));
+        Assert.Equal(new DateOnly(2025, 1, 15), dateOnlyValue);
+
+        Assert.True(ScalarValueConverter.TryConvertDateTime("2025-01-15T12:34:56Z", out var dateTimeValue));
+        Assert.Equal(DateTime.Parse("2025-01-15T12:34:56Z", CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind), dateTimeValue);
+
+        Assert.True(ScalarValueConverter.TryConvertDateTimeOffset("2025-01-15T12:34:56+02:00", out var dateTimeOffsetValue));
+        Assert.Equal(DateTimeOffset.Parse("2025-01-15T12:34:56+02:00", CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind), dateTimeOffsetValue);
+    }
+
+    [Theory]
+    [InlineData(ScalarFieldType.Int32, "not-a-number")]
+    [InlineData(ScalarFieldType.Int64, "abc")]
+    [InlineData(ScalarFieldType.Double, "not-a-double")]
+    [InlineData(ScalarFieldType.Decimal, "not-a-decimal")]
+    [InlineData(ScalarFieldType.DateOnly, "not-a-date")]
+    [InlineData(ScalarFieldType.DateTime, "not-a-datetime")]
+    [InlineData(ScalarFieldType.DateTimeOffset, "not-an-offset")]
+    public void TypedConverters_Fails_ForInvalidValue_ForAllTypedScalars(ScalarFieldType type, string raw)
+    {
+        switch (type)
+        {
+            case ScalarFieldType.Int32:
+                Assert.False(ScalarValueConverter.TryConvertInt32(raw, out _));
+                break;
+            case ScalarFieldType.Int64:
+                Assert.False(ScalarValueConverter.TryConvertInt64(raw, out _));
+                break;
+            case ScalarFieldType.Double:
+                Assert.False(ScalarValueConverter.TryConvertDouble(raw, out _));
+                break;
+            case ScalarFieldType.Decimal:
+                Assert.False(ScalarValueConverter.TryConvertDecimal(raw, out _));
+                break;
+            case ScalarFieldType.DateOnly:
+                Assert.False(ScalarValueConverter.TryConvertDateOnly(raw, out _));
+                break;
+            case ScalarFieldType.DateTime:
+                Assert.False(ScalarValueConverter.TryConvertDateTime(raw, out _));
+                break;
+            case ScalarFieldType.DateTimeOffset:
+                Assert.False(ScalarValueConverter.TryConvertDateTimeOffset(raw, out _));
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(type), type, null);
+        }
+    }
 
     [Fact]
     public void Contains_SubstringPresent_ReturnsTrue()
@@ -116,28 +211,12 @@ public class FilterEvaluatorTests
         Assert.False(FilterEvaluator.Matches(null, filter));
     }
 
-
     [Fact]
-    public void PassesAll_AllFiltersMatch_ReturnsTrue()
+    public void Contains_NonStringScalarField_ReturnsFalse()
     {
-        var row = new string?[] { "r1", "Alice", "50" };
-        var filters = new List<FilterSpec>
-        {
-            new("name", FilterOperator.Eq, "Alice"),
-            new("score", FilterOperator.Gte, "40")
-        };
-        Assert.True(FilterEvaluator.PassesAll(row, [1, 2], filters));
-    }
+        var schema = new CollectionSchema("scores", ["score"], [ScalarFieldType.Int32]);
+        var filter = new FilterSpec("score", FilterOperator.Contains, "2");
 
-    [Fact]
-    public void PassesAll_OneFilterFails_ReturnsFalse()
-    {
-        var row = new string?[] { "r1", "Alice", "30" };
-        var filters = new List<FilterSpec>
-        {
-            new("name", FilterOperator.Eq, "Alice"),
-            new("score", FilterOperator.Gte, "40")
-        };
-        Assert.False(FilterEvaluator.PassesAll(row, [1, 2], filters));
+        Assert.False(FilterEvaluator.Matches("42", filter, schema.GetFieldDefinition("score")));
     }
 }

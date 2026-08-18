@@ -7,4 +7,7 @@ public interface IOutboundPublisher
         IReadOnlyList<SubscriberTarget> targets,
         IReadOnlyList<ViewDelta> deltas,
         CancellationToken ct = default);
+
+    // Flush any coalesced live deltas accumulated since the last flush.
+    ValueTask FlushAsync(CancellationToken ct = default);
 }

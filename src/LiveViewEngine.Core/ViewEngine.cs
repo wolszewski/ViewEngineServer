@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using LiveViewEngine.Core.Data;
 using LiveViewEngine.Core.Runtime;
 using Microsoft.Extensions.Logging;
@@ -35,6 +36,14 @@ public sealed class ViewEngine : IViewEngine, IDisposable
             () => _collectionRuntimes.Values.Sum(static r => r.ActiveSubscriptionCount),
             () => _collectionRuntimes.Values.Sum(static r => r.ActiveSharedViewCount),
             () => _collectionRuntimes.Values.Sum(static r => r.SortIndexCount));
+
+        metrics?.RegisterTypedColumnGaugeSource(() =>
+            _collectionRuntimes.Values
+                .SelectMany(static r => r.GetActiveTypedColumns())
+                .Select(static x => new Measurement<int>(
+                    x.RefCount,
+                    new KeyValuePair<string, object?>("collectionId", x.CollectionId),
+                    new KeyValuePair<string, object?>("fieldName", x.FieldName))));
     }
 
     public async Task<IngestResult> IngestAsync(IngestCommand command, CancellationToken ct = default)
@@ -66,6 +75,8 @@ public sealed class ViewEngine : IViewEngine, IDisposable
                 {
                     await _publisher.PublishAsync(group.Targets, group.Deltas, ct);
                 }
+
+                await _publisher.FlushAsync(ct);
             }
 
             return mutationResult.Result;

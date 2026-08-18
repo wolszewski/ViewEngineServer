@@ -8,8 +8,6 @@ namespace LiveViewEngine.Core.Runtime;
 
 public sealed class CollectionRuntime : IDisposable
 {
-    private static readonly TimeSpan StaleIndexGracePeriod = TimeSpan.FromSeconds(30);
-    private const int SnapshotBatchSize = 128;
     private readonly CollectionWorker _worker = new();
     private readonly ConcurrentDictionary<ViewKey, SharedView> _sharedViews = new();
     private readonly ConcurrentDictionary<SubscriptionKey, ViewportState> _viewports = new();
@@ -17,11 +15,13 @@ public sealed class CollectionRuntime : IDisposable
     private readonly Dictionary<int, HashSet<int>> _subscriptionsByConnection = [];
     private readonly SortIndexRegistry _sortIndexRegistry = new();
     private readonly IViewEngineMetrics? _metrics;
+    private readonly LiveViewEngineOptions _options;
 
-    public CollectionRuntime(RowCollection collection, IViewEngineMetrics? metrics)
+    public CollectionRuntime(RowCollection collection, IViewEngineMetrics? metrics, LiveViewEngineOptions? options = null)
     {
         Collection = collection;
         _metrics = metrics;
+        _options = options ?? new LiveViewEngineOptions();
         _worker.Start();
     }
 
@@ -31,6 +31,15 @@ public sealed class CollectionRuntime : IDisposable
     public int ActiveSubscriptionCount => _viewports.Count;
     public int ActiveSharedViewCount => _sharedViews.Count;
     public int SortIndexCount => _sortIndexRegistry.Count;
+
+    public IEnumerable<(string CollectionId, string FieldName, int RefCount)> GetActiveTypedColumns()
+    {
+        var collectionId = Collection.Schema.CollectionName;
+        foreach (var (fieldName, refCount) in Collection.GetActiveTypedColumns())
+        {
+            yield return (collectionId, fieldName, refCount);
+        }
+    }
 
     public Task<T> EnqueueAsync<T>(IWorkItem<T> work, CancellationToken ct = default) =>
         _worker.EnqueueAsync(work, ct);
@@ -137,7 +146,7 @@ public sealed class CollectionRuntime : IDisposable
         var sortIndexKey = CreateSortIndexKey(Collection, viewKey);
         var sortIndex = _sortIndexRegistry.GetOrCreate(sortIndexKey, Collection);
         _sortIndexRegistry.UnflagForRemoval(sortIndexKey);
-        var view = _sharedViews.GetOrAdd(viewKey, key => new SharedView(key, Collection, sortIndex));
+        var view = _sharedViews.GetOrAdd(viewKey, key => new SharedView(key, Collection, sortIndex, _options));
         view.AddSubscriber(subscriptionKey);
         sortIndex.IncrementSubscribers();
 
@@ -260,11 +269,25 @@ public sealed class CollectionRuntime : IDisposable
     {
         foreach (var (key, flaggedAt) in _sortIndexRegistry.GetFlagged())
         {
-            if (DateTime.UtcNow - flaggedAt >= StaleIndexGracePeriod)
+            if (DateTime.UtcNow - flaggedAt >= _options.StaleIndexGracePeriod)
             {
                 await EnqueueAsync(new RemoveStaleIndexRuntimeWork(this, key), ct).ConfigureAwait(false);
             }
         }
+
+        foreach (var (fieldIndex, flaggedAt) in Collection.GetPendingTypedColumnDeactivations())
+        {
+            if (DateTime.UtcNow - flaggedAt >= _options.StaleIndexGracePeriod)
+            {
+                await EnqueueAsync(new RemoveStaleTypedColumnRuntimeWork(this, fieldIndex), ct).ConfigureAwait(false);
+            }
+        }
+    }
+
+    internal bool RemoveStaleTypedColumn(int fieldIndex)
+    {
+        Collection.TryDeactivatePendingTypedColumn(fieldIndex);
+        return true;
     }
 
     internal bool RemoveStaleIndex(SortIndexKey key)
@@ -283,6 +306,8 @@ public sealed class CollectionRuntime : IDisposable
 
         _sortIndexRegistry.Remove(key);
         _sortIndexRegistry.UnflagForRemoval(key);
+        Collection.ReleaseTypedFieldRef(key.FieldIndex);
+        Collection.TryDeactivatePendingTypedColumn(key.FieldIndex);
         return true;
     }
 
@@ -353,7 +378,10 @@ public sealed class CollectionRuntime : IDisposable
 
         if (view.IsEmpty)
         {
-            _sharedViews.TryRemove(viewport.ViewKey, out _);
+            if (_sharedViews.TryRemove(viewport.ViewKey, out _))
+            {
+                view.Dispose();
+            }
         }
 
         if (sortIndex.SubscriberCount == 0)
@@ -415,14 +443,14 @@ public sealed class CollectionRuntime : IDisposable
             }
         };
 
-        var batch = new List<string?[]>(SnapshotBatchSize);
+        var batch = new List<string?[]>(_options.SnapshotBatchSize);
         foreach (int rowIndex in view.EnumeratePageIndexes(startIndex, pageSize))
         {
             batch.Add(ProjectRow(Collection.GetRowValues(rowIndex), selectedFieldIndexes));
-            if (batch.Count == SnapshotBatchSize)
+            if (batch.Count == _options.SnapshotBatchSize)
             {
                 deltas.Add(CreateSnapshotRowsDelta(viewId, selectedFieldIndexes, batch));
-                batch = new List<string?[]>(SnapshotBatchSize);
+                batch = new List<string?[]>(_options.SnapshotBatchSize);
             }
         }
 

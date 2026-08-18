@@ -100,4 +100,21 @@ public class RowCollectionTests
         Assert.Equal("Alice", values[1]);
         Assert.Equal("42", values[2]);
     }
+
+    [Fact]
+    public void ActivateTypedField_CreatesTypedCache_AndKeepsItUpdated()
+    {
+        var schema = new CollectionSchema("test", ["score"], [ScalarFieldType.Int32]);
+        var col = new RowCollection(schema);
+        var scoreFieldIndex = schema.GetFieldIndex("score");
+
+        var row = col.AddOrUpdate("r1", new Dictionary<string, string?> { ["score"] = "42" });
+        Assert.Null(col.GetInt32(row.RowIndex, scoreFieldIndex));
+
+        col.ActivateTypedField(scoreFieldIndex);
+        Assert.Equal(42, col.GetInt32(row.RowIndex, scoreFieldIndex));
+
+        col.AddOrUpdate("r1", new Dictionary<string, string?> { ["score"] = "43" });
+        Assert.Equal(43, col.GetInt32(row.RowIndex, scoreFieldIndex));
+    }
 }

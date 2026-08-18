@@ -3,7 +3,7 @@ using LiveViewEngine.Core.Data;
 
 namespace LiveViewEngine.Core.Views;
 
-public sealed class SharedView
+public sealed class SharedView : IDisposable
 {
     public ViewKey Key { get; }
     private readonly bool _sortAscending;
@@ -14,20 +14,23 @@ public sealed class SharedView
     private readonly IRowIndex _activeIndex;
     private readonly ConcurrentDictionary<SubscriptionKey, bool> _subscribers = new();
 
-    public SharedView(ViewKey key, RowCollection collection, SortIndex sortIndex)
+    public SharedView(ViewKey key, RowCollection collection, SortIndex sortIndex, LiveViewEngineOptions? options = null)
     {
         Key = key;
         _sortAscending = key.SortAscending;
         _collection = collection;
         _sortIndex = sortIndex;
 
-        _filters = FilterSet.Create(key.Filters, collection.Schema);
+        var lifetime = options?.TypedColumnKeepAlive ?? TypedColumnKeepAlive.WhenReferencedByIndexes;
+        _filters = FilterSet.Create(key.Filters, collection.Schema, collection, lifetime);
         if (_filters.HasFilters)
         {
             _filteredIndex = new FilteredDataIndex(_sortIndex.GetComparer(), _sortIndex.EnumerateFiltered(_filters));
         }
         _activeIndex = (IRowIndex?)_filteredIndex ?? sortIndex;
     }
+
+    public void Dispose() => _filters.Dispose();
 
     internal SortIndex SortIndex => _sortIndex;
 

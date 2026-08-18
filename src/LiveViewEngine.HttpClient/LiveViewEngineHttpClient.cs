@@ -11,11 +11,20 @@ public sealed class LiveViewEngineHttpClient(System.Net.Http.HttpClient httpClie
         PropertyNameCaseInsensitive = true
     };
 
-    public async Task<bool> CreateCollectionAsync(string collectionName, IReadOnlyCollection<string> fieldNames, CancellationToken ct = default)
+    public async Task<bool> CreateCollectionAsync(
+        string collectionName,
+        IReadOnlyCollection<string> fieldNames,
+        IReadOnlyCollection<string>? fieldTypes = null,
+        CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(collectionName);
 
-        var request = new { collectionName, fields = fieldNames.ToList() };
+        var request = new
+        {
+            collectionName,
+            fields = fieldNames.ToList(),
+            fieldTypes = fieldTypes?.ToList() ?? []
+        };
         var response = await httpClient.PostAsJsonAsync("/collections", request, JsonOptions, ct);
         if (!response.IsSuccessStatusCode)
         {

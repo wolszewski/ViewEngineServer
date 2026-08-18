@@ -4,7 +4,8 @@ public sealed class RowCollection(CollectionSchema schema)
 {
     private readonly Dictionary<string, int> _rowKeyToIndex = new();
     private readonly SlotList<string?[]> _rows = new();
-    
+    private readonly TypedColumnsCollection _typedColumns = new(schema);
+
     public CollectionSchema Schema { get; } = schema;
 
     public MutationInfo AddOrUpdate(string key, IReadOnlyDictionary<string, string?> fieldChanges)
@@ -20,6 +21,7 @@ public sealed class RowCollection(CollectionSchema schema)
         foreach (var updatedField in columnChanges)
         {
             row[updatedField.Key] = updatedField.Value;
+            UpdateTypedValueForField(rowIndex, updatedField.Key, updatedField.Value);
         }
 
         return new MutationInfo(key, rowIndex, isNew, columnChanges, FieldMask.From(columnChanges));
@@ -33,10 +35,20 @@ public sealed class RowCollection(CollectionSchema schema)
         {
             return _rows[rowIndex]!;
         }
-        
+
         var newRow = new string?[Schema.Fields.Count];
+        var previousCapacity = _rows.Capacity;
 
         rowIndex = _rows.Add(newRow);
+
+        if (rowIndex >= previousCapacity)
+        {
+            _typedColumns.AddRow();
+        }
+        else
+        {
+            _typedColumns.ClearReusedSlot(rowIndex);
+        }
 
         newRow[0] = rowKey;
         _rowKeyToIndex[rowKey] = rowIndex;
@@ -68,6 +80,91 @@ public sealed class RowCollection(CollectionSchema schema)
         return row?[fieldIndex];
     }
 
+    public int? GetInt32(int rowIndex, int fieldIndex) => _typedColumns.GetInt32(fieldIndex, rowIndex);
+
+    public long? GetInt64(int rowIndex, int fieldIndex) => _typedColumns.GetInt64(fieldIndex, rowIndex);
+
+    public double? GetDouble(int rowIndex, int fieldIndex) => _typedColumns.GetDouble(fieldIndex, rowIndex);
+
+    public decimal? GetDecimal(int rowIndex, int fieldIndex) => _typedColumns.GetDecimal(fieldIndex, rowIndex);
+
+    public DateOnly? GetDateOnly(int rowIndex, int fieldIndex) => _typedColumns.GetDateOnly(fieldIndex, rowIndex);
+
+    public DateTime? GetDateTime(int rowIndex, int fieldIndex) => _typedColumns.GetDateTime(fieldIndex, rowIndex);
+
+    public DateTimeOffset? GetDateTimeOffset(int rowIndex, int fieldIndex) => _typedColumns.GetDateTimeOffset(fieldIndex, rowIndex);
+
+    public void ActivateTypedField(int fieldIndex)
+    {
+        if (fieldIndex < 0 || fieldIndex >= Schema.Fields.Count)
+        {
+            throw new ArgumentOutOfRangeException(nameof(fieldIndex));
+        }
+
+        if (_typedColumns.IsActivated(fieldIndex))
+        {
+            return;
+        }
+
+        var fieldDefinition = Schema.GetFieldDefinition(fieldIndex);
+        if (fieldDefinition.Type == ScalarFieldType.String)
+        {
+            return;
+        }
+
+        var rowValues = new Dictionary<int, string?>();
+        foreach (var pair in _rowKeyToIndex)
+        {
+            var row = _rows[pair.Value];
+            if (row is not null)
+            {
+                rowValues[pair.Value] = row[fieldIndex];
+            }
+        }
+
+        _typedColumns.ActivateField(fieldIndex, fieldDefinition.Type, _rows.Capacity, rowValues);
+    }
+
+    public void AddTypedFieldRef(int fieldIndex)
+    {
+        var fieldDefinition = Schema.GetFieldDefinition(fieldIndex);
+        if (fieldDefinition.Type == ScalarFieldType.String)
+        {
+            return;
+        }
+
+        var rowValues = new Dictionary<int, string?>();
+        foreach (var pair in _rowKeyToIndex)
+        {
+            var row = _rows[pair.Value];
+            if (row is not null)
+            {
+                rowValues[pair.Value] = row[fieldIndex];
+            }
+        }
+
+        _typedColumns.AddRef(fieldIndex, fieldDefinition.Type, _rows.Capacity, rowValues);
+    }
+
+    public void ReleaseTypedFieldRef(int fieldIndex) => _typedColumns.ReleaseRef(fieldIndex);
+
+    public bool IsTypedFieldActivated(int fieldIndex) => _typedColumns.IsActivated(fieldIndex);
+
+    public IEnumerable<(int FieldIndex, DateTime FlaggedAt)> GetPendingTypedColumnDeactivations() =>
+        _typedColumns.GetPendingDeactivations();
+
+    public void TryDeactivatePendingTypedColumn(int fieldIndex) => _typedColumns.TryDeactivatePending(fieldIndex);
+
+    public int GetTypedFieldRefCount(int fieldIndex) => _typedColumns.GetRefCount(fieldIndex);
+
+    public IEnumerable<(string FieldName, int RefCount)> GetActiveTypedColumns()
+    {
+        foreach (var (fieldIndex, refCount) in _typedColumns.GetActiveColumns())
+        {
+            yield return (Schema.GetFieldDefinition(fieldIndex).Name, refCount);
+        }
+    }
+
     public string? GetRowId(int index)
     {
         return _rows[index]?[CollectionSchema.PrimaryKeyIndex];
@@ -85,5 +182,15 @@ public sealed class RowCollection(CollectionSchema schema)
     {
         var source = _rows[index];
         return source ?? throw new InvalidOperationException($"Row at index {index} is deleted.");
+    }
+
+    private void UpdateTypedValueForField(int rowIndex, int fieldIndex, string? value)
+    {
+        if (!_typedColumns.IsActivated(fieldIndex))
+        {
+            return;
+        }
+
+        _typedColumns.UpdateFieldValue(fieldIndex, Schema.GetFieldDefinition(fieldIndex).Type, rowIndex, value);
     }
 }

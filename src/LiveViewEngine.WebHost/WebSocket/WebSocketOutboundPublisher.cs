@@ -156,10 +156,24 @@ public sealed class WebSocketOutboundPublisher(
                 {
                     PublishDelta(connection, subscription, target.SubscriptionId, delta);
                 }
+            }
+        }
 
-                if (!subscription.IsSnapshotActive)
+        return ValueTask.CompletedTask;
+    }
+
+    public ValueTask FlushAsync(CancellationToken ct = default)
+    {
+        foreach (var connection in _connections.Values)
+        {
+            lock (connection.Gate)
+            {
+                foreach (var (subscriptionId, subscription) in connection.Subscriptions)
                 {
-                    _flushPolicy.FlushPendingLiveDeltas(connection, target.SubscriptionId, subscription, _encoders);
+                    if (!subscription.IsSnapshotActive)
+                    {
+                        _flushPolicy.FlushPendingLiveDeltas(connection, subscriptionId, subscription, _encoders);
+                    }
                 }
             }
         }

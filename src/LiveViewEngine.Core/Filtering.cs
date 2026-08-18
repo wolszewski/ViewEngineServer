@@ -1,64 +1,54 @@
-namespace LiveViewEngine.Core;
+using LiveViewEngine.Core.Data;
 
+namespace LiveViewEngine.Core;
 
 public enum FilterOperator { Eq, NotEq, Gt, Gte, Lt, Lte, Contains }
 
 public sealed record FilterSpec(string FieldName, FilterOperator Operator, string? Value);
 
-
 public static class FilterEvaluator
 {
-    public static bool Matches(string? fieldValue, FilterSpec filter)
+    public static bool Matches(string? fieldValue, FilterSpec filter, FieldDefinition? fieldDefinition = null)
     {
-        return filter.Operator switch
+        var scalarType = fieldDefinition?.Type ?? ScalarFieldType.String;
+
+        if (filter.Operator == FilterOperator.Contains)
         {
-            FilterOperator.Eq => CompareValues(fieldValue, filter.Value) == 0,
-            FilterOperator.NotEq => CompareValues(fieldValue, filter.Value) != 0,
-            FilterOperator.Gt => CompareValues(fieldValue, filter.Value) > 0,
-            FilterOperator.Gte => CompareValues(fieldValue, filter.Value) >= 0,
-            FilterOperator.Lt => CompareValues(fieldValue, filter.Value) < 0,
-            FilterOperator.Lte => CompareValues(fieldValue, filter.Value) <= 0,
-            FilterOperator.Contains => fieldValue?.Contains(filter.Value ?? string.Empty,
-                           StringComparison.OrdinalIgnoreCase) == true,
+            return scalarType == ScalarFieldType.String &&
+                   fieldValue is string s &&
+                   s.Contains(filter.Value ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return CompareString(fieldValue, filter.Value, filter.Operator);
+    }
+
+    internal static bool CompareString(string? left, string? right, FilterOperator filterOperator)
+    {
+        if (left is null && right is null)
+        {
+            return filterOperator is FilterOperator.Eq or FilterOperator.Lte or FilterOperator.Gte;
+        }
+
+        if (left is null || right is null)
+        {
+            return filterOperator == FilterOperator.NotEq;
+        }
+
+        var comparison = string.Compare(left, right, StringComparison.Ordinal);
+        return EvaluateComparison(comparison, filterOperator);
+    }
+
+    internal static bool EvaluateComparison(int comparison, FilterOperator filterOperator)
+    {
+        return filterOperator switch
+        {
+            FilterOperator.Eq => comparison == 0,
+            FilterOperator.NotEq => comparison != 0,
+            FilterOperator.Gt => comparison > 0,
+            FilterOperator.Gte => comparison >= 0,
+            FilterOperator.Lt => comparison < 0,
+            FilterOperator.Lte => comparison <= 0,
             _ => false
         };
-    }
-
-    public static bool PassesAll(string?[] rowValues, int[] fieldIndexes, IReadOnlyList<FilterSpec> filters)
-    {
-        for (int i = 0; i < filters.Count; i++)
-        {
-            var fi = fieldIndexes[i];
-            if (fi < 0)
-            {
-                continue;
-            }
-
-            if (!Matches(rowValues[fi], filters[i]))
-            {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static int CompareValues(string? a, string? b)
-    {
-        if (a is null && b is null)
-        {
-            return 0;
-        }
-
-        if (a is null)
-        {
-            return -1;
-        }
-
-        if (b is null)
-        {
-            return 1;
-        }
-
-        return string.Compare(a, b, StringComparison.Ordinal);
     }
 }

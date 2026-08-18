@@ -34,8 +34,12 @@ public sealed class TradeGeneratorService : LiveViewEngine.Poc.Shared.TradeGener
 
     private sealed class LiveViewEngineHttpIngestionClient(LiveViewEngineHttpClient httpClient) : ITradeIngestionClient
     {
-        public Task<bool> CreateCollectionAsync(string collectionName, IReadOnlyList<string> fieldNames, CancellationToken cancellationToken = default)
-            => httpClient.CreateCollectionAsync(collectionName, fieldNames, cancellationToken);
+        public Task<bool> CreateCollectionAsync(
+            string collectionName,
+            IReadOnlyList<string> fieldNames,
+            IReadOnlyList<string>? fieldTypes = null,
+            CancellationToken cancellationToken = default)
+            => httpClient.CreateCollectionAsync(collectionName, fieldNames, fieldTypes, cancellationToken);
 
         public Task<bool> IngestAsync(string collectionName, string rowKey, IReadOnlyDictionary<string, string?> fieldValues, CancellationToken cancellationToken = default)
             => httpClient.IngestAsync(collectionName, rowKey, fieldValues, cancellationToken);
