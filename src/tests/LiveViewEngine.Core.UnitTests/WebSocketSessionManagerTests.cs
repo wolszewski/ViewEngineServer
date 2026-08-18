@@ -14,7 +14,7 @@ public class WebSocketSessionManagerTests
     public async Task HandleConnectionAsync_SubscribeBeforeCollectionExists_ReportsSnapshotPending()
     {
         var metrics = new ViewEngineMetrics();
-        var store = new CollectionStore(metrics);
+        var store = new CollectionStore(metrics, new LiveViewEngineOptions { EagerIndexing = false });
         var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance);
         var engine = new ViewEngine(store, publisher, NullLogger<ViewEngine>.Instance, metrics);
         var manager = new WebSocketSessionManager(

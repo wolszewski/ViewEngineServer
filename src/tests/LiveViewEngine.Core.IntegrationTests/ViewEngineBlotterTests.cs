@@ -13,7 +13,7 @@ public class ViewEngineBlotterTests
     private static (ViewEngine engine, CapturingPublisher publisher, ICollectionStore store) CreateEngine()
     {
         var metrics = new ViewEngineMetrics();
-        var store = new CollectionStore(metrics);
+        var store = new CollectionStore(metrics, new LiveViewEngineOptions { EagerIndexing = false });
         var publisher = new CapturingPublisher();
         var engine = new ViewEngine(store, publisher, NullLogger<ViewEngine>.Instance, metrics);
         return (engine, publisher, store);

@@ -23,6 +23,10 @@ public sealed class CollectionRuntime : IDisposable
         _metrics = metrics;
         _options = options ?? new LiveViewEngineOptions();
         _worker.Start();
+        if (_options.EagerIndexing)
+        {
+            EagerlyInitializeIndexes();
+        }
     }
 
     public RowCollection Collection { get; }
@@ -83,9 +87,15 @@ public sealed class CollectionRuntime : IDisposable
 
             var mutation = Collection.AddOrUpdate(command.Key, command.Fields);
             List<(IReadOnlyList<ViewDelta>, List<SubscriberTarget>)>? groups = null;
-            if (_sharedViews.Count > 0)
+            if (_sortIndexRegistry.Count > 0)
             {
-                groups = _propagator.Propagate(Collection, _sharedViews, _viewports, mutation, isDelete: false);
+                groups = _propagator.Propagate(
+                    Collection,
+                    _sharedViews,
+                    _viewports,
+                    _sortIndexRegistry.GetAllForCollection(Collection.Schema.CollectionName),
+                    mutation,
+                    isDelete: false);
             }
 
             return new MutationResult(IngestResult.Ok(), groups);
@@ -122,9 +132,15 @@ public sealed class CollectionRuntime : IDisposable
         }
 
         List<(IReadOnlyList<ViewDelta>, List<SubscriberTarget>)>? groups = null;
-        if (_sharedViews.Count > 0)
+        if (_sortIndexRegistry.Count > 0)
         {
-            groups = _propagator.Propagate(Collection, _sharedViews, _viewports, mutation, isDelete: true);
+            groups = _propagator.Propagate(
+                Collection,
+                _sharedViews,
+                _viewports,
+                _sortIndexRegistry.GetAllForCollection(Collection.Schema.CollectionName),
+                mutation,
+                isDelete: true);
         }
 
         return new MutationResult(IngestResult.Ok(), groups);
@@ -309,6 +325,16 @@ public sealed class CollectionRuntime : IDisposable
         Collection.ReleaseTypedFieldRef(key.FieldIndex);
         Collection.TryDeactivatePendingTypedColumn(key.FieldIndex);
         return true;
+    }
+
+    private void EagerlyInitializeIndexes()
+    {
+        var collectionId = Collection.Schema.CollectionName;
+        foreach (var field in Collection.Schema.Fields)
+        {
+            var key = new SortIndexKey(collectionId, field.FieldIndex);
+            _sortIndexRegistry.GetOrCreate(key, Collection);
+        }
     }
 
     private static SortIndexKey CreateSortIndexKey(RowCollection collection, ViewKey key)

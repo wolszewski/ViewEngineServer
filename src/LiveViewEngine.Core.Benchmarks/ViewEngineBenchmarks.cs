@@ -231,6 +231,8 @@ public class ViewEngineBenchmarks
             IReadOnlyList<ViewDelta> deltas,
             CancellationToken ct = default)
             => ValueTask.CompletedTask;
+
+        public ValueTask FlushAsync(CancellationToken ct = default) => ValueTask.CompletedTask;
     }
 }
 

@@ -17,6 +17,7 @@ public sealed class MutationPropagator
         RowCollection collection,
         ConcurrentDictionary<ViewKey, SharedView> collectionViews,
         ConcurrentDictionary<SubscriptionKey, ViewportState> viewports,
+        IEnumerable<SortIndex> sortIndexes,
         MutationInfo mutation,
         bool isDelete)
     {
@@ -31,6 +32,8 @@ public sealed class MutationPropagator
                 CollectViewDeltaGroups(collection, views, viewports, mutation, isDelete, ref pending);
                 views.Clear();
             }
+
+            UpdateIdleSortIndexes(sortIndexes, mutation, isDelete);
 
             return pending;
         }
@@ -87,13 +90,26 @@ public sealed class MutationPropagator
             return;
         }
 
-        if (mutation.IsNew || AnySortFieldTouched(_impactBuffer))
+        if (mutation.IsNew || mutation.ChangedMask[sortIndex.FieldIndex])
         {
             sortIndex.OnUpsert(mutation.RowIndex);
             return;
         }
 
         sortIndex.ResetPending();
+    }
+
+    private void UpdateIdleSortIndexes(IEnumerable<SortIndex> sortIndexes, MutationInfo mutation, bool isDelete)
+    {
+        foreach (var sortIndex in sortIndexes)
+        {
+            if (_groupBuffer.ContainsKey(sortIndex))
+            {
+                continue;
+            }
+
+            ApplySortIndexMutation(sortIndex, mutation, isDelete);
+        }
     }
 
     private void CollectViewDeltaGroups(
@@ -124,16 +140,6 @@ public sealed class MutationPropagator
                 isDelete,
                 ref pending);
         }
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static bool AnySortFieldTouched(List<MutationImpact> impacts)
-    {
-        for (int i = 0; i < impacts.Count; i++)
-        {
-            if (impacts[i].SortFieldTouched) { return true; }
-        }
-        return false;
     }
 
     private static MutationImpact AnalyzeMutationImpact(SharedView view, MutationInfo mutation, bool isDelete)

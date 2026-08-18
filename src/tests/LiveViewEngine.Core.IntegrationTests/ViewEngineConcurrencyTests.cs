@@ -12,7 +12,7 @@ public class ViewEngineConcurrencyTests
     private static (ViewEngine engine, ThreadSafeCapturingPublisher publisher) CreateEngine()
     {
         var metrics = new ViewEngineMetrics();
-        var store = new CollectionStore(metrics);
+        var store = new CollectionStore(metrics, new LiveViewEngineOptions { EagerIndexing = false });
         var publisher = new ThreadSafeCapturingPublisher();
         var engine = new ViewEngine(store, publisher, NullLogger<ViewEngine>.Instance, metrics);
         return (engine, publisher);

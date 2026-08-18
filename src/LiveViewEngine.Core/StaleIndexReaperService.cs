@@ -3,12 +3,17 @@ using Microsoft.Extensions.Hosting;
 
 namespace LiveViewEngine.Core;
 
-internal sealed class StaleIndexReaperService(ICollectionStore store) : BackgroundService
+internal sealed class StaleIndexReaperService(ICollectionStore store, LiveViewEngineOptions options) : BackgroundService
 {
     private static readonly TimeSpan CheckInterval = TimeSpan.FromSeconds(5);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (options.EagerIndexing)
+        {
+            return;
+        }
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try

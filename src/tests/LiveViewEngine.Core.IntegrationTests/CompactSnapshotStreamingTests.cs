@@ -9,7 +9,7 @@ public class CompactSnapshotStreamingTests
     private static (ViewEngine engine, CapturingPublisher publisher) CreateEngine()
     {
         var metrics = new ViewEngineMetrics();
-        var store = new CollectionStore(metrics);
+        var store = new CollectionStore(metrics, new LiveViewEngineOptions { EagerIndexing = false });
         var publisher = new CapturingPublisher();
         return (new ViewEngine(store, publisher, NullLogger<ViewEngine>.Instance, metrics), publisher);
     }

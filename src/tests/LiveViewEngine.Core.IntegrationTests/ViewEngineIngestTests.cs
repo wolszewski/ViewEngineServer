@@ -11,7 +11,7 @@ public class ViewEngineIngestTests
     private static (ViewEngine engine, CapturingPublisher publisher, ICollectionStore store) CreateEngine()
     {
         var metrics = new ViewEngineMetrics();
-        var store = new CollectionStore(metrics);
+        var store = new CollectionStore(metrics, new LiveViewEngineOptions { EagerIndexing = false });
         var publisher = new CapturingPublisher();
         var logger = NullLogger<ViewEngine>.Instance;
         var engine = new ViewEngine(store, publisher, logger, metrics);

@@ -10,7 +10,7 @@ public class ServiceCollectionExtensionsTests
     {
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddLiveViewEngineCore();
+        services.AddLiveViewEngineCore(new LiveViewEngineOptions { EagerIndexing = false });
         services.AddLiveViewEnginePublisher<WebSocketOutboundPublisher>();
 
         using var provider = services.BuildServiceProvider();
@@ -27,7 +27,7 @@ public class ServiceCollectionExtensionsTests
     {
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddLiveViewEngineCore();
+        services.AddLiveViewEngineCore(new LiveViewEngineOptions { EagerIndexing = false });
         var publisher = new TestPublisher();
         services.AddLiveViewEnginePublisher(_ => publisher);
 
