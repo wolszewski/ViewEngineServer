@@ -111,11 +111,11 @@ public class CompactOutboundProtocolEncoderTests
                 Schema = Schema,
                 RowId = "o1",
                 Position = 0,
-                VisibleFieldIndexes = [0, 1, 2, 3],
+                VisibleFieldIndexes = [0, 1, 2],
                 ChangedColumns = [new KeyValuePair<int, string?>(2, null)]
             },
             subscriptionId: 1).Single());
-        Assert.Equal("U|1|o1|0|^1|~|", update);
+        Assert.Equal("U|1|o1|0|^1|~", update);
     }
 
     [Fact]
@@ -158,7 +158,8 @@ public class CompactOutboundProtocolEncoderTests
                 ViewId = "1:1",
                 StartIndex = 0,
                 TotalCount = 100,
-                IsPartial = true
+                IsPartial = true,
+                Schema = Schema
             },
             subscriptionId: 1).Single();
         Assert.Equal("P|1|0|100|1", ToText(start));
@@ -173,7 +174,8 @@ public class CompactOutboundProtocolEncoderTests
                 ViewId = "1:1",
                 StartIndex = 10,
                 TotalCount = 50,
-                IsPartial = false
+                IsPartial = false,
+                Schema = Schema
             },
             subscriptionId: 2).Single();
         Assert.Equal("P|2|10|50", ToText(start));
@@ -189,11 +191,11 @@ public class CompactOutboundProtocolEncoderTests
                 Schema = Schema,
                 RowId = "o1",
                 Position = 5,
-                VisibleFieldIndexes = [0, 1, 2, 3],
+                VisibleFieldIndexes = [0, 1, 2],
                 ChangedColumns = []
             },
             subscriptionId: 1).Single());
-        Assert.Equal("U|1|o1|5|^4", update);
+        Assert.Equal("U|1|o1|5|^2", update);
     }
 
     private static string ToText(byte[] payload) => System.Text.Encoding.UTF8.GetString(payload);
