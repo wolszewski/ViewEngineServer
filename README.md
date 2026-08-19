@@ -14,7 +14,7 @@ pre-indexed sort buffers, shared view reuse, and a transport-agnostic core.
 ```
 [Ingestion adapters]          [Core engine — no HTTP/WS types]     [Output adapters]
   POST /collections    ──►  IViewEngine.IngestAsync()         ──►  WebSocket /ws
-  POST /ingest               ├─ CollectionStore                     (IOutboundPublisher)
+  POST /collections/{name}/ingest ├─ CollectionStore                (IOutboundPublisher)
   TCP ingest port            │   └─ RowCollection
                              ├─ SharedView + SortIndex
                              ├─ ViewportState (per client)
@@ -25,8 +25,8 @@ pre-indexed sort buffers, shared view reuse, and a transport-agnostic core.
 - `IViewEngine`, `ICollectionStore`, `IOutboundPublisher` and all core types
   have **zero** dependencies on `HttpContext`, `WebSocket`, TCP streams, or
   any broker SDK.
-- Adapters (`Adapters/Http/`, `Adapters/WebSocket/`) are the only code that
-  touches transport types.
+- Transport wiring lives in `src/LiveViewEngine.WebHost/Http`,
+  `src/LiveViewEngine.WebHost/WebSocket`, and `src/LiveViewEngine.WebHost/Tcp`.
 - The core can be unit-tested and benchmarked in-process without starting a
   server.
 
@@ -46,7 +46,7 @@ dotnet run
 |--------|------|-------------|
 | `GET`  | `/`  | Service info and registered collections. |
 | `POST` | `/collections` | Register a collection schema. |
-| `POST` | `/ingest` | Upsert or delete rows in a collection. |
+| `POST` | `/collections/{collectionName}/ingest` | Upsert or delete rows in a collection. |
 | `GET`  | `/ws` | WebSocket endpoint for live subscriptions. |
 | `TCP`  | `127.0.0.1:6000` | Persistent ingestion socket with schema-aware indexed row updates. |
 
@@ -60,29 +60,23 @@ dotnet run
 curl -X POST http://localhost:5000/collections \
   -H "Content-Type: application/json" \
   -d '{
-    "collectionId": "trades",
-    "capacity": 100000,
-    "fields": [
-      { "name": "tradeId",   "type": "Int32",  "isPrimaryKey": true,  "isSortable": true },
-      { "name": "symbol",    "type": "String",  "isSortable": true,  "isFilterable": true },
-      { "name": "price",     "type": "Double",  "isSortable": true },
-      { "name": "quantity",  "type": "Int32" },
-      { "name": "timestamp", "type": "Int64",   "isSortable": true }
-    ]
+    "collectionName": "trades",
+    "fields": ["tradeId", "symbol", "price", "quantity", "timestamp"],
+    "fieldTypes": ["string", "string", "decimal", "int", "datetimeoffset"]
   }'
 ```
 
 ### 2 — Ingest rows
 
 ```bash
-curl -X POST http://localhost:5000/ingest \
+curl -X POST http://localhost:5000/collections/trades/ingest \
   -H "Content-Type: application/json" \
   -d '{
-    "collectionId": "trades",
     "operation": "upsert",
+    "primaryKeyValue": "trade-1001",
     "fields": {
-      "tradeId": 1001, "symbol": "AAPL", "price": 150.25,
-      "quantity": 100, "timestamp": 1722000000000
+      "tradeId": "T001001", "symbol": "AAPL", "price": "150.25",
+      "quantity": "100", "timestamp": "2026-08-19T16:00:00Z"
     }
   }'
 ```
@@ -90,9 +84,9 @@ curl -X POST http://localhost:5000/ingest \
 Delete a row:
 
 ```bash
-curl -X POST http://localhost:5000/ingest \
+curl -X POST http://localhost:5000/collections/trades/ingest \
   -H "Content-Type: application/json" \
-  -d '{ "collectionId": "trades", "operation": "delete", "primaryKeyValue": "1001" }'
+  -d '{ "operation": "delete", "primaryKeyValue": "trade-1001" }'
 ```
 
 ### 3 — Subscribe via WebSocket
@@ -116,13 +110,13 @@ The server responds with a `snapshot` event and then pushes `rowUpdate`,
 Change page:
 
 ```json
-{ "type": "setViewport", "startIndex": 50, "pageSize": 50 }
+{ "type": "setviewport", "subscriptionId": 1, "startIndex": 50, "pageSize": 50 }
 ```
 
 Unsubscribe:
 
 ```json
-{ "type": "unsubscribe" }
+{ "type": "unsubscribe", "subscriptionId": 1 }
 ```
 
 ---
@@ -145,6 +139,8 @@ by default. The client can create collections, fetch schema, and upsert/delete
 rows by sending newline-framed protocol messages. `UPSERT`/`DELETE` are sent
 without waiting for a reply and receive asynchronous `ACK`/`ERR` responses by
 default (configurable through `TcpIngest:EnableAsyncAcks`).
+Processing is queue-backed per collection with `TcpIngest:CollectionQueueCapacity`
+(default `100000`) and a single consumer per collection to preserve order.
 
 See `docs/tcp-ingestion-protocol.md` for the command/response contract.
 
@@ -174,18 +170,12 @@ Subscribe with filters:
 
 ```
 ViewEngineServer/
-├── Core/                      ← no HTTP/WS dependencies
-│   ├── Schema/                  CollectionSchema, FieldDefinition, FieldType
-│   ├── Ingestion/               IngestCommand types, IngestResult
-│   ├── Storage/                 RowCollection, ICollectionStore
-│   ├── Indexing/                SortIndex, FilterSpec, FilterEvaluator
-│   ├── Views/                   ViewDefinition, ViewKey, SharedView
-│   ├── Subscriptions/           SubscriptionCommand types, ViewportState
-│   ├── Delta/                   DeltaEvent types (Snapshot, Update, Insert, Remove)
-│   ├── Publishing/              IOutboundPublisher interface
-│   └── Engine/                  IViewEngine, ViewEngine (orchestrator)
-├── Adapters/
-│   ├── Http/                    HttpIngestAdapter, DTOs
-│   └── WebSocket/               WebSocketSessionManager, WebSocketOutboundPublisher
-└── Program.cs                 ← DI wiring + endpoint mapping only
+├── src/LiveViewEngine.Core/                     ← core engine and data structures
+├── src/LiveViewEngine.WebHost/                  ← ASP.NET Core host
+│   ├── Http/                                    ← HTTP ingest endpoints
+│   ├── WebSocket/                               ← WS session + outbound publisher
+│   └── Tcp/                                     ← TCP ingest listener/handler/dispatcher
+├── src/LiveViewEngine.TcpProtocol/              ← line protocol contracts + codec
+├── src/LiveViewEngine.TcpClient/                ← producer-side TCP ingestion client
+└── src/tests/                                   ← unit + integration tests
 ```

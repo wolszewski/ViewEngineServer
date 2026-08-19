@@ -2,7 +2,7 @@
 
 ## Overview
 
-ViewEngineServer is an in-memory ASP.NET Core service that keeps named collections of rows and exposes both HTTP ingest and WebSocket subscription flows. In the current implementation, `IViewEngine` owns the ingest pipeline and the per-view subscription state. `ICollectionStore` keeps each collection alive in memory, and `IOutboundPublisher` pushes JSON delta events to a client connection.
+ViewEngineServer is an in-memory ASP.NET Core service that keeps named collections of rows and exposes HTTP ingest, TCP ingest, and WebSocket subscription flows. In the current implementation, `IViewEngine` owns the ingest pipeline and the per-view subscription state. `ICollectionStore` keeps each collection alive in memory, and `IOutboundPublisher` pushes JSON/compact delta events to client connections.
 
 This is a deliberately small, server-side data engine: create schemas, ingest row updates, maintain sorted and filtered indexes, and push only the rows currently in a subscriber's viewport.
 
@@ -14,13 +14,14 @@ The repo currently implements the following runtime flow:
 
 - `POST /collections` creates a `CollectionSchema`.
 - `POST /collections/{collectionName}/ingest` upserts or deletes a row.
+- TCP ingest (`127.0.0.1:6000` by default) accepts newline-framed commands (`CREATE`, `GET_SCHEMA`, `UPSERT`, `DELETE`, `PING`).
 - `GET /ws` opens a WebSocket session.
 - The client sends JSON messages with a `type` of `subscribe`, `setviewport`, or `unsubscribe`.
 - `WebSocketSessionManager` maps inbound JSON into `SubscriptionCommand` objects.
 - `ViewEngine.SubscribeAsync` returns `ViewDelta` instances for the requesting connection.
 - `WebSocketOutboundPublisher` serializes them to JSON and sends them on the socket.
 
-The implementation is not yet a fully serialized, actor-based pipeline. It uses concurrent dictionaries and keeps mutation logic inline in `ViewEngine` and the collection/view indexes.
+For TCP ingest, `UPSERT`/`DELETE` are enqueued into bounded per-collection channels and processed by single consumers to preserve per-collection ordering. Async `ACK`/`ERR` replies for these operations are configurable (`TcpIngest:EnableAsyncAcks`, default `true`).
 
 ---
 
@@ -62,7 +63,7 @@ The implementation is not yet a fully serialized, actor-based pipeline. It uses 
 │                                  MutationPropagator ──► IOutboundPublisher
 │                                              │
 │                                              ▼
-│                               WebSocketOutboundPublisher / JsonOutboundEventFormatter
+│                               WebSocketOutboundPublisher / Compact+Json encoders
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -131,6 +132,13 @@ The viewport is not persisted across reconnects; it is rebuilt on the next subsc
 - `HandleSubscribe` creates or reuses a `SharedView`, creates a `ViewportState`, and sends a `SnapshotDelta`.
 - `HandleChangeViewport` returns a new snapshot for the same view with a different page window.
 - `HandleUnsubscribe` removes the viewport and cleans up empty shared views if appropriate.
+
+### TCP ingest components
+
+- `TcpIngestListenerService` hosts the TCP socket accept loop.
+- `TcpIngestConnectionHandler` reads newline-framed messages, parses protocol requests, and writes response frames.
+- `TcpIngestRequestDispatcher` validates requests, handles `CREATE`/`GET_SCHEMA` synchronously, and enqueues `UPSERT`/`DELETE` into per-collection bounded channels.
+- Each collection queue has a single reader, so updates for that collection are processed in-order.
 
 ### `MutationPropagator`
 
@@ -220,11 +228,24 @@ The current inbound message types are:
 { "type": "unsubscribe" }
 ```
 
+### TCP ingest lifecycle
+
+```
+TCP connect
+ → CONNECTED|1
+ → request line parsed (CREATE / GET_SCHEMA / UPSERT / DELETE / PING)
+ → TcpIngestRequestDispatcher
+   - CREATE / GET_SCHEMA / PING: immediate response (`SCHEMA` / `ERR` / `PONG`)
+   - UPSERT / DELETE: enqueue to per-collection bounded queue
+       → queue worker calls IViewEngine.IngestAsync
+       → optional async `ACK`/`ERR` frame emitted later on the same connection
+```
+
 ---
 
 ## Current wire format
 
-The current implementation uses JSON events over WebSocket. The actual event model lives in `DeltaEvent`, `SnapshotEvent`, `RowUpdateEvent`, `RowInsertEvent`, and `RowRemoveEvent`, and `JsonOutboundEventFormatter` maps `ViewDelta` objects to these JSON DTOs.
+WebSocket output supports both compact and JSON encodings. Compact is the default; clients can request JSON with `messageFormat: "json"` in the subscribe message. In both cases, the event model is generated from `ViewDelta` types (`SnapshotStartDelta`, `SnapshotDataDelta`, `SnapshotDelta`, `RowUpdateDelta`, `RowInsertDelta`, `RowRemoveDelta`, and snapshot control deltas).
 
 ### Snapshot event
 
@@ -286,7 +307,7 @@ The current codebase is intentionally simpler:
 
 - `CollectionSchema` keeps string-based row arrays.
 - `SortIndex` and `FilterSet` compare values as strings.
-- `JsonOutboundEventFormatter` emits JSON DTOs instead of packed binary or pipe-delimited payloads.
+- `WebSocketOutboundPublisher` can emit compact or JSON frames without changing core `ViewDelta` generation.
 
 If the server later adopts a compact wire format, the `ViewDelta` generated by `ViewEngine` can still be transformed independently from the in-memory view logic.
 
@@ -294,10 +315,10 @@ If the server later adopts a compact wire format, the `ViewDelta` generated by `
 
 ## Threading model
 
-The current implementation is not fully serialized per collection. It uses concurrent dictionaries for collection, view, and viewport lookup, but it does not yet have a dedicated single-writer background processor for a collection's mutation pipeline.
+Current state is mixed:
 
-At the current stage:
+- Core state is still shared across HTTP/WebSocket callers using concurrent dictionaries and in-memory mutable structures.
+- TCP ingest now introduces per-collection bounded channels with single-consumer workers in `TcpIngestRequestDispatcher`, providing deterministic write ordering for TCP-submitted mutations within each collection.
+- HTTP ingest still executes `IViewEngine.IngestAsync` inline on request threads.
 
-- `RowCollection`, `SortIndex`, and `ViewportState` can be mutated from multiple callers.
-- The code relies on the fact that callers are effectively not mutating the same collection concurrently in normal usage.
-- A future background processor or channel-based queue would provide deterministic write ordering for all mutations, sort-index updates, and viewport recalculations.
+So, deterministic per-collection sequencing is guaranteed for TCP queued writes, but the full system is not yet a single serialized actor pipeline across all ingest sources.
