@@ -7,6 +7,7 @@ namespace LiveViewEngine.Core;
 [JsonDerivedType(typeof(RowUpdateEvent), "rowUpdate")]
 [JsonDerivedType(typeof(RowInsertEvent), "rowInsert")]
 [JsonDerivedType(typeof(RowRemoveEvent), "rowRemove")]
+[JsonDerivedType(typeof(RowReplaceEvent), "rowReplace")]
 public abstract class DeltaEvent
 {
     public required string ViewId { get; init; }
@@ -36,4 +37,12 @@ public sealed class RowInsertEvent : DeltaEvent
 public sealed class RowRemoveEvent : DeltaEvent
 {
     public required int Position { get; init; }
+}
+
+public sealed class RowReplaceEvent : DeltaEvent
+{
+    public required string RemovedRowId { get; init; }
+    public required int RemovePosition { get; init; }
+    public required int InsertPosition { get; init; }
+    public required IReadOnlyDictionary<string, string?> Row { get; init; }
 }

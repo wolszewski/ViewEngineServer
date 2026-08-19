@@ -6,6 +6,7 @@ import type {
     ProtocolFrame,
     RowData,
     RowInsertEvent,
+    RowReplaceEvent,
     RowRemoveEvent,
     RowUpdateEvent,
     SnapshotEvent,
@@ -17,6 +18,7 @@ export type {
     MessageFormat,
     RowData,
     RowInsertEvent,
+    RowReplaceEvent,
     RowRemoveEvent,
     RowUpdateEvent,
     SnapshotEvent,
@@ -222,6 +224,7 @@ export class WebHostClient {
             case 'rowInsert':
             case 'rowUpdate':
             case 'rowRemove':
+            case 'rowReplace':
                 if (this.activeSubscriptionId !== null && frame.event.subscriptionId !== this.activeSubscriptionId) {
                     return;
                 }

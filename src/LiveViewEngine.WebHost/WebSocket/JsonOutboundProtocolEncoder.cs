@@ -94,6 +94,16 @@ public sealed class JsonOutboundProtocolEncoder : IOutboundProtocolEncoder
                     Position = remove.Position
                 });
                 yield break;
+            case RowReplaceDelta replace:
+                yield return Serialize(new JsonRowReplaceMessage
+                {
+                    SubscriptionId = subscriptionId,
+                    RemovedRowId = replace.RemovedRowId,
+                    RemovePosition = replace.RemovePosition,
+                    InsertPosition = replace.InsertPosition,
+                    Row = FormatRow(replace.Schema, replace.Row, replace.VisibleFieldIndexes)
+                });
+                yield break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(delta), delta.GetType().Name, "Unknown delta type.");
         }
@@ -183,5 +193,14 @@ public sealed class JsonOutboundProtocolEncoder : IOutboundProtocolEncoder
         public JsonRowRemoveMessage() => Type = "rowRemove";
         public required string RowId { get; init; }
         public required int Position { get; init; }
+    }
+
+    private sealed class JsonRowReplaceMessage : JsonMessage
+    {
+        public JsonRowReplaceMessage() => Type = "rowReplace";
+        public required string RemovedRowId { get; init; }
+        public required int RemovePosition { get; init; }
+        public required int InsertPosition { get; init; }
+        public required IReadOnlyDictionary<string, string?> Row { get; init; }
     }
 }

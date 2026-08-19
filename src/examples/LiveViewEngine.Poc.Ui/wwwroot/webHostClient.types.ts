@@ -33,7 +33,16 @@ export interface RowRemoveEvent {
     position: number;
 }
 
-export type DeltaEvent = SnapshotEvent | RowUpdateEvent | RowInsertEvent | RowRemoveEvent;
+export interface RowReplaceEvent {
+    type: 'rowReplace';
+    subscriptionId: number;
+    removedRowId: string;
+    removePosition: number;
+    insertPosition: number;
+    row: RowData;
+}
+
+export type DeltaEvent = SnapshotEvent | RowUpdateEvent | RowInsertEvent | RowRemoveEvent | RowReplaceEvent;
 
 export interface FilterRequest {
     field: string;
@@ -89,4 +98,8 @@ export type ProtocolFrame =
     | {
         kind: 'rowRemove';
         event: RowRemoveEvent;
+    }
+    | {
+        kind: 'rowReplace';
+        event: RowReplaceEvent;
     };

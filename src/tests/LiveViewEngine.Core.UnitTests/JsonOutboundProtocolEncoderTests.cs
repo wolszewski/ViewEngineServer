@@ -72,6 +72,27 @@ public class JsonOutboundProtocolEncoderTests
             },
             9).Single());
         AssertMessage(update, "rowUpdate", 9, ("rowId", "\"o2\""), ("position", "1"), ("changedFields", "{\"amount\":\"250\"}"));
+
+        var replace = Encoding.UTF8.GetString(_encoder.EncodeFrames(
+            new RowReplaceDelta
+            {
+                ViewId = "1:9",
+                Schema = Schema,
+                RemovedRowId = "o2",
+                RemovePosition = 1,
+                InsertPosition = 0,
+                VisibleFieldIndexes = [0, 1, 2],
+                Row = ["o3", "Carol", "300"]
+            },
+            9).Single());
+        AssertMessage(
+            replace,
+            "rowReplace",
+            9,
+            ("removedRowId", "\"o2\""),
+            ("removePosition", "1"),
+            ("insertPosition", "0"),
+            ("row", "{\"key\":\"o3\",\"customer\":\"Carol\",\"amount\":\"300\"}"));
     }
 
     private static void AssertMessage(string json, string type, int subscriptionId, params (string Name, string Value)[] properties)

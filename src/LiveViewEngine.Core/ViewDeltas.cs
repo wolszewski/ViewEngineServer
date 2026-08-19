@@ -56,3 +56,12 @@ public sealed class RowRemoveDelta : ViewDelta
     public required string RowId { get; init; }
     public required int Position { get; init; }
 }
+
+public sealed class RowReplaceDelta : ViewDelta
+{
+    public required CollectionSchema Schema { get; init; }
+    public required string RemovedRowId { get; init; }
+    public required int RemovePosition { get; init; }
+    public required int InsertPosition { get; init; }
+    public required string?[] Row { get; init; }
+}

@@ -8,6 +8,7 @@ import {
     type MessageFormat,
     type RowData,
     type RowInsertEvent,
+    type RowReplaceEvent,
     type RowRemoveEvent,
     type RowUpdateEvent,
     type SnapshotEvent
@@ -17,7 +18,7 @@ ModuleRegistry.registerModules([AllCommunityModule]);
 
 const defaultPageSizes = [25, 50, 100];
 const defaultCollectionId = 'trades';
-const defaultSortColumn = 'quantity';
+const defaultSortColumn = 'tradeId';
 const defaultPageSize = 50;
 const defaultMessageFormat: MessageFormat = 'compact';
 const latencyWindowSize = 500;
@@ -36,7 +37,7 @@ const knownTradeColumns = [
     'side',
     'status',
     'notional',
-    ...Array.from({ length: 30 }, (_, index) => `stringField${index.toString().padStart(2, '0')}`),
+    'variedNumber',, (_, index) => `stringField${index.toString().padStart(2, '0')}`),
     ...Array.from({ length: 23 }, (_, index) => `intField${index.toString().padStart(2, '0')}`),
     ...Array.from({ length: 20 }, (_, index) => `decimalField${index.toString().padStart(2, '0')}`),
     ...Array.from({ length: 20 }, (_, index) => `enumField${index.toString().padStart(2, '0')}`)
@@ -44,7 +45,7 @@ const knownTradeColumns = [
 const columnGroups: Array<{ label: string; columns: string[] }> = [
     { label: 'string',  columns: ['tradeId', ...Array.from({ length: 30 }, (_, i) => `stringField${i.toString().padStart(2, '0')}`)] },
     { label: 'int',     columns: ['accountId', 'quantity', ...Array.from({ length: 23 }, (_, i) => `intField${i.toString().padStart(2, '0')}`)] },
-    { label: 'decimal', columns: ['price', 'notional', ...Array.from({ length: 20 }, (_, i) => `decimalField${i.toString().padStart(2, '0')}`)] },
+    { label: 'decimal', columns: ['price', 'notional', 'variedNumber', ...Array.from({ length: 20 }, (_, i) => `decimalField${i.toString().padStart(2, '0')}`)] },
     { label: 'enum',    columns: ['side', 'status', ...Array.from({ length: 20 }, (_, i) => `enumField${i.toString().padStart(2, '0')}`)] },
     { label: 'date',    columns: ['createdDate', 'updatedDate'] }
 ];
@@ -130,7 +131,7 @@ function getInitialUrlState(): AppUrlState {
     return {
         collectionId: params.get('collection')?.trim() || defaultCollectionId,
         sortColumn: sortColumn && knownTradeColumnSet.has(sortColumn) ? sortColumn : defaultSortColumn,
-        sortAscending: params.get('dir') !== 'desc',
+        sortAscending: params.get('dir') === 'asc',
         messageFormat: params.get('format') === 'json' ? 'json' : defaultMessageFormat,
         pageSize: parsePositiveInteger(params.get('pageSize'), defaultPageSize),
         filters,
@@ -149,8 +150,8 @@ function syncUrlState(state: AppUrlState): void {
         params.set('sort', state.sortColumn);
     }
 
-    if (!state.sortAscending) {
-        params.set('dir', 'desc');
+    if (state.sortAscending) {
+        params.set('dir', 'asc');
     }
 
     if (state.messageFormat !== defaultMessageFormat) {
@@ -825,6 +826,55 @@ function App(): React.ReactElement {
         publishRowsFromWindow();
     }, [publishRowsFromWindow]);
 
+    const applyReplace = useCallback((replace: RowReplaceEvent) => {
+        if (columnDefs.length === 0 && replace.row) {
+            setColumnsFromRow(replace.row);
+        }
+
+        const removedRow = rowsByPositionRef.current.get(replace.removePosition);
+        if (removedRow) {
+            const removedRowId = removedRow.key ?? removedRow.id;
+            if (removedRowId) {
+                rowsByIdRef.current.delete(removedRowId);
+            }
+        } else if (replace.removedRowId) {
+            rowsByIdRef.current.delete(replace.removedRowId);
+        }
+
+        rowsByPositionRef.current.delete(replace.removePosition);
+        const afterRemovePositions = Array.from(rowsByPositionRef.current.keys()).sort((left, right) => left - right);
+        for (const position of afterRemovePositions) {
+            if (position > replace.removePosition) {
+                const row = rowsByPositionRef.current.get(position);
+                if (row) {
+                    rowsByPositionRef.current.set(position - 1, row);
+                    rowsByPositionRef.current.delete(position);
+                }
+            }
+        }
+
+        const positions = Array.from(rowsByPositionRef.current.keys()).sort((left, right) => right - left);
+        for (const position of positions) {
+            if (position >= replace.insertPosition) {
+                const row = rowsByPositionRef.current.get(position);
+                if (row) {
+                    rowsByPositionRef.current.set(position + 1, row);
+                }
+            }
+        }
+        rowsByPositionRef.current.set(replace.insertPosition, { ...replace.row });
+        const insertedRowId = replace.row.key ?? replace.row.id;
+        if (insertedRowId) {
+            rowsByIdRef.current.set(insertedRowId, { ...replace.row });
+        }
+
+        const window = subscribedViewportRef.current;
+        if (window) {
+            rowsByPositionRef.current.delete(window.end + 1);
+        }
+        publishRowsFromWindow();
+    }, [columnDefs.length, publishRowsFromWindow, setColumnsFromRow]);
+
     const handleDeltaEvent = useCallback((event: DeltaEvent) => {
         if (event.type === 'snapshot') {
             applySnapshot(event);
@@ -835,8 +885,10 @@ function App(): React.ReactElement {
             applyInsert(event);
         } else if (event.type === 'rowRemove') {
             applyRemove(event);
+        } else if (event.type === 'rowReplace') {
+            applyReplace(event);
         }
-    }, [applyInsert, applyRemove, applySnapshot, applyUpdate, recordLatency]);
+    }, [applyInsert, applyRemove, applyReplace, applySnapshot, applyUpdate, recordLatency]);
     handleDeltaEventRef.current = handleDeltaEvent;
 
     const normalisedFilters = useMemo(
@@ -947,6 +999,11 @@ function App(): React.ReactElement {
             clientRef.current?.disconnect();
             clientRef.current = null;
         };
+    }, []);
+
+    useEffect(() => {
+        connect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     useEffect(() => {

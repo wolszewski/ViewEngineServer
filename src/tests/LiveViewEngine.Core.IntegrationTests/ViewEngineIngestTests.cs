@@ -670,11 +670,18 @@ public class ViewEngineIngestTests
         // Row order should have changed: o2(200), o1(300) → snapshot was o1(100), o2(200)
         // Position 0 should now be o2, position 1 o1; so o1 removed from pos 0, inserted at pos 1
         var events = publisher.EventsFor(1).ToList();
-        Assert.NotEmpty(events);
+        Assert.Contains(events, static e => e is RowReplaceEvent
+        {
+            RemovedRowId: "o1",
+            RemovePosition: 0,
+            InsertPosition: 1
+        });
+        Assert.DoesNotContain(events, static e => e is RowInsertEvent);
+        Assert.DoesNotContain(events, static e => e is RowRemoveEvent);
     }
 
     [Fact]
-    public async Task SortFieldChange_RowLeavesPagedViewport_EmitsRemoveAndBackfillInsert()
+    public async Task SortFieldChange_RowLeavesPagedViewport_EmitsReplace()
     {
         var (engine, publisher, _) = CreateEngine();
         await CreateOrders(engine);
@@ -706,14 +713,36 @@ public class ViewEngineIngestTests
         });
 
         var events = publisher.EventsFor(1).ToList();
-        Assert.Equal(2, events.Count);
+        var replace = Assert.IsType<RowReplaceEvent>(Assert.Single(events, static e => e is RowReplaceEvent));
+        Assert.Equal("o010", replace.RemovedRowId);
+        Assert.Equal(9, replace.RemovePosition);
+        Assert.Equal(49, replace.InsertPosition);
+        Assert.Equal("o051", replace.Row["key"]);
+    }
 
-        var remove = Assert.IsType<RowRemoveEvent>(events[0]);
-        Assert.Equal(9, remove.Position);
+    [Fact]
+    public async Task DeleteLastRowInCollection_EmitsRemoveWithoutReplace()
+    {
+        var (engine, publisher, _) = CreateEngine();
+        await CreateOrders(engine);
+        await Upsert(engine, "o1", "Alice", "100");
+        await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = 1,
+            View = new ViewDefinition { CollectionId = "orders" },
+            StartIndex = 0,
+            PageSize = 10
+        });
 
-        var insert = Assert.IsType<RowInsertEvent>(events[1]);
-        Assert.Equal(49, insert.Position);
-        Assert.Equal("o051", insert.Row["key"]);
+        await engine.IngestAsync(new DeleteRowCommand
+        {
+            CollectionId = "orders",
+            Key = "o1"
+        });
+
+        var events = publisher.EventsFor(1).ToList();
+        Assert.Contains(events, static e => e is RowRemoveEvent { Position: 0 });
+        Assert.DoesNotContain(events, static e => e is RowReplaceEvent);
     }
 
     [Fact]

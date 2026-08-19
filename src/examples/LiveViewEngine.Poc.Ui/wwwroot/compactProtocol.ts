@@ -130,6 +130,31 @@ export function parseCompactFrame(frame: string, currentFields: string[]): Proto
         }];
     }
 
+    if (kind === 'R') {
+        const subscriptionId = parseInt(tokens[1] ?? '', 10);
+        const removedRowId = decodeToken(tokens[2] ?? '');
+        const removePosition = parseInt(tokens[3] ?? '', 10);
+        const insertPosition = parseInt(tokens[4] ?? '', 10);
+        if (!Number.isInteger(subscriptionId)
+            || !removedRowId
+            || !Number.isInteger(removePosition)
+            || !Number.isInteger(insertPosition)) {
+            return [];
+        }
+
+        return [{
+            kind: 'rowReplace',
+            event: {
+                type: 'rowReplace',
+                subscriptionId,
+                removedRowId,
+                removePosition,
+                insertPosition,
+                row: buildFullRow(tokens[5] ?? '', tokens.slice(6), currentFields)
+            }
+        }];
+    }
+
     return [];
 }
 

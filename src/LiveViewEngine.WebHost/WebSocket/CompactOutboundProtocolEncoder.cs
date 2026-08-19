@@ -56,6 +56,16 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
             case RowRemoveDelta remove:
                 yield return Encoding.UTF8.GetBytes($"D|{subscriptionId}|{EscapeValue(remove.RowId)}|{remove.Position}");
                 yield break;
+            case RowReplaceDelta replace:
+                yield return EncodeReplace(
+                    subscriptionId,
+                    replace.Schema,
+                    replace.VisibleFieldIndexes,
+                    replace.RemovedRowId,
+                    replace.RemovePosition,
+                    replace.InsertPosition,
+                    replace.Row);
+                yield break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(delta), delta.GetType().Name, "Unknown delta type.");
         }
@@ -136,6 +146,25 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
             i += skipCount;
         }
 
+        return Encoding.UTF8.GetBytes(builder.ToString());
+    }
+
+    private byte[] EncodeReplace(
+        int subscriptionId,
+        CollectionSchema schema,
+        IReadOnlyList<int>? visibleFieldIndexes,
+        string removedRowId,
+        int removePosition,
+        int insertPosition,
+        string?[] row)
+    {
+        var builder = new StringBuilder();
+        builder.Append("R|").Append(subscriptionId).Append(Separator)
+            .Append(EscapeValue(removedRowId)).Append(Separator)
+            .Append(removePosition).Append(Separator)
+            .Append(insertPosition).Append(Separator);
+        AppendKey(builder, schema, visibleFieldIndexes, row);
+        AppendFullRow(builder, schema, visibleFieldIndexes, row);
         return Encoding.UTF8.GetBytes(builder.ToString());
     }
 

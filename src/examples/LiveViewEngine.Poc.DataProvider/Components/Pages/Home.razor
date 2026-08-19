@@ -25,6 +25,15 @@
         </div>
     </div>
 
+    <div class="row g-3 mt-1">
+        <div class="col-12">
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="orderedUpdates" @bind="_settings.OrderedUpdates" />
+                <label class="form-check-label" for="orderedUpdates">Ordered updates (default: random)</label>
+            </div>
+        </div>
+    </div>
+
     <div class="mt-4">
         <h5>Updatable fields <small class="text-muted fw-normal">(initial inserts always send all fields)</small></h5>
         <div class="mb-2">

@@ -78,6 +78,20 @@ public class CompactOutboundProtocolEncoderTests
             subscriptionId: 7).Single());
         Assert.Equal("D|7|o2|3", delete);
 
+        var replace = ToText(_encoder.EncodeFrames(
+            new RowReplaceDelta
+            {
+                ViewId = "1:7",
+                Schema = Schema,
+                RemovedRowId = "o2",
+                RemovePosition = 3,
+                InsertPosition = 1,
+                VisibleFieldIndexes = [0, 1, 2, 3],
+                Row = ["o3", "Carol", "300", "open"]
+            },
+            subscriptionId: 7).Single());
+        Assert.Equal("R|7|o2|3|1|o3|Carol|300|open", replace);
+
         var eos = ToText(_encoder.EncodeFrames(
             new EndOfSnapshotDelta
             {

@@ -51,6 +51,15 @@ public sealed class JsonOutboundEventFormatter : IOutboundEventFormatter
                 SubscriptionId = subscriptionId,
                 Position = remove.Position
             },
+            RowReplaceDelta replace => new RowReplaceEvent
+            {
+                ViewId = replace.ViewId,
+                SubscriptionId = subscriptionId,
+                RemovedRowId = replace.RemovedRowId,
+                RemovePosition = replace.RemovePosition,
+                InsertPosition = replace.InsertPosition,
+                Row = FormatRow(replace.Schema.Fields, replace.Row, replace.VisibleFieldIndexes)
+            },
             _ => throw new ArgumentOutOfRangeException(nameof(delta), delta.GetType().Name, "Unknown delta type.")
         };
     }

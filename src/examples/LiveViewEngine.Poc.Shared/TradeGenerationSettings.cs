@@ -6,6 +6,7 @@ public class TradeGenerationSettings
     public int UpdateFieldCount { get; set; } = 5;
     public int UpdateFrequencyHz { get; set; } = 10;
     public IReadOnlyList<string>? UpdatableFields { get; set; }
+    public bool OrderedUpdates { get; set; } = false;
 }
 
 public class TradeGenerationStatus
