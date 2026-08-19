@@ -33,7 +33,8 @@ export function parseCompactFrame(frame: string, currentFields: string[]): Proto
             kind: 'snapshotStart',
             subscriptionId,
             startIndex: parseInt(tokens[2] ?? '0', 10) || 0,
-            totalCount: parseInt(tokens[3] ?? '0', 10) || 0
+            totalCount: parseInt(tokens[3] ?? '0', 10) || 0,
+            isPartial: tokens[4] === '1'
         }];
     }
 

@@ -28,7 +28,7 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
         switch (delta)
         {
             case SnapshotStartDelta start:
-                yield return EncodeSnapshotStart(subscriptionId, start.StartIndex, start.TotalCount);
+                yield return EncodeSnapshotStart(subscriptionId, start.StartIndex, start.TotalCount, start.IsPartial);
                 yield break;
             case SnapshotRowsDelta rows:
                 foreach (var row in rows.Rows)
@@ -40,7 +40,7 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
                 yield return Encoding.UTF8.GetBytes($"EOS|{subscriptionId}");
                 yield break;
             case SnapshotDelta snapshot:
-                yield return EncodeSnapshotStart(subscriptionId, snapshot.StartIndex, snapshot.TotalCount);
+                yield return EncodeSnapshotStart(subscriptionId, snapshot.StartIndex, snapshot.TotalCount, snapshot.IsPartial);
                 foreach (var row in snapshot.Rows)
                 {
                     yield return EncodeSnapshotRow(subscriptionId, snapshot.Schema, snapshot.VisibleFieldIndexes, row);
@@ -61,9 +61,12 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
         }
     }
 
-    private static byte[] EncodeSnapshotStart(int subscriptionId, int startIndex, int totalCount)
+    private static byte[] EncodeSnapshotStart(int subscriptionId, int startIndex, int totalCount, bool isPartial = false)
     {
-        return Encoding.UTF8.GetBytes($"P|{subscriptionId}|{startIndex}|{totalCount}");
+        var frame = isPartial
+            ? $"P|{subscriptionId}|{startIndex}|{totalCount}|1"
+            : $"P|{subscriptionId}|{startIndex}|{totalCount}";
+        return Encoding.UTF8.GetBytes(frame);
     }
 
     private byte[] EncodeSnapshotRow(

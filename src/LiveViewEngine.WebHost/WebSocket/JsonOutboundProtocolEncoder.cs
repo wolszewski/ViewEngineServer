@@ -34,7 +34,8 @@ public sealed class JsonOutboundProtocolEncoder : IOutboundProtocolEncoder
                 {
                     SubscriptionId = subscriptionId,
                     StartIndex = start.StartIndex,
-                    TotalCount = start.TotalCount
+                    TotalCount = start.TotalCount,
+                    IsPartial = start.IsPartial
                 });
                 yield break;
             case SnapshotRowsDelta rows:
@@ -55,7 +56,8 @@ public sealed class JsonOutboundProtocolEncoder : IOutboundProtocolEncoder
                 {
                     SubscriptionId = subscriptionId,
                     StartIndex = snapshot.StartIndex,
-                    TotalCount = snapshot.TotalCount
+                    TotalCount = snapshot.TotalCount,
+                    IsPartial = snapshot.IsPartial
                 });
                 foreach (var row in snapshot.Rows)
                 {
@@ -147,6 +149,7 @@ public sealed class JsonOutboundProtocolEncoder : IOutboundProtocolEncoder
         public JsonSnapshotStartMessage() => Type = "snapshotStart";
         public required int StartIndex { get; init; }
         public required int TotalCount { get; init; }
+        public bool IsPartial { get; init; }
     }
 
     private sealed class JsonSnapshotRowMessage : JsonMessage

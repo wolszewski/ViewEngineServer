@@ -33,6 +33,8 @@ interface PendingSnapshot {
     startIndex: number;
     totalCount: number;
     rows: RowData[];
+    isPartial: boolean;
+    startedAt: number;
 }
 
 export class WebHostClient {
@@ -158,7 +160,9 @@ export class WebHostClient {
                     subscriptionId: frame.subscriptionId,
                     startIndex: frame.startIndex,
                     totalCount: frame.totalCount,
-                    rows: []
+                    rows: [],
+                    isPartial: false,
+                    startedAt: performance.now()
                 };
                 return;
             case 'snapshotStart':
@@ -170,9 +174,13 @@ export class WebHostClient {
                     subscriptionId: frame.subscriptionId,
                     startIndex: frame.startIndex,
                     totalCount: frame.totalCount,
-                    rows: []
+                    rows: [],
+                    isPartial: frame.isPartial === true,
+                    startedAt: performance.now()
                 };
-                this.hasReceivedSnapshot = false;
+                if (!frame.isPartial) {
+                    this.hasReceivedSnapshot = false;
+                }
                 return;
             case 'snapshotRow':
                 if (!this.isActiveSubscription(frame.subscriptionId) || !this.pendingSnapshot) {
@@ -187,22 +195,27 @@ export class WebHostClient {
                 }
 
                 {
-                    const loadMs = this.subscribeTime !== null ? performance.now() - this.subscribeTime : 0;
-                    this.subscribeTime = null;
+                    const isPartial = this.pendingSnapshot.isPartial;
+                    const loadMs = performance.now() - this.pendingSnapshot.startedAt;
+                    if (!isPartial) {
+                        this.subscribeTime = null;
+                    }
                     const snapshot: SnapshotEvent = {
                         type: 'snapshot',
                         subscriptionId: frame.subscriptionId,
                         totalCount: this.pendingSnapshot.totalCount,
                         startIndex: this.pendingSnapshot.startIndex,
                         rows: this.pendingSnapshot.rows,
-                        loadMs
+                        loadMs,
+                        isPartial
                     };
 
                     this.pendingSnapshot = null;
-                    this.hasReceivedSnapshot = true;
-                    this.stopSubscribeRetry();
-                    this.callbacks.onStatus('Connected');
-                    this.ensureSnapshotMatchesRequestedViewport(snapshot);
+                    if (!isPartial) {
+                        this.hasReceivedSnapshot = true;
+                        this.stopSubscribeRetry();
+                        this.callbacks.onStatus('Connected');
+                    }
                     this.callbacks.onEvent(snapshot);
                 }
                 return;
@@ -261,14 +274,6 @@ export class WebHostClient {
         }
     }
 
-    private ensureSnapshotMatchesRequestedViewport(snapshot: SnapshotEvent): void {
-        if (!this.lastSubscribe || snapshot.startIndex === this.lastSubscribe.startIndex) {
-            return;
-        }
-
-        this.sendSubscribe(this.lastSubscribe);
-    }
-
     private sendSetViewport(startIndex: number, pageSize: number): void {
         if (!this.socket || this.socket.readyState !== WebSocket.OPEN || this.activeSubscriptionId === null) {
             return;
@@ -280,8 +285,6 @@ export class WebHostClient {
             startIndex,
             pageSize
         }));
-        this.hasReceivedSnapshot = false;
-        this.startSubscribeRetry();
     }
 
     private startSubscribeRetry(): void {

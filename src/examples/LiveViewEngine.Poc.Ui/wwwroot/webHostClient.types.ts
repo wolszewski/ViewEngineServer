@@ -9,6 +9,7 @@ export interface SnapshotEvent {
     startIndex: number;
     rows: RowData[];
     loadMs: number;
+    isPartial?: boolean;
 }
 
 export interface RowUpdateEvent {
@@ -66,6 +67,7 @@ export type ProtocolFrame =
         subscriptionId: number;
         startIndex: number;
         totalCount: number;
+        isPartial?: boolean;
     }
     | {
         kind: 'snapshotRow';

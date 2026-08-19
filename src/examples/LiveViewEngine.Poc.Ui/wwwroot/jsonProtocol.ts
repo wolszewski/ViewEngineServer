@@ -41,7 +41,8 @@ export function parseJsonFrame(frame: string): ProtocolFrame[] {
                     kind: 'snapshotStart',
                     subscriptionId,
                     startIndex: Number(message.startIndex) || 0,
-                    totalCount: Number(message.totalCount) || 0
+                    totalCount: Number(message.totalCount) || 0,
+                    isPartial: message.isPartial === true
                 });
                 break;
             case 'snapshotRow':
