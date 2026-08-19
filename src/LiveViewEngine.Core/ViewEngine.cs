@@ -44,6 +44,11 @@ public sealed class ViewEngine : IViewEngine, IDisposable
                     x.RefCount,
                     new KeyValuePair<string, object?>("collectionId", x.CollectionId),
                     new KeyValuePair<string, object?>("fieldName", x.FieldName))));
+
+        metrics?.RegisterCollectionQueueDepthGaugeSource(() =>
+            _collectionRuntimes.Values.Select(static r => new Measurement<int>(
+                r.WorkerQueueLength,
+                new KeyValuePair<string, object?>("collectionId", r.Collection.Schema.CollectionName))));
     }
 
     public async Task<IngestResult> IngestAsync(IngestCommand command, CancellationToken ct = default)

@@ -10,6 +10,7 @@ public interface IViewEngineMetrics
         Func<int> activeSortIndexes);
 
     void RegisterTypedColumnGaugeSource(Func<IEnumerable<Measurement<int>>> source);
+    void RegisterCollectionQueueDepthGaugeSource(Func<IEnumerable<Measurement<int>>> source);
 
     void RecordInsert(double durationMs, string collectionId);
     void RecordUpdate(double durationMs, string collectionId);
@@ -78,6 +79,14 @@ public sealed class ViewEngineMetrics : IDisposable, IViewEngineMetrics
             "viewengine.typed_columns.ref_count",
             source,
             description: "Ref count per active typed column, tagged by collectionId and fieldName.");
+    }
+
+    public void RegisterCollectionQueueDepthGaugeSource(Func<IEnumerable<Measurement<int>>> source)
+    {
+        _meter.CreateObservableGauge(
+            "viewengine.collection.channel_depth",
+            source,
+            description: "Current number of queued work items in each collection worker channel, tagged by collectionId.");
     }
 
     public void RecordInsert(double durationMs, string collectionId)

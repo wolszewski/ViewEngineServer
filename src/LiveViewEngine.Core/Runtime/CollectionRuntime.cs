@@ -35,6 +35,7 @@ public sealed class CollectionRuntime : IDisposable
     public int ActiveSubscriptionCount => _viewports.Count;
     public int ActiveSharedViewCount => _sharedViews.Count;
     public int SortIndexCount => _sortIndexRegistry.Count;
+    public int WorkerQueueLength => _worker.QueuedCount;
 
     public IEnumerable<(string CollectionId, string FieldName, int RefCount)> GetActiveTypedColumns()
     {

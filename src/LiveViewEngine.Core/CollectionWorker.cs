@@ -1,4 +1,5 @@
 using System.Threading.Channels;
+using System.Threading;
 
 namespace LiveViewEngine.Core;
 
@@ -17,8 +18,11 @@ internal sealed class CollectionWorker : IDisposable
     private readonly Channel<IWorkItem> _queue = Channel.CreateUnbounded<IWorkItem>( new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
     private readonly CancellationTokenSource _cts = new();
     private readonly Lock _startLock = new();
+    private int _queuedCount;
     private bool _started;
     private Task? _workerTask;
+
+    public int QueuedCount => Volatile.Read(ref _queuedCount);
 
     public void Start()
     {
@@ -37,6 +41,7 @@ internal sealed class CollectionWorker : IDisposable
     public async Task<T> EnqueueAsync<T>(IWorkItem<T> work, CancellationToken ct = default)
     {
         await _queue.Writer.WriteAsync(work, ct).ConfigureAwait(false);
+        Interlocked.Increment(ref _queuedCount);
         return await work.Completion.Task.WaitAsync(ct).ConfigureAwait(false);
     }
 
@@ -68,6 +73,7 @@ internal sealed class CollectionWorker : IDisposable
         {
             await foreach (var item in _queue.Reader.ReadAllAsync(_cts.Token).ConfigureAwait(false))
             {
+                Interlocked.Decrement(ref _queuedCount);
                 item.Execute();
             }
         }
