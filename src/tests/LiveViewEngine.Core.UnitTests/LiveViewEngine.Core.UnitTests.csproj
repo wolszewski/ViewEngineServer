@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\LiveViewEngine.WebHost\LiveViewEngine.WebHost.csproj" />
+    <ProjectReference Include="..\..\LiveViewEngine.TcpProtocol\LiveViewEngine.TcpProtocol.csproj" />
   </ItemGroup>
 
 </Project>

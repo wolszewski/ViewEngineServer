@@ -1,5 +1,6 @@
 using LiveViewEngine.Core;
 using LiveViewEngine.Core.Data;
+using ViewEngineServer.WebApp.Tcp;
 
 namespace ViewEngineServer.WebApp.Http;
 
@@ -7,14 +8,20 @@ public static class HttpEndpoints
 {
     public static void MapHttpEndpoints(this WebApplication app)
     {
-        app.MapGet("/", (ICollectionStore store) => Results.Ok(new
+        app.MapGet("/", (ICollectionStore store, TcpIngestOptions tcpIngest) => Results.Ok(new
         {
             service = "LiveViewEngine.WebHost",
             endpoints = new
             {
                 websocket = "/ws",
                 collections = "/collections",
-                ingest = "/collections/{collectionName}/ingest"
+                ingest = "/collections/{collectionName}/ingest",
+                tcpIngest = new
+                {
+                    enabled = tcpIngest.Enabled,
+                    address = tcpIngest.ListenAddress,
+                    port = tcpIngest.Port
+                }
             },
             collections = store.CollectionIds
         }));

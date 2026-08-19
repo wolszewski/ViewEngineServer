@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\LiveViewEngine.Core\LiveViewEngine.Core.csproj" />
+    <ProjectReference Include="..\LiveViewEngine.TcpProtocol\LiveViewEngine.TcpProtocol.csproj" />
   </ItemGroup>
 
   <ItemGroup>
