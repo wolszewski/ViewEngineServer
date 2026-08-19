@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.Buffers.Text;
 using System.Text;
 using LiveViewEngine.Core;
 using LiveViewEngine.Core.Data;
@@ -7,20 +9,45 @@ namespace ViewEngineServer.WebApp.WebSocket;
 
 public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
 {
-    private const char Separator = '|';
-    private const char Escape = '\\';
-    private const char NullToken = '~';
+    private const byte SeparatorByte = (byte)'|';
+    private const byte EscapeByte = (byte)'\\';
+    private const byte SkipMarkerByte = (byte)'^';
+    private const byte NullTokenByte = (byte)'~';
+
+    private static readonly byte[] SeparatorSpan = [(byte)'|'];
+    private static readonly byte[] EscapeSpan = [(byte)'\\'];
+    private static readonly byte[] ASpan = [(byte)'A'];
+    private static readonly byte[] SSpan = [(byte)'S'];
+    private static readonly byte[] ISpan = [(byte)'I'];
+    private static readonly byte[] USpan = [(byte)'U'];
+    private static readonly byte[] DSpan = [(byte)'D'];
+    private static readonly byte[] RSpan = [(byte)'R'];
+    private static readonly byte[] PSpan = [(byte)'P'];
+    private static readonly byte[] SkipSpan = [(byte)'^'];
+    private static readonly byte[] OneByte = [(byte)'1'];
+
     public OutboundMessageFormat Format => OutboundMessageFormat.Compact;
 
     public byte[] EncodeSubscriptionAccepted(SubscriptionAcceptedPayload payload)
     {
-        var builder = new StringBuilder();
-        builder.Append("A|").Append(payload.SubscriptionId).Append(Separator)
-            .Append(payload.SnapshotFollows ? '1' : '0').Append(Separator)
-            .Append(payload.StartIndex).Append(Separator)
-            .Append(payload.TotalCount);
-        AppendFieldNames(builder, payload.Fields);
-        return Encoding.UTF8.GetBytes(builder.ToString());
+        var writer = new ArrayBufferWriter<byte>();
+        writer.Write(ASpan);
+        writer.Write(SeparatorSpan);
+        WriteInt32(writer, payload.SubscriptionId);
+        writer.Write(SeparatorSpan);
+        writer.Write(payload.SnapshotFollows ? OneByte : SeparatorSpan);
+        writer.Write(SeparatorSpan);
+        WriteInt32(writer, payload.StartIndex);
+        writer.Write(SeparatorSpan);
+        WriteInt32(writer, payload.TotalCount);
+
+        for (int i = 0; i < payload.Fields.Count; i++)
+        {
+            writer.Write(SeparatorSpan);
+            WriteEscaped(writer, payload.Fields[i]);
+        }
+
+        return writer.WrittenMemory.ToArray();
     }
 
     public IEnumerable<byte[]> EncodeFrames(ViewDelta delta, int subscriptionId)
@@ -35,9 +62,9 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
                 {
                     yield return EncodeSnapshotRow(subscriptionId, rows.Schema, rows.VisibleFieldIndexes, row);
                 }
-                 yield break;
+                yield break;
             case EndOfSnapshotDelta:
-                yield return Encoding.UTF8.GetBytes($"EOS|{subscriptionId}");
+                yield return EncodeEndOfSnapshot(subscriptionId);
                 yield break;
             case SnapshotDelta snapshot:
                 yield return EncodeSnapshotStart(subscriptionId, snapshot.StartIndex, snapshot.TotalCount, snapshot.IsPartial);
@@ -45,7 +72,7 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
                 {
                     yield return EncodeSnapshotRow(subscriptionId, snapshot.Schema, snapshot.VisibleFieldIndexes, row);
                 }
-                yield return Encoding.UTF8.GetBytes($"EOS|{subscriptionId}");
+                yield return EncodeEndOfSnapshot(subscriptionId);
                 yield break;
             case RowInsertDelta insert:
                 yield return EncodeInsert(subscriptionId, insert.Schema, insert.VisibleFieldIndexes, insert.Position, insert.Row);
@@ -54,7 +81,7 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
                 yield return EncodeUpdate(subscriptionId, update.Schema, update.VisibleFieldIndexes, update.RowId, update.Position, update.ChangedColumns);
                 yield break;
             case RowRemoveDelta remove:
-                yield return Encoding.UTF8.GetBytes($"D|{subscriptionId}|{EscapeValue(remove.RowId)}|{remove.Position}");
+                yield return EncodeDelete(subscriptionId, remove.RowId, remove.Position);
                 yield break;
             case RowReplaceDelta replace:
                 yield return EncodeReplace(
@@ -73,10 +100,30 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
 
     private static byte[] EncodeSnapshotStart(int subscriptionId, int startIndex, int totalCount, bool isPartial = false)
     {
-        var frame = isPartial
-            ? $"P|{subscriptionId}|{startIndex}|{totalCount}|1"
-            : $"P|{subscriptionId}|{startIndex}|{totalCount}";
-        return Encoding.UTF8.GetBytes(frame);
+        var writer = new ArrayBufferWriter<byte>();
+        writer.Write(PSpan);
+        writer.Write(SeparatorSpan);
+        WriteInt32(writer, subscriptionId);
+        writer.Write(SeparatorSpan);
+        WriteInt32(writer, startIndex);
+        writer.Write(SeparatorSpan);
+        WriteInt32(writer, totalCount);
+        if (isPartial)
+        {
+            writer.Write(SeparatorSpan);
+            writer.Write(OneByte);
+        }
+
+        return writer.WrittenMemory.ToArray();
+    }
+
+    private static byte[] EncodeEndOfSnapshot(int subscriptionId)
+    {
+        var writer = new ArrayBufferWriter<byte>();
+        WriteBytes(writer, "EOS"u8);
+        writer.Write(SeparatorSpan);
+        WriteInt32(writer, subscriptionId);
+        return writer.WrittenMemory.ToArray();
     }
 
     private byte[] EncodeSnapshotRow(
@@ -85,11 +132,14 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
         IReadOnlyList<int>? visibleFieldIndexes,
         string?[] row)
     {
-        var builder = new StringBuilder();
-        builder.Append("S|").Append(subscriptionId).Append(Separator);
-        AppendKey(builder, schema, visibleFieldIndexes, row);
-        AppendFullRow(builder, schema, visibleFieldIndexes, row);
-        return Encoding.UTF8.GetBytes(builder.ToString());
+        var writer = new ArrayBufferWriter<byte>();
+        writer.Write(SSpan);
+        writer.Write(SeparatorSpan);
+        WriteInt32(writer, subscriptionId);
+        writer.Write(SeparatorSpan);
+        WriteKeyField(writer, schema, visibleFieldIndexes, row);
+        WriteFullRow(writer, schema, visibleFieldIndexes, row);
+        return writer.WrittenMemory.ToArray();
     }
 
     private byte[] EncodeInsert(
@@ -99,12 +149,16 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
         int position,
         string?[] row)
     {
-        var builder = new StringBuilder();
-        builder.Append("I|").Append(subscriptionId).Append(Separator);
-        AppendKey(builder, schema, visibleFieldIndexes, row);
-        builder.Append(Separator).Append(position);
-        AppendFullRow(builder, schema, visibleFieldIndexes, row);
-        return Encoding.UTF8.GetBytes(builder.ToString());
+        var writer = new ArrayBufferWriter<byte>();
+        writer.Write(ISpan);
+        writer.Write(SeparatorSpan);
+        WriteInt32(writer, subscriptionId);
+        writer.Write(SeparatorSpan);
+        WriteKeyField(writer, schema, visibleFieldIndexes, row);
+        writer.Write(SeparatorSpan);
+        WriteInt32(writer, position);
+        WriteFullRow(writer, schema, visibleFieldIndexes, row);
+        return writer.WrittenMemory.ToArray();
     }
 
     private byte[] EncodeUpdate(
@@ -115,13 +169,17 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
         int position,
         IReadOnlyCollection<KeyValuePair<int, string?>> changedColumns)
     {
+        var writer = new ArrayBufferWriter<byte>();
+        writer.Write(USpan);
+        writer.Write(SeparatorSpan);
+        WriteInt32(writer, subscriptionId);
+        writer.Write(SeparatorSpan);
+        WriteEscaped(writer, rowId);
+        writer.Write(SeparatorSpan);
+        WriteInt32(writer, position);
+
         var orderedFieldIndexes = OutboundProtocolEncodingHelpers.GetPayloadFieldIndexes(schema, visibleFieldIndexes);
         var changedByField = changedColumns.ToDictionary(static kvp => kvp.Key, static kvp => kvp.Value);
-
-        var builder = new StringBuilder();
-        builder.Append("U|").Append(subscriptionId).Append(Separator)
-            .Append(EscapeValue(rowId)).Append(Separator)
-            .Append(position);
 
         int i = 0;
         while (i < orderedFieldIndexes.Count)
@@ -129,8 +187,8 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
             int fieldIndex = orderedFieldIndexes[i];
             if (changedByField.TryGetValue(fieldIndex, out string? value))
             {
-                builder.Append(Separator);
-                AppendValue(builder, value);
+                writer.Write(SeparatorSpan);
+                WriteEscaped(writer, value);
                 i++;
                 continue;
             }
@@ -142,11 +200,26 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
                 skipCount++;
             }
 
-            builder.Append(Separator).Append('^').Append(skipCount);
+            writer.Write(SeparatorSpan);
+            writer.Write(SkipSpan);
+            WriteInt32(writer, skipCount);
             i += skipCount;
         }
 
-        return Encoding.UTF8.GetBytes(builder.ToString());
+        return writer.WrittenMemory.ToArray();
+    }
+
+    private byte[] EncodeDelete(int subscriptionId, string rowId, int position)
+    {
+        var writer = new ArrayBufferWriter<byte>();
+        writer.Write(DSpan);
+        writer.Write(SeparatorSpan);
+        WriteInt32(writer, subscriptionId);
+        writer.Write(SeparatorSpan);
+        WriteEscaped(writer, rowId);
+        writer.Write(SeparatorSpan);
+        WriteInt32(writer, position);
+        return writer.WrittenMemory.ToArray();
     }
 
     private byte[] EncodeReplace(
@@ -158,36 +231,34 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
         int insertPosition,
         string?[] row)
     {
-        var builder = new StringBuilder();
-        builder.Append("R|").Append(subscriptionId).Append(Separator)
-            .Append(EscapeValue(removedRowId)).Append(Separator)
-            .Append(removePosition).Append(Separator)
-            .Append(insertPosition).Append(Separator);
-        AppendKey(builder, schema, visibleFieldIndexes, row);
-        AppendFullRow(builder, schema, visibleFieldIndexes, row);
-        return Encoding.UTF8.GetBytes(builder.ToString());
+        var writer = new ArrayBufferWriter<byte>();
+        writer.Write(RSpan);
+        writer.Write(SeparatorSpan);
+        WriteInt32(writer, subscriptionId);
+        writer.Write(SeparatorSpan);
+        WriteEscaped(writer, removedRowId);
+        writer.Write(SeparatorSpan);
+        WriteInt32(writer, removePosition);
+        writer.Write(SeparatorSpan);
+        WriteInt32(writer, insertPosition);
+        writer.Write(SeparatorSpan);
+        WriteKeyField(writer, schema, visibleFieldIndexes, row);
+        WriteFullRow(writer, schema, visibleFieldIndexes, row);
+        return writer.WrittenMemory.ToArray();
     }
 
-    private static void AppendFieldNames(StringBuilder builder, IReadOnlyList<string> fields)
-    {
-        for (int i = 0; i < fields.Count; i++)
-        {
-            builder.Append(Separator).Append(EscapeValue(fields[i]));
-        }
-    }
-
-    private static void AppendKey(
-        StringBuilder builder,
+    private static void WriteKeyField(
+        ArrayBufferWriter<byte> writer,
         CollectionSchema schema,
         IReadOnlyList<int>? visibleFieldIndexes,
         string?[] row)
     {
         int keyIndex = OutboundProtocolEncodingHelpers.FindSelectedFieldPosition(schema.PrimaryKey.FieldIndex, visibleFieldIndexes);
-        AppendValue(builder, row[keyIndex]);
+        WriteEscaped(writer, row[keyIndex]);
     }
 
-    private static void AppendFullRow(
-        StringBuilder builder,
+    private static void WriteFullRow(
+        ArrayBufferWriter<byte> writer,
         CollectionSchema schema,
         IReadOnlyList<int>? visibleFieldIndexes,
         string?[] row)
@@ -195,38 +266,53 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
         var fieldIndexes = OutboundProtocolEncodingHelpers.GetPayloadFieldIndexes(schema, visibleFieldIndexes);
         foreach (int fieldIndex in fieldIndexes)
         {
-            builder.Append(Separator);
+            writer.Write(SeparatorSpan);
             int rowIndex = OutboundProtocolEncodingHelpers.FindSelectedFieldPosition(fieldIndex, visibleFieldIndexes);
-            AppendValue(builder, row[rowIndex]);
+            WriteEscaped(writer, row[rowIndex]);
         }
     }
 
-    private static void AppendValue(StringBuilder builder, string? value) => builder.Append(EscapeValue(value));
-
-    private static string EscapeValue(string? value)
+    private static void WriteEscaped(ArrayBufferWriter<byte> writer, string? value)
     {
         if (value is null)
         {
-            return NullToken.ToString();
+            writer.Write([NullTokenByte]);
+            return;
         }
 
         if (value.Length == 0)
         {
-            return string.Empty;
+            return;
         }
 
-        var builder = new StringBuilder(value.Length);
+        var buffer = writer.GetSpan(value.Length * 4);
+        int bytesWritten = 0;
+
         for (int i = 0; i < value.Length; i++)
         {
             char ch = value[i];
-            if (ch is Separator or Escape or '^' or NullToken)
+            if (ch is '|' or '\\' or '^' or '~')
             {
-                builder.Append(Escape);
+                buffer[bytesWritten++] = EscapeByte;
             }
 
-            builder.Append(ch);
+            int charBytes = Encoding.UTF8.GetBytes(value.AsSpan(i, 1), buffer[bytesWritten..]);
+            bytesWritten += charBytes;
         }
 
-        return builder.ToString();
+        writer.Advance(bytesWritten);
+    }
+
+    private static void WriteBytes(ArrayBufferWriter<byte> writer, ReadOnlySpan<byte> bytes)
+    {
+        writer.Write(bytes);
+    }
+
+    private static void WriteInt32(ArrayBufferWriter<byte> writer, int value)
+    {
+        Span<byte> buffer = writer.GetSpan(16);
+        bool success = Utf8Formatter.TryFormat(value, buffer, out int bytesWritten);
+        System.Diagnostics.Debug.Assert(success);
+        writer.Advance(bytesWritten);
     }
 }

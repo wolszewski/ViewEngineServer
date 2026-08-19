@@ -101,5 +101,100 @@ public class CompactOutboundProtocolEncoderTests
         Assert.Equal("EOS|7", eos);
     }
 
+    [Fact]
+    public void EncodeUpdate_HandlesNullValues()
+    {
+        var update = ToText(_encoder.EncodeFrames(
+            new RowUpdateDelta
+            {
+                ViewId = "1:1",
+                Schema = Schema,
+                RowId = "o1",
+                Position = 0,
+                VisibleFieldIndexes = [0, 1, 2, 3],
+                ChangedColumns = [new KeyValuePair<int, string?>(2, null)]
+            },
+            subscriptionId: 1).Single());
+        Assert.Equal("U|1|o1|0|^1|~|", update);
+    }
+
+    [Fact]
+    public void EncodeSnapshotRow_EscapesNullTokenInValue()
+    {
+        var row = ToText(_encoder.EncodeFrames(
+            new SnapshotRowsDelta
+            {
+                ViewId = "1:1",
+                Schema = Schema,
+                VisibleFieldIndexes = [0, 1, 2, 3],
+                Rows = [["o1", "val~ue", "100", "~"]]
+            },
+            subscriptionId: 1).Single());
+        Assert.Equal("S|1|o1|val\\~ue|100|\\~", row);
+    }
+
+    [Fact]
+    public void EncodeInsert_HandlesEmptyStringValues()
+    {
+        var insert = ToText(_encoder.EncodeFrames(
+            new RowInsertDelta
+            {
+                ViewId = "1:1",
+                Schema = Schema,
+                Position = 0,
+                VisibleFieldIndexes = [0, 1, 2, 3],
+                Row = ["o1", "", "100", "open"]
+            },
+            subscriptionId: 1).Single());
+        Assert.Equal("I|1|o1|0||100|open", insert);
+    }
+
+    [Fact]
+    public void EncodeSnapshotStart_WithPartialFlag()
+    {
+        var start = _encoder.EncodeFrames(
+            new SnapshotStartDelta
+            {
+                ViewId = "1:1",
+                StartIndex = 0,
+                TotalCount = 100,
+                IsPartial = true
+            },
+            subscriptionId: 1).Single();
+        Assert.Equal("P|1|0|100|1", ToText(start));
+    }
+
+    [Fact]
+    public void EncodeSnapshotStart_WithoutPartialFlag()
+    {
+        var start = _encoder.EncodeFrames(
+            new SnapshotStartDelta
+            {
+                ViewId = "1:1",
+                StartIndex = 10,
+                TotalCount = 50,
+                IsPartial = false
+            },
+            subscriptionId: 2).Single();
+        Assert.Equal("P|2|10|50", ToText(start));
+    }
+
+    [Fact]
+    public void EncodeUpdate_WithAllFieldsSkipped()
+    {
+        var update = ToText(_encoder.EncodeFrames(
+            new RowUpdateDelta
+            {
+                ViewId = "1:1",
+                Schema = Schema,
+                RowId = "o1",
+                Position = 5,
+                VisibleFieldIndexes = [0, 1, 2, 3],
+                ChangedColumns = []
+            },
+            subscriptionId: 1).Single());
+        Assert.Equal("U|1|o1|5|^4", update);
+    }
+
     private static string ToText(byte[] payload) => System.Text.Encoding.UTF8.GetString(payload);
 }
