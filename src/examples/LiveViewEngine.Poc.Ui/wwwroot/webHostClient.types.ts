@@ -8,7 +8,8 @@ export interface SnapshotEvent {
     totalCount: number;
     startIndex: number;
     rows: RowData[];
-    loadMs: number;
+    waitMs: number;
+    transferMs: number;
     isPartial?: boolean;
 }
 

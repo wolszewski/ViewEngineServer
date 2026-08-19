@@ -608,7 +608,12 @@ function App(): React.ReactElement {
     const [latencySummary, setLatencySummary] = useState({ maxMs: 0, avgMs: 0, sampleCount: 0 });
     const latencyAccRef = useRef({ maxMs: 0, avgMs: 0, sampleCount: 0, recentLatencies: [] as number[], recentTotalMs: 0 });
     const [isLoadingSnapshot, setIsLoadingSnapshot] = useState(false);
-    const [snapshotStats, setSnapshotStats] = useState<{ rowCount: number; loadMs: number } | null>(null);
+    const [snapshotStats, setSnapshotStats] = useState<{
+        rowCount: number;
+        waitMs: number;
+        transferMs: number;
+        renderMs: number;
+    } | null>(null);
     const [gridVisible, setGridVisible] = useState(true);
     const gridVisibleRef = useRef(true);
 
@@ -623,6 +628,14 @@ function App(): React.ReactElement {
     const clientRef = useRef<WebHostClient | null>(null);
     const handleDeltaEventRef = useRef<(event: DeltaEvent) => void>(() => {});
     const rowsByIdRef = useRef<Map<string, RowData>>(new Map());
+    const pendingSnapshotRenderMeasureRef = useRef<{
+        rowCount: number;
+        waitMs: number;
+        transferMs: number;
+        startedAt: number;
+        startIndex: number;
+        endIndex: number;
+    } | null>(null);
 
     const publishRowsFromWindow = useCallback(() => {
         const window = subscribedViewportRef.current;
@@ -722,6 +735,7 @@ function App(): React.ReactElement {
         rowsByPositionRef.current.clear();
         totalCountRef.current = null;
         subscribedViewportRef.current = null;
+        pendingSnapshotRenderMeasureRef.current = null;
         setRowData([]);
         if (scrollViewportDebounceRef.current !== null) {
             clearTimeout(scrollViewportDebounceRef.current);
@@ -781,8 +795,10 @@ function App(): React.ReactElement {
         const snapshotStart = snapshot.startIndex;
         const snapshotEnd = Math.max(snapshotStart, snapshotStart + rows.length - 1);
         appendLog(snapshot.isPartial
-            ? `partial snapshot: ${snapshotStart.toLocaleString()} - ${snapshotEnd.toLocaleString()} (${snapshot.loadMs.toFixed(0)}ms)`
-            : `snapshot: ${snapshotStart.toLocaleString()} - ${snapshotEnd.toLocaleString()} (${snapshot.loadMs.toFixed(0)}ms)`);
+            ? `partial snapshot received: ${snapshotStart.toLocaleString()} - ${snapshotEnd.toLocaleString()} `
+                + `(${snapshot.waitMs.toFixed(0)}ms wait, ${snapshot.transferMs.toFixed(0)}ms transfer)`
+            : `snapshot received: ${snapshotStart.toLocaleString()} - ${snapshotEnd.toLocaleString()} `
+                + `(${snapshot.waitMs.toFixed(0)}ms wait, ${snapshot.transferMs.toFixed(0)}ms transfer)`);
 
         if (!snapshot.isPartial) {
             rowsByPositionRef.current.clear();
@@ -804,7 +820,16 @@ function App(): React.ReactElement {
 
         totalCountRef.current = snapshot.totalCount;
         setTotalCount(snapshot.totalCount);
-        setSnapshotStats({ rowCount: rows.length, loadMs: snapshot.loadMs });
+        if (!snapshot.isPartial) {
+            pendingSnapshotRenderMeasureRef.current = {
+                rowCount: rows.length,
+                waitMs: snapshot.waitMs,
+                transferMs: snapshot.transferMs,
+                startedAt: performance.now(),
+                startIndex: snapshotStart,
+                endIndex: snapshotEnd
+            };
+        }
 
         if (rows.length > 0) {
             setColumnsFromRow(rows[0]);
@@ -822,6 +847,45 @@ function App(): React.ReactElement {
             }, 0);
         }
     }, [publishRowsFromWindow, setColumnsFromRow]);
+
+    useEffect(() => {
+        const pending = pendingSnapshotRenderMeasureRef.current;
+        if (!pending || isLoadingSnapshot) {
+            return;
+        }
+
+        let cancelled = false;
+        let secondFrameId = 0;
+        const firstFrameId = window.requestAnimationFrame(() => {
+            secondFrameId = window.requestAnimationFrame(() => {
+                if (cancelled) {
+                    return;
+                }
+
+                const renderMs = performance.now() - pending.startedAt;
+                setSnapshotStats({
+                    rowCount: pending.rowCount,
+                    waitMs: pending.waitMs,
+                    transferMs: pending.transferMs,
+                    renderMs
+                });
+                appendLog(
+                    `snapshot rendered: ${pending.startIndex.toLocaleString()} - ${pending.endIndex.toLocaleString()} `
+                    + `(${pending.waitMs.toFixed(0)}ms wait, ${pending.transferMs.toFixed(0)}ms transfer, `
+                    + `${renderMs.toFixed(0)}ms render)`
+                );
+                pendingSnapshotRenderMeasureRef.current = null;
+            });
+        });
+
+        return () => {
+            cancelled = true;
+            window.cancelAnimationFrame(firstFrameId);
+            if (secondFrameId !== 0) {
+                window.cancelAnimationFrame(secondFrameId);
+            }
+        };
+    }, [appendLog, isLoadingSnapshot, rowData]);
 
     const applyUpdate = useCallback((update: RowUpdateEvent) => {
         const rowId = update.rowId;
@@ -1346,7 +1410,21 @@ function App(): React.ReactElement {
                 'div',
                 { className: 'log-header' },
                 React.createElement('span', null, status),
-                React.createElement('span', null, totalCount !== null ? `${totalCount.toLocaleString()} rows total` : 'snapshot pending')
+                React.createElement(
+                    'span',
+                    null,
+                    totalCount !== null ? `${totalCount.toLocaleString()} rows total` : 'snapshot pending'
+                ),
+                snapshotStats
+                    ? React.createElement(
+                        'span',
+                        null,
+                        `snapshot ${snapshotStats.rowCount.toLocaleString()} rows | `
+                        + `wait ${snapshotStats.waitMs.toFixed(0)}ms | `
+                        + `transfer ${snapshotStats.transferMs.toFixed(0)}ms | `
+                        + `render ${snapshotStats.renderMs.toFixed(0)}ms`
+                    )
+                    : null
             ),
             React.createElement(
                 'div',
