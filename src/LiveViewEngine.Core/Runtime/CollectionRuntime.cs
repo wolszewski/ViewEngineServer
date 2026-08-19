@@ -221,7 +221,10 @@ public sealed class CollectionRuntime : IDisposable
         var oldEnd = oldStart + oldPageSize;
 
         viewport.StartIndex = command.StartIndex;
-        viewport.PageSize = command.PageSize;
+        if (command.PageSize.HasValue)
+        {
+            viewport.PageSize = command.PageSize;
+        }
 
         var newStart = command.StartIndex;
         var newPageSize = command.PageSize ?? oldPageSize;
