@@ -37,7 +37,8 @@ const knownTradeColumns = [
     'side',
     'status',
     'notional',
-    'variedNumber',, (_, index) => `stringField${index.toString().padStart(2, '0')}`),
+    'variedNumber',
+    ...Array.from({ length: 30 }, (_, index) => `stringField${index.toString().padStart(2, '0')}`),
     ...Array.from({ length: 23 }, (_, index) => `intField${index.toString().padStart(2, '0')}`),
     ...Array.from({ length: 20 }, (_, index) => `decimalField${index.toString().padStart(2, '0')}`),
     ...Array.from({ length: 20 }, (_, index) => `enumField${index.toString().padStart(2, '0')}`)
