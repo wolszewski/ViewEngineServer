@@ -8,6 +8,7 @@ import {
     type MessageFormat,
     type RowData,
     type RowInsertEvent,
+    type RowReplaceEvent,
     type RowRemoveEvent,
     type RowUpdateEvent,
     type SnapshotEvent
@@ -15,13 +16,16 @@ import {
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
-const defaultTotalCountAssumption = 10_000;
 const defaultPageSizes = [25, 50, 100];
 const defaultCollectionId = 'trades';
-const defaultSortColumn = 'quantity';
+const defaultSortColumn = 'tradeId';
 const defaultPageSize = 50;
 const defaultMessageFormat: MessageFormat = 'compact';
 const latencyWindowSize = 500;
+const maxExpandedViewportRows = 5_000;
+const slidingViewportRows = 5_000;
+const slidingViewportBehindRows = 4_000;
+const slidingViewportAheadRows = 1_000;
 const impliedFields = new Set(['key']);
 const knownTradeColumns = [
     'tradeId',
@@ -33,6 +37,7 @@ const knownTradeColumns = [
     'side',
     'status',
     'notional',
+    'variedNumber',
     ...Array.from({ length: 30 }, (_, index) => `stringField${index.toString().padStart(2, '0')}`),
     ...Array.from({ length: 23 }, (_, index) => `intField${index.toString().padStart(2, '0')}`),
     ...Array.from({ length: 20 }, (_, index) => `decimalField${index.toString().padStart(2, '0')}`),
@@ -41,7 +46,7 @@ const knownTradeColumns = [
 const columnGroups: Array<{ label: string; columns: string[] }> = [
     { label: 'string',  columns: ['tradeId', ...Array.from({ length: 30 }, (_, i) => `stringField${i.toString().padStart(2, '0')}`)] },
     { label: 'int',     columns: ['accountId', 'quantity', ...Array.from({ length: 23 }, (_, i) => `intField${i.toString().padStart(2, '0')}`)] },
-    { label: 'decimal', columns: ['price', 'notional', ...Array.from({ length: 20 }, (_, i) => `decimalField${i.toString().padStart(2, '0')}`)] },
+    { label: 'decimal', columns: ['price', 'notional', 'variedNumber', ...Array.from({ length: 20 }, (_, i) => `decimalField${i.toString().padStart(2, '0')}`)] },
     { label: 'enum',    columns: ['side', 'status', ...Array.from({ length: 20 }, (_, i) => `enumField${i.toString().padStart(2, '0')}`)] },
     { label: 'date',    columns: ['createdDate', 'updatedDate'] }
 ];
@@ -81,7 +86,6 @@ interface AppUrlState {
     sortAscending: boolean;
     messageFormat: MessageFormat;
     pageSize: number;
-    pageIndex: number;
     filters: AppliedFilter[];
     selectedFields: string[];
 }
@@ -128,10 +132,9 @@ function getInitialUrlState(): AppUrlState {
     return {
         collectionId: params.get('collection')?.trim() || defaultCollectionId,
         sortColumn: sortColumn && knownTradeColumnSet.has(sortColumn) ? sortColumn : defaultSortColumn,
-        sortAscending: params.get('dir') !== 'desc',
+        sortAscending: params.get('dir') === 'asc',
         messageFormat: params.get('format') === 'json' ? 'json' : defaultMessageFormat,
         pageSize: parsePositiveInteger(params.get('pageSize'), defaultPageSize),
-        pageIndex: Math.max(0, parsePositiveInteger(params.get('page'), 1) - 1),
         filters,
         selectedFields
     };
@@ -148,8 +151,8 @@ function syncUrlState(state: AppUrlState): void {
         params.set('sort', state.sortColumn);
     }
 
-    if (!state.sortAscending) {
-        params.set('dir', 'desc');
+    if (state.sortAscending) {
+        params.set('dir', 'asc');
     }
 
     if (state.messageFormat !== defaultMessageFormat) {
@@ -158,10 +161,6 @@ function syncUrlState(state: AppUrlState): void {
 
     if (state.pageSize !== defaultPageSize) {
         params.set('pageSize', String(state.pageSize));
-    }
-
-    if (state.pageIndex > 0) {
-        params.set('page', String(state.pageIndex + 1));
     }
 
     for (const filter of state.filters) {
@@ -368,6 +367,16 @@ function areFiltersEqual(left: AppliedFilter[], right: AppliedFilter[]): boolean
         });
 }
 
+function buildSubscriptionKey(
+    collectionId: string,
+    sortColumn: string,
+    sortAscending: boolean,
+    filters: AppliedFilter[],
+    selectedFields: string[]
+): string {
+    return JSON.stringify([collectionId, sortColumn, sortAscending, filters, selectedFields]);
+}
+
 function buildColumnDef(field: string, sortColumn: string, sortAscending: boolean): ColDef<RowData> {
     const filter = getAgGridFilterType(field);
     const columnDef: ColDef<RowData> = {
@@ -532,11 +541,14 @@ function App(): React.ReactElement {
     const [messageFormat, setMessageFormat] = useState<MessageFormat>(initialUrlState.messageFormat);
     const [pageSize, setPageSize] = useState(initialUrlState.pageSize);
     const [pageSizeInput, setPageSizeInput] = useState(String(initialUrlState.pageSize));
-    const [pageIndex, setPageIndex] = useState(initialUrlState.pageIndex);
     const [filters, setFilters] = useState<AppliedFilter[]>(initialUrlState.filters);
     const [selectedFields, setSelectedFields] = useState<string[]>(initialUrlState.selectedFields);
     const [isSelectingColumns, setIsSelectingColumns] = useState(false);
     const [draftColumns, setDraftColumns] = useState<Set<string>>(new Set());
+    const [eventLog, setEventLog] = useState<string[]>([
+        `order by ${initialUrlState.sortColumn} ${initialUrlState.sortAscending ? 'asc' : 'desc'}`
+    ]);
+    const [rowData, setRowData] = useState<RowData[]>([]);
     const [totalCount, setTotalCount] = useState<number | null>(null);
     const [columnDefs, setColumnDefs] = useState<ColDef<RowData>[]>([]);
     const [latencySummary, setLatencySummary] = useState({ maxMs: 0, avgMs: 0, sampleCount: 0 });
@@ -546,16 +558,39 @@ function App(): React.ReactElement {
     const [gridVisible, setGridVisible] = useState(true);
     const gridVisibleRef = useRef(true);
 
-    const effectiveTotalCount = totalCount ?? defaultTotalCountAssumption;
-    const maxPageIndex = Math.max(0, Math.ceil(effectiveTotalCount / pageSize) - 1);
-
     const gridApiRef = useRef<GridApi<RowData> | null>(null);
     const isApplyingGridStateRef = useRef(false);
+    const isReloadingGridRef = useRef(false);
+    const scrollViewportDebounceRef = useRef<number | null>(null);
+    const visibleRowCountRef = useRef(0);
+    const subscribedViewportRef = useRef<{ start: number; end: number } | null>(null);
+    const rowsByPositionRef = useRef<Map<number, RowData>>(new Map());
+    const totalCountRef = useRef<number | null>(null);
+    const datasourceParamsRef = useRef({ collectionId, sortColumn, sortAscending, pageSize, filters: [] as AppliedFilter[], selectedFields, messageFormat });
     const clientRef = useRef<WebHostClient | null>(null);
     const handleDeltaEventRef = useRef<(event: DeltaEvent) => void>(() => {});
-    const initialRowData = useMemo<RowData[]>(() => [], []);
     const rowsByIdRef = useRef<Map<string, RowData>>(new Map());
-    const orderedIdsRef = useRef<string[]>([]);
+
+    const publishRowsFromWindow = useCallback(() => {
+        const window = subscribedViewportRef.current;
+        if (!window) {
+            const ordered = Array.from(rowsByPositionRef.current.entries())
+                .sort((left, right) => left[0] - right[0])
+                .map((entry) => entry[1]);
+            setRowData(ordered);
+            return;
+        }
+
+        const nextRows: RowData[] = [];
+        for (let position = window.start; position <= window.end; position += 1) {
+            const row = rowsByPositionRef.current.get(position);
+            if (!row) {
+                break;
+            }
+            nextRows.push(row);
+        }
+        setRowData(nextRows);
+    }, []);
 
     const defaultColDef = useMemo<ColDef<RowData>>(() => ({
         sortable: true,
@@ -566,17 +601,81 @@ function App(): React.ReactElement {
         sortingOrder: ['asc', 'desc']
     }), []);
 
+    const appendLog = useCallback((entry: string) => {
+        setEventLog((current) => [...current.slice(-19), entry]);
+    }, []);
+
+    const computeViewportWindow = useCallback((firstRow: number, lastRow: number, effectiveSize: number) => {
+        const current = subscribedViewportRef.current;
+        const minLastRow = Math.max(firstRow, lastRow);
+        if (!current) {
+            const start = 0;
+            const end = Math.max(minLastRow, firstRow + effectiveSize - 1);
+            return { start, end };
+        }
+
+        const expandedStart = Math.min(current.start, firstRow);
+        const expandedEnd = Math.max(current.end, minLastRow, firstRow + effectiveSize - 1);
+        if ((expandedEnd - expandedStart + 1) <= maxExpandedViewportRows) {
+            return { start: expandedStart, end: expandedEnd };
+        }
+
+        let start = Math.max(0, firstRow - slidingViewportBehindRows);
+        let end = start + slidingViewportRows - 1;
+        const mustCover = Math.max(minLastRow, firstRow + slidingViewportAheadRows);
+        if (end < mustCover) {
+            end = mustCover;
+            start = Math.max(0, end - slidingViewportRows + 1);
+        }
+        return { start, end };
+    }, []);
+
+    const requestViewportWindow = useCallback(
+        (firstRow: number, lastRow: number, options: { includeGridViewportLog: boolean }) => {
+            const client = clientRef.current;
+            if (!client?.isConnected || firstRow < 0 || lastRow < firstRow) {
+                return;
+            }
+
+            const p = datasourceParamsRef.current;
+            const effectiveSize = Math.max(p.pageSize, visibleRowCountRef.current * 10 || p.pageSize * 4);
+            const nextWindow = computeViewportWindow(firstRow, lastRow, effectiveSize);
+            if (options.includeGridViewportLog) {
+                appendLog(`grid viewport: ${firstRow.toLocaleString()} - ${lastRow.toLocaleString()}`);
+            }
+
+            const current = subscribedViewportRef.current;
+            const unchanged = current
+                && current.start === nextWindow.start
+                && current.end === nextWindow.end;
+            if (unchanged) {
+                return;
+            }
+
+            const pageSizeWindow = nextWindow.end - nextWindow.start + 1;
+            appendLog(
+                `changing viewport: ${nextWindow.start.toLocaleString()} - ${nextWindow.end.toLocaleString()} | page size ${pageSizeWindow}`
+            );
+            client.setViewport(nextWindow.start, pageSizeWindow);
+            subscribedViewportRef.current = nextWindow;
+        },
+        [appendLog, computeViewportWindow]
+    );
+
     const clearState = useCallback(() => {
         rowsByIdRef.current.clear();
-        orderedIdsRef.current = [];
-        setColumnDefs([]);
+        rowsByPositionRef.current.clear();
+        totalCountRef.current = null;
+        subscribedViewportRef.current = null;
+        setRowData([]);
+        if (scrollViewportDebounceRef.current !== null) {
+            clearTimeout(scrollViewportDebounceRef.current);
+            scrollViewportDebounceRef.current = null;
+        }
         setTotalCount(null);
         setSnapshotStats(null);
         latencyAccRef.current = { maxMs: 0, avgMs: 0, sampleCount: 0, recentLatencies: [], recentTotalMs: 0 };
         setLatencySummary({ maxMs: 0, avgMs: 0, sampleCount: 0 });
-        if (gridApiRef.current) {
-            gridApiRef.current.setGridOption('rowData', []);
-        }
     }, []);
 
     const setColumnsFromRow = useCallback((row: RowData | undefined) => {
@@ -623,32 +722,45 @@ function App(): React.ReactElement {
 
     const applySnapshot = useCallback((snapshot: SnapshotEvent) => {
         const rows = (snapshot.rows ?? []).map((row) => ({ ...row }));
-        rowsByIdRef.current.clear();
-        orderedIdsRef.current = [];
-        for (const row of rows) {
-            const rowId = row.key ?? row.id;
-            if (!rowId) {
-                continue;
-            }
-            rowsByIdRef.current.set(rowId, row);
-            orderedIdsRef.current.push(rowId);
+
+        const snapshotStart = snapshot.startIndex;
+        const snapshotEnd = Math.max(snapshotStart, snapshotStart + rows.length - 1);
+        appendLog(snapshot.isPartial
+            ? `partial snapshot: ${snapshotStart.toLocaleString()} - ${snapshotEnd.toLocaleString()} (${snapshot.loadMs.toFixed(0)}ms)`
+            : `snapshot: ${snapshotStart.toLocaleString()} - ${snapshotEnd.toLocaleString()} (${snapshot.loadMs.toFixed(0)}ms)`);
+
+        if (!snapshot.isPartial) {
+            rowsByPositionRef.current.clear();
+            rowsByIdRef.current.clear();
+            subscribedViewportRef.current = {
+                start: snapshot.startIndex,
+                end: Math.max(snapshot.startIndex, snapshot.startIndex + rows.length - 1)
+            };
         }
 
+        // Store rows in caches
+        for (let i = 0; i < rows.length; i++) {
+            rowsByPositionRef.current.set(snapshot.startIndex + i, rows[i]);
+            const rowId = rows[i].key ?? rows[i].id;
+            if (rowId) {
+                rowsByIdRef.current.set(rowId, rows[i]);
+            }
+        }
+
+        totalCountRef.current = snapshot.totalCount;
         setTotalCount(snapshot.totalCount);
-        setPageIndex(Math.floor((snapshot.startIndex ?? 0) / pageSize));
         setSnapshotStats({ rowCount: rows.length, loadMs: snapshot.loadMs });
-        setIsLoadingSnapshot(false);
 
         if (rows.length > 0) {
             setColumnsFromRow(rows[0]);
-        } else {
-            setColumnDefs([]);
         }
 
-        if (gridApiRef.current && gridVisibleRef.current) {
-            gridApiRef.current.setGridOption('rowData', rows);
+        setIsLoadingSnapshot(false);
+        if (!snapshot.isPartial) {
+            isReloadingGridRef.current = false;
         }
-    }, [pageSize, setColumnsFromRow]);
+        publishRowsFromWindow();
+    }, [publishRowsFromWindow, setColumnsFromRow]);
 
     const applyUpdate = useCallback((update: RowUpdateEvent) => {
         const rowId = update.rowId;
@@ -656,7 +768,7 @@ function App(): React.ReactElement {
             return;
         }
 
-        const existing = rowsByIdRef.current.get(rowId);
+        const existing = rowsByPositionRef.current.get(update.position) ?? rowsByIdRef.current.get(rowId);
         if (!existing) {
             return;
         }
@@ -664,65 +776,105 @@ function App(): React.ReactElement {
         const changedFields = update.changedFields ?? {};
         const updated: RowData = { ...existing, ...changedFields };
         rowsByIdRef.current.set(rowId, updated);
-
-        const api = gridApiRef.current;
-        if (!api || !gridVisibleRef.current) {
-            return;
-        }
-
-        api.applyTransaction({ update: [updated] });
-        const rowNode = api.getRowNode(rowId);
-        if (rowNode) {
-            api.flashCells({
-                rowNodes: [rowNode],
-                columns: Object.keys(changedFields),
-                flashDuration: 1,
-                fadeDuration: 1_000
-            });
-        }
-    }, []);
+        rowsByPositionRef.current.set(update.position, updated);
+        publishRowsFromWindow();
+    }, [publishRowsFromWindow]);
 
     const applyInsert = useCallback((insert: RowInsertEvent) => {
-        const row = { ...(insert.row ?? {}) };
-        const rowId = row.key ?? row.id;
-        if (!rowId) {
-            return;
+        if (columnDefs.length === 0 && insert.row) {
+            setColumnsFromRow(insert.row);
         }
-
-        if (columnDefs.length === 0) {
-            setColumnsFromRow(row);
+        const positions = Array.from(rowsByPositionRef.current.keys()).sort((left, right) => right - left);
+        for (const position of positions) {
+            if (position >= insert.position) {
+                const row = rowsByPositionRef.current.get(position);
+                if (row) {
+                    rowsByPositionRef.current.set(position + 1, row);
+                }
+            }
         }
-
-        const position = Number.isInteger(insert.position) ? insert.position : orderedIdsRef.current.length;
-        const clampedPosition = Math.max(0, Math.min(position, orderedIdsRef.current.length));
-
-        orderedIdsRef.current.splice(clampedPosition, 0, rowId);
-        rowsByIdRef.current.set(rowId, row);
-
-        if (gridApiRef.current && gridVisibleRef.current) {
-            gridApiRef.current.applyTransaction({
-                add: [row],
-                addIndex: clampedPosition
-            });
+        rowsByPositionRef.current.set(insert.position, { ...insert.row });
+        const insertedRowId = insert.row.key ?? insert.row.id;
+        if (insertedRowId) {
+            rowsByIdRef.current.set(insertedRowId, { ...insert.row });
         }
-    }, [columnDefs.length, setColumnsFromRow]);
+        const window = subscribedViewportRef.current;
+        if (window) {
+            rowsByPositionRef.current.delete(window.end + 1);
+        }
+        publishRowsFromWindow();
+    }, [columnDefs.length, publishRowsFromWindow, setColumnsFromRow]);
 
     const applyRemove = useCallback((remove: RowRemoveEvent) => {
-        const position = remove.position;
-        if (!Number.isInteger(position) || position < 0 || position >= orderedIdsRef.current.length) {
-            return;
+        const removedRow = rowsByPositionRef.current.get(remove.position);
+        if (removedRow) {
+            const removedRowId = removedRow.key ?? removedRow.id;
+            if (removedRowId) {
+                rowsByIdRef.current.delete(removedRowId);
+            }
+        }
+        rowsByPositionRef.current.delete(remove.position);
+        const positions = Array.from(rowsByPositionRef.current.keys()).sort((left, right) => left - right);
+        for (const position of positions) {
+            if (position > remove.position) {
+                const row = rowsByPositionRef.current.get(position);
+                if (row) {
+                    rowsByPositionRef.current.set(position - 1, row);
+                    rowsByPositionRef.current.delete(position);
+                }
+            }
+        }
+        publishRowsFromWindow();
+    }, [publishRowsFromWindow]);
+
+    const applyReplace = useCallback((replace: RowReplaceEvent) => {
+        if (columnDefs.length === 0 && replace.row) {
+            setColumnsFromRow(replace.row);
         }
 
-        const rowId = orderedIdsRef.current[position];
-        orderedIdsRef.current.splice(position, 1);
-        const row = rowsByIdRef.current.get(rowId);
-        rowsByIdRef.current.delete(rowId);
-        if (!row || !gridApiRef.current || !gridVisibleRef.current) {
-            return;
+        const removedRow = rowsByPositionRef.current.get(replace.removePosition);
+        if (removedRow) {
+            const removedRowId = removedRow.key ?? removedRow.id;
+            if (removedRowId) {
+                rowsByIdRef.current.delete(removedRowId);
+            }
+        } else if (replace.removedRowId) {
+            rowsByIdRef.current.delete(replace.removedRowId);
         }
 
-        gridApiRef.current.applyTransaction({ remove: [row] });
-    }, []);
+        rowsByPositionRef.current.delete(replace.removePosition);
+        const afterRemovePositions = Array.from(rowsByPositionRef.current.keys()).sort((left, right) => left - right);
+        for (const position of afterRemovePositions) {
+            if (position > replace.removePosition) {
+                const row = rowsByPositionRef.current.get(position);
+                if (row) {
+                    rowsByPositionRef.current.set(position - 1, row);
+                    rowsByPositionRef.current.delete(position);
+                }
+            }
+        }
+
+        const positions = Array.from(rowsByPositionRef.current.keys()).sort((left, right) => right - left);
+        for (const position of positions) {
+            if (position >= replace.insertPosition) {
+                const row = rowsByPositionRef.current.get(position);
+                if (row) {
+                    rowsByPositionRef.current.set(position + 1, row);
+                }
+            }
+        }
+        rowsByPositionRef.current.set(replace.insertPosition, { ...replace.row });
+        const insertedRowId = replace.row.key ?? replace.row.id;
+        if (insertedRowId) {
+            rowsByIdRef.current.set(insertedRowId, { ...replace.row });
+        }
+
+        const window = subscribedViewportRef.current;
+        if (window) {
+            rowsByPositionRef.current.delete(window.end + 1);
+        }
+        publishRowsFromWindow();
+    }, [columnDefs.length, publishRowsFromWindow, setColumnsFromRow]);
 
     const handleDeltaEvent = useCallback((event: DeltaEvent) => {
         if (event.type === 'snapshot') {
@@ -734,8 +886,10 @@ function App(): React.ReactElement {
             applyInsert(event);
         } else if (event.type === 'rowRemove') {
             applyRemove(event);
+        } else if (event.type === 'rowReplace') {
+            applyReplace(event);
         }
-    }, [applyInsert, applyRemove, applySnapshot, applyUpdate, recordLatency]);
+    }, [applyInsert, applyRemove, applyReplace, applySnapshot, applyUpdate, recordLatency]);
     handleDeltaEventRef.current = handleDeltaEvent;
 
     const normalisedFilters = useMemo(
@@ -750,41 +904,43 @@ function App(): React.ReactElement {
     );
 
     const connect = useCallback(() => {
+        isReloadingGridRef.current = true;
         clearState();
         setIsLoadingSnapshot(true);
-        const startIndex = pageIndex * pageSize;
+        datasourceParamsRef.current = { collectionId, sortColumn, sortAscending, pageSize, filters: normalisedFilters, selectedFields, messageFormat };
+        const initialSize = Math.max(pageSize, visibleRowCountRef.current * 10 || pageSize * 4);
+        const initialWindow = computeViewportWindow(0, Math.max(0, initialSize - 1), initialSize);
+        subscribedViewportRef.current = initialWindow;
+        appendLog(
+            `subscribe: ${collectionId} | order by ${sortColumn} ${sortAscending ? 'asc' : 'desc'} | viewport ${initialWindow.start.toLocaleString()} - ${initialWindow.end.toLocaleString()}`
+        );
         clientRef.current?.connect({
             collectionId,
             sortColumn,
             sortAscending,
-            pageSize,
-            startIndex,
+            pageSize: initialWindow.end - initialWindow.start + 1,
+            startIndex: initialWindow.start,
             filters: normalisedFilters,
             fields: selectedFields.length > 0 ? selectedFields : undefined,
             messageFormat
         });
-    }, [clearState, collectionId, messageFormat, normalisedFilters, pageIndex, pageSize, selectedFields, sortAscending, sortColumn]);
+    }, [appendLog, clearState, collectionId, computeViewportWindow, messageFormat, normalisedFilters, pageSize, selectedFields, sortAscending, sortColumn]);
 
     const disconnect = useCallback(() => {
         clientRef.current?.disconnect();
+        isReloadingGridRef.current = false;
         setStatus('Disconnected');
         setIsLoadingSnapshot(false);
         clearState();
-    }, [clearState]);
-
-    const goToPage = useCallback((nextPageIndex: number) => {
-        const clamped = Math.max(0, Math.min(nextPageIndex, maxPageIndex));
-        setPageIndex(clamped);
-    }, [maxPageIndex]);
+        appendLog('disconnect');
+    }, [appendLog, clearState]);
 
     const onPageSizeChanged = useCallback((nextPageSize: number) => {
         if (!Number.isFinite(nextPageSize) || nextPageSize < 1) {
             return;
         }
 
-        const normalizedPageSize = Math.floor(nextPageSize);
-        setPageSize(normalizedPageSize);
-        setPageIndex(0);
+        setPageSize(Math.floor(nextPageSize));
     }, []);
 
     const commitPageSize = useCallback((nextPageSize: string) => {
@@ -847,6 +1003,11 @@ function App(): React.ReactElement {
     }, []);
 
     useEffect(() => {
+        connect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    useEffect(() => {
         const handle = window.setInterval(() => {
             setLatencySummary({ ...latencyAccRef.current });
         }, 500);
@@ -881,11 +1042,10 @@ function App(): React.ReactElement {
             sortAscending,
             messageFormat,
             pageSize,
-            pageIndex,
             filters: normalisedFilters,
             selectedFields
         });
-    }, [collectionId, messageFormat, normalisedFilters, pageIndex, pageSize, selectedFields, sortAscending, sortColumn]);
+    }, [collectionId, messageFormat, normalisedFilters, pageSize, selectedFields, sortAscending, sortColumn]);
 
     useEffect(() => {
         const client = clientRef.current;
@@ -893,18 +1053,24 @@ function App(): React.ReactElement {
             return;
         }
 
+        isReloadingGridRef.current = true;
+        datasourceParamsRef.current = { collectionId, sortColumn, sortAscending, pageSize, filters: normalisedFilters, selectedFields, messageFormat };
+        clearState();
         setIsLoadingSnapshot(true);
+        const initialSize = Math.max(pageSize, visibleRowCountRef.current * 10 || pageSize * 4);
+        const initialWindow = computeViewportWindow(0, Math.max(0, initialSize - 1), initialSize);
+        subscribedViewportRef.current = initialWindow;
         client.connect({
             collectionId,
             sortColumn,
             sortAscending,
-            pageSize,
-            startIndex: pageIndex * pageSize,
+            pageSize: initialWindow.end - initialWindow.start + 1,
+            startIndex: initialWindow.start,
             filters: normalisedFilters,
             fields: selectedFields.length > 0 ? selectedFields : undefined,
             messageFormat
         });
-    }, [collectionId, filters, messageFormat, normalisedFilters, pageIndex, pageSize, selectedFields, sortAscending, sortColumn]);
+    }, [clearState, collectionId, computeViewportWindow, messageFormat, normalisedFilters, pageSize, selectedFields, sortAscending, sortColumn]);
 
     return React.createElement(
         React.Fragment,
@@ -984,11 +1150,38 @@ function App(): React.ReactElement {
                 background: #f0f6ff;
                 border-radius: 0.25rem;
             }
-            .pager {
-                display: flex;
-                align-items: center;
-                gap: 0.75rem;
+            .log-panel {
                 margin-bottom: 1rem;
+                border: 1px solid #dfe7f1;
+                border-radius: 0.5rem;
+                background: #f8fafc;
+                overflow: hidden;
+            }
+            .log-header {
+                display: flex;
+                justify-content: space-between;
+                gap: 1rem;
+                padding: 0.5rem 0.75rem;
+                background: #eaf2ff;
+                border-bottom: 1px solid #dfe7f1;
+                font-size: 0.8rem;
+                font-weight: 600;
+                color: #334155;
+            }
+            .log-window {
+                display: flex;
+                flex-direction: column;
+                gap: 0.18rem;
+                max-height: 12rem;
+                overflow-y: auto;
+                padding: 0.4rem 0.65rem;
+                font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+                font-size: 0.72rem;
+                color: #0f172a;
+                line-height: 1.2;
+            }
+            .log-line {
+                white-space: pre-wrap;
             }
             .filters {
                 display: flex;
@@ -1055,18 +1248,20 @@ function App(): React.ReactElement {
             `
         ),
         React.createElement('h1', null, 'LiveViewEngine PoC UI'),
-        React.createElement('div', { className: 'status' }, status),
         React.createElement(
             'div',
-            { className: 'status' },
-            snapshotStats !== null
-                ? `Snapshot: ${snapshotStats.rowCount.toLocaleString()} rows loaded in ${snapshotStats.loadMs.toFixed(0)} ms`
-                : 'Snapshot: —'
-        ),
-        React.createElement(
-            'div',
-            { className: 'status' },
-            `Live updates — Max latency: ${latencySummary.maxMs.toFixed(0)} ms • Avg latency (last ${latencyWindowSize}): ${latencySummary.avgMs.toFixed(0)} ms • Window samples: ${latencySummary.sampleCount}`
+            { className: 'log-panel' },
+            React.createElement(
+                'div',
+                { className: 'log-header' },
+                React.createElement('span', null, status),
+                React.createElement('span', null, totalCount !== null ? `${totalCount.toLocaleString()} rows total` : 'snapshot pending')
+            ),
+            React.createElement(
+                'div',
+                { className: 'log-window' },
+                ...eventLog.map((line, index) => React.createElement('div', { key: `${line}-${index}`, className: 'log-line' }, line))
+            )
         ),
         React.createElement(
             'div',
@@ -1175,21 +1370,6 @@ function App(): React.ReactElement {
         ),
         React.createElement(
             'div',
-            { className: 'pager' },
-            React.createElement('button', { onClick: () => goToPage(pageIndex - 1), disabled: pageIndex <= 0 }, 'Prev'),
-            React.createElement(
-                'span',
-                null,
-                `Page ${pageIndex + 1} / ${maxPageIndex + 1} (${effectiveTotalCount.toLocaleString()} rows)`
-            ),
-            React.createElement(
-                'button',
-                { onClick: () => goToPage(pageIndex + 1), disabled: pageIndex >= maxPageIndex },
-                'Next'
-            )
-        ),
-        React.createElement(
-            'div',
             { className: 'grid-wrapper', style: gridVisible ? undefined : { display: 'none' } },
             isLoadingSnapshot
                 ? React.createElement(
@@ -1216,7 +1396,7 @@ function App(): React.ReactElement {
                         }, 0);
                     },
                     onSortChanged: (event) => {
-                        if (isApplyingGridStateRef.current) {
+                        if (isApplyingGridStateRef.current || isReloadingGridRef.current) {
                             return;
                         }
 
@@ -1226,24 +1406,56 @@ function App(): React.ReactElement {
                             ? sortedColumn.colId
                             : defaultSortColumn;
                         const nextSortAscending = sortedColumn?.sort !== 'desc';
+                        appendLog(`order by ${nextSortColumn} ${nextSortAscending ? 'asc' : 'desc'}`);
                         if (nextSortColumn !== sortColumn) {
                             setSortColumn(nextSortColumn);
                         }
                         if (nextSortAscending !== sortAscending) {
                             setSortAscending(nextSortAscending);
                         }
-                        setPageIndex(0);
                     },
                     onFilterChanged: (event) => {
-                        if (isApplyingGridStateRef.current) {
+                        if (isApplyingGridStateRef.current || isReloadingGridRef.current || isLoadingSnapshot) {
                             return;
                         }
 
                         const nextFilters = buildAppliedFiltersFromGridModel(event.api.getFilterModel());
+                        if (!areFiltersEqual(filters, nextFilters)) {
+                            appendLog(nextFilters.length === 0
+                                ? 'filters: none'
+                                : `filters: ${nextFilters.map((filter) => `${filter.field} ${filter.operator} ${filter.value}`).join(', ')}`);
+                        }
                         setFilters((current) => areFiltersEqual(current, nextFilters) ? current : nextFilters);
-                        setPageIndex(0);
                     },
-                    rowData: initialRowData,
+                    onBodyScrollEnd: () => {
+                        const api = gridApiRef.current;
+                        const client = clientRef.current;
+                        if (!api || !client?.isConnected) {
+                            return;
+                        }
+                        const firstRow = api.getFirstDisplayedRowIndex();
+                        const lastRow = api.getLastDisplayedRowIndex();
+                        const visibleCount = lastRow - firstRow + 1;
+                        if (visibleCount > 0) {
+                            visibleRowCountRef.current = visibleCount;
+                        }
+                        if (scrollViewportDebounceRef.current !== null) {
+                            clearTimeout(scrollViewportDebounceRef.current);
+                        }
+                        scrollViewportDebounceRef.current = window.setTimeout(() => {
+                            scrollViewportDebounceRef.current = null;
+                            const innerApi = gridApiRef.current;
+                            if (!innerApi) {
+                                return;
+                            }
+                            const firstRowInner = innerApi.getFirstDisplayedRowIndex();
+                            const lastRowInner = innerApi.getLastDisplayedRowIndex();
+                            if (firstRowInner >= 0 && lastRowInner >= firstRowInner) {
+                                requestViewportWindow(firstRowInner, lastRowInner, { includeGridViewportLog: true });
+                            }
+                        }, 150);
+                    },
+                    rowData,
                     columnDefs,
                     defaultColDef,
                     getRowId: (params) => String(params.data.key ?? params.data.id ?? ''),

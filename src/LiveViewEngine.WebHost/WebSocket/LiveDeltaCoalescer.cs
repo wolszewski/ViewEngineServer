@@ -69,6 +69,9 @@ internal static class LiveDeltaCoalescer
 
                 subscription.PendingLiveDeltas.Add(remove);
                 return true;
+            case RowReplaceDelta replace:
+                subscription.PendingLiveDeltas.Add(replace);
+                return true;
             default:
                 return false;
         }

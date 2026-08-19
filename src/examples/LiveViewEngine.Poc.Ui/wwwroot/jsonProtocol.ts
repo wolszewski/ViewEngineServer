@@ -6,10 +6,14 @@ type JsonFrame = {
     snapshotFollows?: boolean;
     startIndex?: number;
     totalCount?: number;
+    isPartial?: boolean;
     fields?: string[];
     row?: RowData;
     rowId?: string;
     position?: number;
+    removePosition?: number;
+    insertPosition?: number;
+    removedRowId?: string;
     changedFields?: RowData;
     rows?: RowData[];
 };
@@ -41,7 +45,8 @@ export function parseJsonFrame(frame: string): ProtocolFrame[] {
                     kind: 'snapshotStart',
                     subscriptionId,
                     startIndex: Number(message.startIndex) || 0,
-                    totalCount: Number(message.totalCount) || 0
+                    totalCount: Number(message.totalCount) || 0,
+                    isPartial: message.isPartial === true
                 });
                 break;
             case 'snapshotRow':
@@ -109,6 +114,24 @@ export function parseJsonFrame(frame: string): ProtocolFrame[] {
                             type: 'rowRemove',
                             subscriptionId,
                             position: Number(message.position)
+                        }
+                    });
+                }
+                break;
+            case 'rowReplace':
+                if (message.row
+                    && message.removedRowId
+                    && Number.isInteger(message.removePosition)
+                    && Number.isInteger(message.insertPosition)) {
+                    frames.push({
+                        kind: 'rowReplace',
+                        event: {
+                            type: 'rowReplace',
+                            subscriptionId,
+                            removedRowId: message.removedRowId,
+                            removePosition: Number(message.removePosition),
+                            insertPosition: Number(message.insertPosition),
+                            row: message.row
                         }
                     });
                 }

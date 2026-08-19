@@ -249,9 +249,10 @@ public class ViewEngineBlotterTests
         await InsertObjectsAsync(engine, 10000);
 
         // Each insert goes to position 0 (descending sort, new id is always largest).
-        // First 50: no remove. Subsequent 9950: 1 remove each.
-        Assert.Equal(10000, publisher.EventsFor(1).OfType<RowInsertEvent>().Count());
-        Assert.Equal(9950, publisher.EventsFor(1).OfType<RowRemoveEvent>().Count());
+        // First 50: insert-only while viewport fills. Subsequent 9950: replace bottom row.
+        Assert.Equal(50, publisher.EventsFor(1).OfType<RowInsertEvent>().Count());
+        Assert.Equal(9950, publisher.EventsFor(1).OfType<RowReplaceEvent>().Count());
+        Assert.Equal(0, publisher.EventsFor(1).OfType<RowRemoveEvent>().Count());
     }
 
     [Fact]
@@ -280,11 +281,13 @@ public class ViewEngineBlotterTests
 
         await InsertObjectsAsync(engine, 10000);
 
-        // Both clients receive 10k inserts and 9950 removes (same logic as single-subscriber test)
-        Assert.Equal(10000, publisher.EventsFor(1).OfType<RowInsertEvent>().Count());
-        Assert.Equal(9950, publisher.EventsFor(1).OfType<RowRemoveEvent>().Count());
-        Assert.Equal(10000, publisher.EventsFor(2).OfType<RowInsertEvent>().Count());
-        Assert.Equal(9950, publisher.EventsFor(2).OfType<RowRemoveEvent>().Count());
+        // Both clients receive 50 inserts and 9950 replaces (same logic as single-subscriber test)
+        Assert.Equal(50, publisher.EventsFor(1).OfType<RowInsertEvent>().Count());
+        Assert.Equal(9950, publisher.EventsFor(1).OfType<RowReplaceEvent>().Count());
+        Assert.Equal(0, publisher.EventsFor(1).OfType<RowRemoveEvent>().Count());
+        Assert.Equal(50, publisher.EventsFor(2).OfType<RowInsertEvent>().Count());
+        Assert.Equal(9950, publisher.EventsFor(2).OfType<RowReplaceEvent>().Count());
+        Assert.Equal(0, publisher.EventsFor(2).OfType<RowRemoveEvent>().Count());
 
         // After all inserts, verify both see the same final snapshot
         var evtsA = await engine.SubscribeAsync(new SubscribeCommand

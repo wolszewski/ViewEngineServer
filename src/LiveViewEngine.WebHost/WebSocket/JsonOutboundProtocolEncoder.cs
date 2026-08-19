@@ -34,7 +34,8 @@ public sealed class JsonOutboundProtocolEncoder : IOutboundProtocolEncoder
                 {
                     SubscriptionId = subscriptionId,
                     StartIndex = start.StartIndex,
-                    TotalCount = start.TotalCount
+                    TotalCount = start.TotalCount,
+                    IsPartial = start.IsPartial
                 });
                 yield break;
             case SnapshotRowsDelta rows:
@@ -55,7 +56,8 @@ public sealed class JsonOutboundProtocolEncoder : IOutboundProtocolEncoder
                 {
                     SubscriptionId = subscriptionId,
                     StartIndex = snapshot.StartIndex,
-                    TotalCount = snapshot.TotalCount
+                    TotalCount = snapshot.TotalCount,
+                    IsPartial = snapshot.IsPartial
                 });
                 foreach (var row in snapshot.Rows)
                 {
@@ -90,6 +92,16 @@ public sealed class JsonOutboundProtocolEncoder : IOutboundProtocolEncoder
                     SubscriptionId = subscriptionId,
                     RowId = remove.RowId,
                     Position = remove.Position
+                });
+                yield break;
+            case RowReplaceDelta replace:
+                yield return Serialize(new JsonRowReplaceMessage
+                {
+                    SubscriptionId = subscriptionId,
+                    RemovedRowId = replace.RemovedRowId,
+                    RemovePosition = replace.RemovePosition,
+                    InsertPosition = replace.InsertPosition,
+                    Row = FormatRow(replace.Schema, replace.Row, replace.VisibleFieldIndexes)
                 });
                 yield break;
             default:
@@ -147,6 +159,7 @@ public sealed class JsonOutboundProtocolEncoder : IOutboundProtocolEncoder
         public JsonSnapshotStartMessage() => Type = "snapshotStart";
         public required int StartIndex { get; init; }
         public required int TotalCount { get; init; }
+        public bool IsPartial { get; init; }
     }
 
     private sealed class JsonSnapshotRowMessage : JsonMessage
@@ -180,5 +193,14 @@ public sealed class JsonOutboundProtocolEncoder : IOutboundProtocolEncoder
         public JsonRowRemoveMessage() => Type = "rowRemove";
         public required string RowId { get; init; }
         public required int Position { get; init; }
+    }
+
+    private sealed class JsonRowReplaceMessage : JsonMessage
+    {
+        public JsonRowReplaceMessage() => Type = "rowReplace";
+        public required string RemovedRowId { get; init; }
+        public required int RemovePosition { get; init; }
+        public required int InsertPosition { get; init; }
+        public required IReadOnlyDictionary<string, string?> Row { get; init; }
     }
 }

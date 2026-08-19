@@ -216,12 +216,48 @@ public sealed class CollectionRuntime : IDisposable
             return [];
         }
 
-        viewport.StartIndex = command.StartIndex;
-        viewport.PageSize = command.PageSize;
+        var oldStart = viewport.StartIndex;
+        var oldPageSize = viewport.PageSize ?? 0;
+        var oldEnd = oldStart + oldPageSize;
 
-        if (!command.StreamSnapshot)
+        viewport.StartIndex = command.StartIndex;
+        if (command.PageSize.HasValue)
         {
-            var indexes = view.GetPageIndexes(command.StartIndex, command.PageSize);
+            viewport.PageSize = command.PageSize;
+        }
+
+        var newStart = command.StartIndex;
+        var newPageSize = command.PageSize ?? oldPageSize;
+        var newEnd = newStart + newPageSize;
+
+        if (command.StreamSnapshot)
+        {
+            return BuildStreamingViewportDeltas(
+                viewport,
+                view,
+                oldStart,
+                oldPageSize,
+                newStart,
+                newPageSize,
+                newEnd);
+        }
+
+        return BuildIncrementalSnapshot(viewport, view, oldStart, oldEnd, newStart, newPageSize, newEnd);
+    }
+
+    private IReadOnlyList<ViewDelta> BuildIncrementalSnapshot(
+        ViewportState viewport,
+        SharedView view,
+        int oldStart, int oldEnd,
+        int newStart, int newPageSize, int newEnd)
+    {
+        var overlapStart = Math.Max(oldStart, newStart);
+        var overlapEnd = Math.Min(oldEnd, newEnd);
+        var hasOverlap = overlapStart < overlapEnd;
+
+        if (!hasOverlap)
+        {
+            var indexes = view.GetPageIndexes(newStart, newPageSize);
             return
             [
                 new SnapshotDelta
@@ -229,19 +265,49 @@ public sealed class CollectionRuntime : IDisposable
                     ViewId = viewport.SubscriptionKey.ToString(),
                     Schema = Collection.Schema,
                     TotalCount = view.GetTotalCount(),
-                    StartIndex = command.StartIndex,
+                    StartIndex = newStart,
                     Rows = BuildRows(Collection, indexes, viewport.SelectedFieldIndexes),
                     VisibleFieldIndexes = viewport.SelectedFieldIndexes
                 }
             ];
         }
 
-        return BuildStreamingSnapshotDeltas(
-            viewport.SubscriptionKey.ToString(),
-            view,
-            command.StartIndex,
-            command.PageSize,
-            viewport.SelectedFieldIndexes);
+        var results = new List<ViewDelta>();
+        var totalCount = view.GetTotalCount();
+
+        if (newStart < overlapStart)
+        {
+            var size = overlapStart - newStart;
+            var indexes = view.GetPageIndexes(newStart, size);
+            results.Add(new SnapshotDelta
+            {
+                ViewId = viewport.SubscriptionKey.ToString(),
+                Schema = Collection.Schema,
+                TotalCount = totalCount,
+                StartIndex = newStart,
+                IsPartial = true,
+                Rows = BuildRows(Collection, indexes, viewport.SelectedFieldIndexes),
+                VisibleFieldIndexes = viewport.SelectedFieldIndexes
+            });
+        }
+
+        if (overlapEnd < newEnd)
+        {
+            var size = newEnd - overlapEnd;
+            var indexes = view.GetPageIndexes(overlapEnd, size);
+            results.Add(new SnapshotDelta
+            {
+                ViewId = viewport.SubscriptionKey.ToString(),
+                Schema = Collection.Schema,
+                TotalCount = totalCount,
+                StartIndex = overlapEnd,
+                IsPartial = true,
+                Rows = BuildRows(Collection, indexes, viewport.SelectedFieldIndexes),
+                VisibleFieldIndexes = viewport.SelectedFieldIndexes
+            });
+        }
+
+        return results;
     }
 
     public IReadOnlyList<ViewDelta> HandleUnsubscribe(UnsubscribeCommand command)
@@ -450,12 +516,68 @@ public sealed class CollectionRuntime : IDisposable
         return indexes.ToArray();
     }
 
+    private IReadOnlyList<ViewDelta> BuildStreamingViewportDeltas(
+        ViewportState viewport,
+        SharedView view,
+        int oldStart,
+        int oldPageSize,
+        int newStart,
+        int newPageSize,
+        int newEnd)
+    {
+        var overlapStart = Math.Max(oldStart, newStart);
+        var overlapEnd = Math.Min(oldStart + oldPageSize, newEnd);
+        var hasOverlap = overlapStart < overlapEnd;
+
+        if (!hasOverlap)
+        {
+            return BuildStreamingSnapshotDeltas(
+                viewport.SubscriptionKey.ToString(),
+                view,
+                newStart,
+                newPageSize,
+                viewport.SelectedFieldIndexes,
+                isPartial: false);
+        }
+
+        var ranges = new List<(int Start, int Size)>();
+        if (newStart < overlapStart)
+        {
+            ranges.Add((newStart, overlapStart - newStart));
+        }
+
+        if (overlapEnd < newEnd)
+        {
+            ranges.Add((overlapEnd, newEnd - overlapEnd));
+        }
+
+        if (ranges.Count == 0)
+        {
+            return [];
+        }
+
+        var deltas = new List<ViewDelta>();
+        foreach (var (start, size) in ranges)
+        {
+            deltas.AddRange(BuildStreamingSnapshotDeltas(
+                viewport.SubscriptionKey.ToString(),
+                view,
+                start,
+                size,
+                viewport.SelectedFieldIndexes,
+                isPartial: true));
+        }
+
+        return deltas;
+    }
+
     private IReadOnlyList<ViewDelta> BuildStreamingSnapshotDeltas(
         string viewId,
         SharedView view,
         int startIndex,
         int? pageSize,
-        int[] selectedFieldIndexes)
+        int[] selectedFieldIndexes,
+        bool isPartial = false)
     {
         var deltas = new List<ViewDelta>
         {
@@ -465,6 +587,7 @@ public sealed class CollectionRuntime : IDisposable
                 Schema = Collection.Schema,
                 TotalCount = view.GetTotalCount(),
                 StartIndex = startIndex,
+                IsPartial = isPartial,
                 VisibleFieldIndexes = selectedFieldIndexes
             }
         };
@@ -475,14 +598,14 @@ public sealed class CollectionRuntime : IDisposable
             batch.Add(ProjectRow(Collection.GetRowValues(rowIndex), selectedFieldIndexes));
             if (batch.Count == _options.SnapshotBatchSize)
             {
-                deltas.Add(CreateSnapshotRowsDelta(viewId, selectedFieldIndexes, batch));
+                deltas.Add(CreateSnapshotRowsDelta(viewId, selectedFieldIndexes, batch, isPartial));
                 batch = new List<string?[]>(_options.SnapshotBatchSize);
             }
         }
 
         if (batch.Count > 0)
         {
-            deltas.Add(CreateSnapshotRowsDelta(viewId, selectedFieldIndexes, batch));
+            deltas.Add(CreateSnapshotRowsDelta(viewId, selectedFieldIndexes, batch, isPartial));
         }
 
         deltas.Add(new EndOfSnapshotDelta
@@ -496,14 +619,16 @@ public sealed class CollectionRuntime : IDisposable
     private SnapshotRowsDelta CreateSnapshotRowsDelta(
         string viewId,
         int[] selectedFieldIndexes,
-        List<string?[]> batch)
+        List<string?[]> batch,
+        bool isPartial = false)
     {
         return new SnapshotRowsDelta
         {
             ViewId = viewId,
             Schema = Collection.Schema,
             Rows = batch.ToArray(),
-            VisibleFieldIndexes = selectedFieldIndexes
+            VisibleFieldIndexes = selectedFieldIndexes,
+            IsPartial = isPartial
         };
     }
 

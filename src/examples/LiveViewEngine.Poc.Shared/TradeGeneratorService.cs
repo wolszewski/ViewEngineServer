@@ -199,8 +199,16 @@ public class TradeGeneratorService(
                 continue;
             }
 
-            var trade = trades[nextTradeIndex];
-            nextTradeIndex = (nextTradeIndex + 1) % trades.Count;
+            TradeEntity trade;
+            if (settings.OrderedUpdates)
+            {
+                trade = trades[nextTradeIndex];
+                nextTradeIndex = (nextTradeIndex + 1) % trades.Count;
+            }
+            else
+            {
+                trade = trades[Random.Shared.Next(trades.Count)];
+            }
 
             var changedFields = ApplyUpdates(trade, settings);
             var success = await ingestionClient.IngestAsync(CollectionName, trade.Key, changedFields, ct);
@@ -295,6 +303,7 @@ public class TradeGeneratorService(
         definitions.Add(new TradeFieldDefinition("side", "enum", trade => (trade.Id % 3) switch { 0 => "Buy", 1 => "Sell", _ => "Hold" }, trade => (trade.Id % 3) switch { 0 => "Sell", 1 => "Hold", _ => "Buy" }));
         definitions.Add(new TradeFieldDefinition("status", "enum", trade => (trade.Id % 4) switch { 0 => "New", 1 => "Working", 2 => "Filled", _ => "Cancelled" }, trade => (trade.Id % 4) switch { 0 => "Working", 1 => "Filled", 2 => "Cancelled", _ => "New" }));
         definitions.Add(new TradeFieldDefinition("notional", "decimal", trade => (trade.Id * 15m).ToString("0.00", CultureInfo.InvariantCulture), trade => (decimal.Parse(trade.Fields["notional"] ?? "0.00", CultureInfo.InvariantCulture) + 50m).ToString("0.00", CultureInfo.InvariantCulture)));
+        definitions.Add(new TradeFieldDefinition("variedNumber", "decimal", _ => (Random.Shared.NextDouble() * 10_000).ToString("0.00", CultureInfo.InvariantCulture), _ => (Random.Shared.NextDouble() * 10_000).ToString("0.00", CultureInfo.InvariantCulture)));
 
         for (int index = 0; index < 30; index++)
         {

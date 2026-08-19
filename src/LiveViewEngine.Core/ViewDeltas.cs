@@ -14,6 +14,7 @@ public sealed class SnapshotDelta : ViewDelta
     public required int TotalCount { get; init; }
     public required int StartIndex { get; init; }
     public required IReadOnlyList<string?[]> Rows { get; init; }
+    public bool IsPartial { get; init; }
 }
 
 public sealed class SnapshotStartDelta : ViewDelta
@@ -21,12 +22,14 @@ public sealed class SnapshotStartDelta : ViewDelta
     public required CollectionSchema Schema { get; init; }
     public required int TotalCount { get; init; }
     public required int StartIndex { get; init; }
+    public bool IsPartial { get; init; }
 }
 
 public sealed class SnapshotRowsDelta : ViewDelta
 {
     public required CollectionSchema Schema { get; init; }
     public required IReadOnlyList<string?[]> Rows { get; init; }
+    public bool IsPartial { get; init; }
 }
 
 public sealed class EndOfSnapshotDelta : ViewDelta
@@ -52,4 +55,13 @@ public sealed class RowRemoveDelta : ViewDelta
 {
     public required string RowId { get; init; }
     public required int Position { get; init; }
+}
+
+public sealed class RowReplaceDelta : ViewDelta
+{
+    public required CollectionSchema Schema { get; init; }
+    public required string RemovedRowId { get; init; }
+    public required int RemovePosition { get; init; }
+    public required int InsertPosition { get; init; }
+    public required string?[] Row { get; init; }
 }
