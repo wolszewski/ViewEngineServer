@@ -11,10 +11,14 @@
     <Project Path="src/examples/LiveViewEngine.Poc.Shared/LiveViewEngine.Poc.Shared.csproj" />
     <Project Path="src/examples/LiveViewEngine.Poc.Ui/LiveViewEngine.Poc.Ui.csproj" />
   </Folder>
+  <Folder Name="/external/">
+    <Project Path="../lighstreamer-adapters/Lightstreamer.Adapters.Sdk/Lightstreamer.Adapters.Sdk.csproj" />
+  </Folder>
   <Folder Name="/src/">
     <Project Path="src/LiveViewEngine.Collections/LiveViewEngine.Collections.csproj" />
     <Project Path="src/LiveViewEngine.Core/LiveViewEngine.Core.csproj" />
     <Project Path="src/LiveViewEngine.HttpClient/LiveViewEngine.HttpClient.csproj" />
+    <Project Path="src/LiveViewEngine.TcpClient/LiveViewEngine.TcpClient.csproj" />
     <Project Path="src/LiveViewEngine.WebHost/LiveViewEngine.WebHost.csproj" />
   </Folder>
   <Folder Name="/tests/">
