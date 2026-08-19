@@ -6,6 +6,7 @@ type JsonFrame = {
     snapshotFollows?: boolean;
     startIndex?: number;
     totalCount?: number;
+    isPartial?: boolean;
     fields?: string[];
     row?: RowData;
     rowId?: string;
