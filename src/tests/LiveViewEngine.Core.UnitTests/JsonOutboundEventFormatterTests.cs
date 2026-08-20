@@ -50,4 +50,30 @@ public class JsonOutboundEventFormatterTests
             InsertPosition: 0
         });
     }
+
+    [Fact]
+    public void Format_WhenVisibleFieldIndexesMissing_MapsAllFieldsWithoutProjection()
+    {
+        var schema = new CollectionSchema("orders", ["customer", "amount"]);
+        var formatter = new JsonOutboundEventFormatter();
+
+        var events = formatter.Format(
+        [
+            new SnapshotDelta
+            {
+                ViewId = "internal-subscription",
+                Schema = schema,
+                TotalCount = 1,
+                StartIndex = 0,
+                Rows = [["o1", "Alice", "100"]],
+                VisibleFieldIndexes = null
+            }
+        ]);
+
+        var snapshot = Assert.IsType<SnapshotEvent>(Assert.Single(events));
+        var row = Assert.Single(snapshot.Rows);
+        Assert.Equal("o1", row["key"]);
+        Assert.Equal("Alice", row["customer"]);
+        Assert.Equal("100", row["amount"]);
+    }
 }
