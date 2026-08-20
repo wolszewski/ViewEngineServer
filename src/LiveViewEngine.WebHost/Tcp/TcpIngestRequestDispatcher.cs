@@ -96,7 +96,7 @@ public sealed class TcpIngestRequestDispatcher(
             return options.EnableAsyncAcks ? new ErrorResponseMessage(request.RequestId, message) : null;
         }
 
-        var fields = new Dictionary<string, string?>(request.Fields.Count, StringComparer.OrdinalIgnoreCase);
+        var fields = new Dictionary<string, string?>(request.Fields.Count, StringComparer.Ordinal);
         foreach (var (fieldIndex, value) in request.Fields)
         {
             if (fieldIndex <= CollectionSchema.PrimaryKeyIndex || fieldIndex >= schema.Fields.Count)
