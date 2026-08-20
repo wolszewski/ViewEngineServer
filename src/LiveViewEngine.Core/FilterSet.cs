@@ -24,8 +24,10 @@ internal sealed class FilterSet : IDisposable
         }
 
         var fieldIndexes = new int[specs.Count];
-        var matchers = new List<Func<RowCollection, int, bool>>(specs.Count);
-        var referencedFields = new List<int>();
+        var matchers = new Func<RowCollection, int, bool>[specs.Count];
+        var matcherCount = 0;
+        int[]? referencedFields = null;
+        var referencedFieldCount = 0;
 
         for (var i = 0; i < specs.Count; i++)
         {
@@ -44,18 +46,18 @@ internal sealed class FilterSet : IDisposable
             if (activateNow)
             {
                 collection!.AddTypedFieldRef(fieldIndex);
-                referencedFields.Add(fieldIndex);
+                referencedFields ??= new int[specs.Count];
+                referencedFields[referencedFieldCount++] = fieldIndex;
             }
 
-            var matcher = CompileMatcher(specs[i], fieldDef, keepAlive);
-            matchers.Add(matcher);
+            matchers[matcherCount++] = CompileMatcher(specs[i], fieldDef, keepAlive);
         }
 
         return new FilterSet(
-            matchers.ToArray(),
+            matcherCount == matchers.Length ? matchers : [.. matchers.AsSpan(0, matcherCount)],
             FieldMask.From(fieldIndexes.AsSpan()),
             keepAlive == TypedColumnKeepAlive.WhenReferencedByIndexesAndFilters ? collection : null,
-            referencedFields.ToArray());
+            referencedFieldCount == 0 ? [] : [.. referencedFields!.AsSpan(0, referencedFieldCount)]);
     }
 
     private FilterSet(Func<RowCollection, int, bool>[] matchers, FieldMask mask, RowCollection? collection, int[] referencedFields)

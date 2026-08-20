@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Linq;
 using LiveViewEngine.Core.Data;
 using LiveViewEngine.Core.Views;
 
@@ -452,9 +451,14 @@ public sealed class CollectionRuntime : IDisposable
     {
         lock (_subscriptionsByConnectionLock)
         {
-            return _subscriptionsByConnection.TryGetValue(connectionId, out var subscriptions)
-                ? subscriptions.ToArray()
-                : [];
+            if (!_subscriptionsByConnection.TryGetValue(connectionId, out var subscriptions))
+            {
+                return [];
+            }
+
+            var result = new int[subscriptions.Count];
+            subscriptions.CopyTo(result);
+            return result;
         }
     }
 
@@ -487,7 +491,9 @@ public sealed class CollectionRuntime : IDisposable
     {
         if (view.Fields is null)
         {
-            return Enumerable.Range(0, Collection.Schema.Fields.Count).ToArray();
+            var all = new int[Collection.Schema.Fields.Count];
+            for (var i = 0; i < all.Length; i++) { all[i] = i; }
+            return all;
         }
 
         var requestedFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -593,20 +599,21 @@ public sealed class CollectionRuntime : IDisposable
             }
         };
 
-        var batch = new List<string?[]>(_options.SnapshotBatchSize);
+        var batch = new string?[_options.SnapshotBatchSize][];
+        var batchCount = 0;
         foreach (int rowIndex in view.EnumeratePageIndexes(startIndex, pageSize))
         {
-            batch.Add(ProjectRow(Collection.GetRowValues(rowIndex), selectedFieldIndexes));
-            if (batch.Count == _options.SnapshotBatchSize)
+            batch[batchCount++] = ProjectRow(Collection.GetRowValues(rowIndex), selectedFieldIndexes);
+            if (batchCount == _options.SnapshotBatchSize)
             {
-                deltas.Add(CreateSnapshotRowsDelta(viewId, selectedFieldIndexes, batch, isPartial));
-                batch = new List<string?[]>(_options.SnapshotBatchSize);
+                deltas.Add(CreateSnapshotRowsDelta(viewId, selectedFieldIndexes, batch, batchCount, isPartial));
+                batchCount = 0;
             }
         }
 
-        if (batch.Count > 0)
+        if (batchCount > 0)
         {
-            deltas.Add(CreateSnapshotRowsDelta(viewId, selectedFieldIndexes, batch, isPartial));
+            deltas.Add(CreateSnapshotRowsDelta(viewId, selectedFieldIndexes, batch, batchCount, isPartial));
         }
 
         deltas.Add(new EndOfSnapshotDelta
@@ -620,14 +627,15 @@ public sealed class CollectionRuntime : IDisposable
     private SnapshotRowsDelta CreateSnapshotRowsDelta(
         string viewId,
         int[] selectedFieldIndexes,
-        List<string?[]> batch,
+        string?[][] batch,
+        int batchCount,
         bool isPartial = false)
     {
         return new SnapshotRowsDelta
         {
             ViewId = viewId,
             Schema = Collection.Schema,
-            Rows = batch.ToArray(),
+            Rows = batchCount == batch.Length ? batch : batch[..batchCount],
             VisibleFieldIndexes = selectedFieldIndexes,
             IsPartial = isPartial
         };

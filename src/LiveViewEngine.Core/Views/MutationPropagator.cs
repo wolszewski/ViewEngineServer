@@ -211,6 +211,12 @@ public sealed class MutationPropagator
                 continue;
             }
 
+            var targets = new List<SubscriberTarget>(groupViewports.Count);
+            foreach (var v in groupViewports)
+            {
+                targets.Add(new SubscriberTarget(v.SubscriptionKey.ConnectionId, v.SubscriptionKey.SubscriptionId));
+            }
+
             pending.Add(([new RowUpdateDelta
             {
                 ViewId = view.Key.Id,
@@ -219,12 +225,7 @@ public sealed class MutationPropagator
                 Position = filteredPos - key.Start,
                 ChangedColumns = projectedColumns,
                 VisibleFieldIndexes = viewport.SelectedFieldIndexes
-            }],
-                groupViewports
-                    .Select(static v => new SubscriberTarget(
-                        v.SubscriptionKey.ConnectionId,
-                        v.SubscriptionKey.SubscriptionId))
-                    .ToList()));
+            }], targets));
         }
     }
 
@@ -270,12 +271,13 @@ public sealed class MutationPropagator
             if (deltas.Count == 0) { continue; }
 
             pending ??= [];
-            pending.Add((deltas,
-                groupViewports
-                    .Select(static v => new SubscriberTarget(
-                        v.SubscriptionKey.ConnectionId,
-                        v.SubscriptionKey.SubscriptionId))
-                    .ToList()));
+            var targets = new List<SubscriberTarget>(groupViewports.Count);
+            foreach (var v in groupViewports)
+            {
+                targets.Add(new SubscriberTarget(v.SubscriptionKey.ConnectionId, v.SubscriptionKey.SubscriptionId));
+            }
+
+            pending.Add((deltas, targets));
         }
     }
 
