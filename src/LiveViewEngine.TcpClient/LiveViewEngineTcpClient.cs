@@ -407,7 +407,15 @@ public sealed class LiveViewEngineTcpClient(
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(options.RequestTimeout);
-        var response = await queued.Completion!.Task.WaitAsync(timeoutCts.Token).ConfigureAwait(false);
+        TcpResponseMessage response;
+        try
+        {
+            response = await queued.Completion!.Task.WaitAsync(timeoutCts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException($"TCP request '{request.RequestId}' timed out.", ex);
+        }
         if (response is TResponse typedResponse)
         {
             return typedResponse;
