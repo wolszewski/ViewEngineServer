@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging;
 namespace ViewEngineServer.WebApp.Tcp;
 
 public sealed class TcpIngestConnectionHandler(
+    TcpIngestOptions options,
     TcpIngestRequestDispatcher dispatcher,
     ILogger<TcpIngestConnectionHandler> logger)
 {
@@ -30,8 +31,21 @@ public sealed class TcpIngestConnectionHandler(
                 var result = await reader.ReadAsync(ct).ConfigureAwait(false);
                 var buffer = result.Buffer;
 
-                while (TryReadLine(ref buffer, out var line))
+                while (TryReadLine(ref buffer, options.MaxFrameLengthBytes, out var line, out var oversized))
                 {
+                    if (oversized)
+                    {
+                        logger.LogWarning(
+                            "Closing TCP ingest connection after receiving an oversized frame exceeding {MaxFrameLengthBytes} bytes.",
+                            options.MaxFrameLengthBytes);
+                        await WriteResponseAsync(
+                                writer,
+                                new ErrorResponseMessage(0, $"Frame exceeds maximum length of {options.MaxFrameLengthBytes} bytes."),
+                                ct)
+                            .ConfigureAwait(false);
+                        return;
+                    }
+
                     await ProcessLineAsync(line, writer, ct).ConfigureAwait(false);
                 }
 
@@ -81,16 +95,34 @@ public sealed class TcpIngestConnectionHandler(
         await writer.FlushAsync(ct).ConfigureAwait(false);
     }
 
-    private static bool TryReadLine(ref ReadOnlySequence<byte> buffer, out ReadOnlySequence<byte> line)
+    private static bool TryReadLine(
+        ref ReadOnlySequence<byte> buffer,
+        int maxFrameLengthBytes,
+        out ReadOnlySequence<byte> line,
+        out bool oversized)
     {
+        oversized = false;
         var position = buffer.PositionOf((byte)'\n');
         if (position is null)
         {
+            if (buffer.Length > maxFrameLengthBytes)
+            {
+                oversized = true;
+                line = default;
+                return true;
+            }
+
             line = default;
             return false;
         }
 
         line = buffer.Slice(0, position.Value);
+        if (line.Length > maxFrameLengthBytes)
+        {
+            oversized = true;
+            return true;
+        }
+
         buffer = buffer.Slice(buffer.GetPosition(1, position.Value));
         return true;
     }
