@@ -39,6 +39,10 @@ public sealed class TcpIngestListenerService(
                 var clientKey = Interlocked.Increment(ref _clientId);
                 var task = HandleClientAsync(clientKey, client, stoppingToken);
                 _clientTasks[clientKey] = task;
+                if (task.IsCompleted)
+                {
+                    _clientTasks.TryRemove(clientKey, out _);
+                }
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
