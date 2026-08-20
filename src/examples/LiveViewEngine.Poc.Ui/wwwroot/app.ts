@@ -16,16 +16,14 @@ import {
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
-const defaultPageSizes = [25, 50, 100];
+const defaultPageSizes = [25, 50, 100, 200];
 const defaultCollectionId = 'trades';
 const defaultSortColumn = 'tradeId';
-const defaultPageSize = 50;
+const defaultPageSize = 200;
+const defaultViewportThresholdPercents = [25, 50, 75];
+const defaultViewportThresholdPercent = 50;
 const defaultMessageFormat: MessageFormat = 'compact';
 const latencyWindowSize = 500;
-const maxExpandedViewportRows = 5_000;
-const slidingViewportRows = 5_000;
-const slidingViewportBehindRows = 4_000;
-const slidingViewportAheadRows = 1_000;
 const impliedFields = new Set(['key']);
 const knownTradeColumns = [
     'tradeId',
@@ -86,17 +84,62 @@ interface AppUrlState {
     sortAscending: boolean;
     messageFormat: MessageFormat;
     pageSize: number;
+    viewportThresholdPercent: number;
     filters: AppliedFilter[];
     selectedFields: string[];
 }
 
+interface ViewportWindow {
+    start: number;
+    end: number;
+}
+
 function parsePositiveInteger(value: string | null, fallback: number): number {
+    if (typeof value !== 'string' || value.trim().length === 0) {
+        return fallback;
+    }
+
     const parsed = Number(value);
     if (!Number.isFinite(parsed) || parsed < 1) {
         return fallback;
     }
 
     return Math.floor(parsed);
+}
+
+function parsePercentInteger(value: string | null, fallback: number): number {
+    if (typeof value !== 'string' || value.trim().length === 0) {
+        return fallback;
+    }
+
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+        return fallback;
+    }
+
+    return Math.min(100, Math.max(1, Math.floor(parsed)));
+}
+
+function buildViewportWindow(pageCount: number, pageSize: number, totalCount: number | null): ViewportWindow {
+    const normalizedPageCount = Math.max(1, Math.floor(pageCount));
+    const end = (normalizedPageCount * pageSize) - 1;
+    if (totalCount === null || totalCount < 1) {
+        return { start: 0, end };
+    }
+
+    return {
+        start: 0,
+        end: Math.min(end, totalCount - 1)
+    };
+}
+
+function getViewportPageCount(window: ViewportWindow, pageSize: number): number {
+    return Math.max(1, Math.ceil((window.end - window.start + 1) / pageSize));
+}
+
+function getViewportExpansionRow(window: ViewportWindow, pageSize: number, viewportThresholdPercent: number): number {
+    const thresholdOffset = Math.min(pageSize - 1, Math.ceil((pageSize * viewportThresholdPercent) / 100));
+    return ((getViewportPageCount(window, pageSize) - 1) * pageSize) + thresholdOffset;
 }
 
 function getInitialUrlState(): AppUrlState {
@@ -135,6 +178,7 @@ function getInitialUrlState(): AppUrlState {
         sortAscending: params.get('dir') === 'asc',
         messageFormat: params.get('format') === 'json' ? 'json' : defaultMessageFormat,
         pageSize: parsePositiveInteger(params.get('pageSize'), defaultPageSize),
+        viewportThresholdPercent: parsePercentInteger(params.get('viewportThreshold'), defaultViewportThresholdPercent),
         filters,
         selectedFields
     };
@@ -161,6 +205,10 @@ function syncUrlState(state: AppUrlState): void {
 
     if (state.pageSize !== defaultPageSize) {
         params.set('pageSize', String(state.pageSize));
+    }
+
+    if (state.viewportThresholdPercent !== defaultViewportThresholdPercent) {
+        params.set('viewportThreshold', String(state.viewportThresholdPercent));
     }
 
     for (const filter of state.filters) {
@@ -541,6 +589,12 @@ function App(): React.ReactElement {
     const [messageFormat, setMessageFormat] = useState<MessageFormat>(initialUrlState.messageFormat);
     const [pageSize, setPageSize] = useState(initialUrlState.pageSize);
     const [pageSizeInput, setPageSizeInput] = useState(String(initialUrlState.pageSize));
+    const [viewportThresholdPercent, setViewportThresholdPercent] = useState(
+        initialUrlState.viewportThresholdPercent
+    );
+    const [viewportThresholdInput, setViewportThresholdInput] = useState(
+        String(initialUrlState.viewportThresholdPercent)
+    );
     const [filters, setFilters] = useState<AppliedFilter[]>(initialUrlState.filters);
     const [selectedFields, setSelectedFields] = useState<string[]>(initialUrlState.selectedFields);
     const [isSelectingColumns, setIsSelectingColumns] = useState(false);
@@ -561,12 +615,11 @@ function App(): React.ReactElement {
     const gridApiRef = useRef<GridApi<RowData> | null>(null);
     const isApplyingGridStateRef = useRef(false);
     const isReloadingGridRef = useRef(false);
+    const pendingScrollToTopRef = useRef(false);
     const scrollViewportDebounceRef = useRef<number | null>(null);
-    const visibleRowCountRef = useRef(0);
-    const subscribedViewportRef = useRef<{ start: number; end: number } | null>(null);
+    const subscribedViewportRef = useRef<ViewportWindow | null>(null);
     const rowsByPositionRef = useRef<Map<number, RowData>>(new Map());
     const totalCountRef = useRef<number | null>(null);
-    const datasourceParamsRef = useRef({ collectionId, sortColumn, sortAscending, pageSize, filters: [] as AppliedFilter[], selectedFields, messageFormat });
     const clientRef = useRef<WebHostClient | null>(null);
     const handleDeltaEventRef = useRef<(event: DeltaEvent) => void>(() => {});
     const rowsByIdRef = useRef<Map<string, RowData>>(new Map());
@@ -605,30 +658,34 @@ function App(): React.ReactElement {
         setEventLog((current) => [...current.slice(-19), entry]);
     }, []);
 
-    const computeViewportWindow = useCallback((firstRow: number, lastRow: number, effectiveSize: number) => {
+    const resetViewportToFirstPage = useCallback(() => {
+        const initialWindow = buildViewportWindow(1, pageSize, null);
+        subscribedViewportRef.current = initialWindow;
+        pendingScrollToTopRef.current = true;
+        return initialWindow;
+    }, [pageSize]);
+
+    const computeViewportWindow = useCallback((firstRow: number) => {
         const current = subscribedViewportRef.current;
-        const minLastRow = Math.max(firstRow, lastRow);
         if (!current) {
-            const start = 0;
-            const end = Math.max(minLastRow, firstRow + effectiveSize - 1);
-            return { start, end };
+            return buildViewportWindow(1, pageSize, totalCountRef.current);
         }
 
-        const expandedStart = Math.min(current.start, firstRow);
-        const expandedEnd = Math.max(current.end, minLastRow, firstRow + effectiveSize - 1);
-        if ((expandedEnd - expandedStart + 1) <= maxExpandedViewportRows) {
-            return { start: expandedStart, end: expandedEnd };
+        let nextWindow = current;
+        while (firstRow >= getViewportExpansionRow(nextWindow, pageSize, viewportThresholdPercent)) {
+            const expandedWindow = buildViewportWindow(
+                getViewportPageCount(nextWindow, pageSize) + 1,
+                pageSize,
+                totalCountRef.current
+            );
+            if (expandedWindow.start === nextWindow.start && expandedWindow.end === nextWindow.end) {
+                break;
+            }
+            nextWindow = expandedWindow;
         }
 
-        let start = Math.max(0, firstRow - slidingViewportBehindRows);
-        let end = start + slidingViewportRows - 1;
-        const mustCover = Math.max(minLastRow, firstRow + slidingViewportAheadRows);
-        if (end < mustCover) {
-            end = mustCover;
-            start = Math.max(0, end - slidingViewportRows + 1);
-        }
-        return { start, end };
-    }, []);
+        return nextWindow;
+    }, [pageSize, viewportThresholdPercent]);
 
     const requestViewportWindow = useCallback(
         (firstRow: number, lastRow: number, options: { includeGridViewportLog: boolean }) => {
@@ -637,9 +694,7 @@ function App(): React.ReactElement {
                 return;
             }
 
-            const p = datasourceParamsRef.current;
-            const effectiveSize = Math.max(p.pageSize, visibleRowCountRef.current * 10 || p.pageSize * 4);
-            const nextWindow = computeViewportWindow(firstRow, lastRow, effectiveSize);
+            const nextWindow = computeViewportWindow(firstRow);
             if (options.includeGridViewportLog) {
                 appendLog(`grid viewport: ${firstRow.toLocaleString()} - ${lastRow.toLocaleString()}`);
             }
@@ -760,6 +815,12 @@ function App(): React.ReactElement {
             isReloadingGridRef.current = false;
         }
         publishRowsFromWindow();
+        if (!snapshot.isPartial && pendingScrollToTopRef.current) {
+            pendingScrollToTopRef.current = false;
+            window.setTimeout(() => {
+                gridApiRef.current?.ensureIndexVisible(0, 'top');
+            }, 0);
+        }
     }, [publishRowsFromWindow, setColumnsFromRow]);
 
     const applyUpdate = useCallback((update: RowUpdateEvent) => {
@@ -907,10 +968,7 @@ function App(): React.ReactElement {
         isReloadingGridRef.current = true;
         clearState();
         setIsLoadingSnapshot(true);
-        datasourceParamsRef.current = { collectionId, sortColumn, sortAscending, pageSize, filters: normalisedFilters, selectedFields, messageFormat };
-        const initialSize = Math.max(pageSize, visibleRowCountRef.current * 10 || pageSize * 4);
-        const initialWindow = computeViewportWindow(0, Math.max(0, initialSize - 1), initialSize);
-        subscribedViewportRef.current = initialWindow;
+        const initialWindow = resetViewportToFirstPage();
         appendLog(
             `subscribe: ${collectionId} | order by ${sortColumn} ${sortAscending ? 'asc' : 'desc'} | viewport ${initialWindow.start.toLocaleString()} - ${initialWindow.end.toLocaleString()}`
         );
@@ -924,7 +982,7 @@ function App(): React.ReactElement {
             fields: selectedFields.length > 0 ? selectedFields : undefined,
             messageFormat
         });
-    }, [appendLog, clearState, collectionId, computeViewportWindow, messageFormat, normalisedFilters, pageSize, selectedFields, sortAscending, sortColumn]);
+    }, [appendLog, clearState, collectionId, messageFormat, normalisedFilters, resetViewportToFirstPage, pageSize, selectedFields, sortAscending, sortColumn]);
 
     const disconnect = useCallback(() => {
         clientRef.current?.disconnect();
@@ -943,6 +1001,14 @@ function App(): React.ReactElement {
         setPageSize(Math.floor(nextPageSize));
     }, []);
 
+    const onViewportThresholdChanged = useCallback((nextViewportThresholdPercent: number) => {
+        if (!Number.isFinite(nextViewportThresholdPercent)) {
+            return;
+        }
+
+        setViewportThresholdPercent(Math.min(100, Math.max(1, Math.floor(nextViewportThresholdPercent))));
+    }, []);
+
     const commitPageSize = useCallback((nextPageSize: string) => {
         const normalizedPageSize = Number(nextPageSize.trim());
         if (!Number.isFinite(normalizedPageSize) || normalizedPageSize < 1) {
@@ -956,6 +1022,20 @@ function App(): React.ReactElement {
             onPageSizeChanged(wholePageSize);
         }
     }, [onPageSizeChanged, pageSize]);
+
+    const commitViewportThreshold = useCallback((nextViewportThreshold: string) => {
+        const normalizedViewportThreshold = Number(nextViewportThreshold.trim());
+        if (!Number.isFinite(normalizedViewportThreshold)) {
+            setViewportThresholdInput(String(viewportThresholdPercent));
+            return;
+        }
+
+        const wholeViewportThreshold = Math.min(100, Math.max(1, Math.floor(normalizedViewportThreshold)));
+        setViewportThresholdInput(String(wholeViewportThreshold));
+        if (wholeViewportThreshold !== viewportThresholdPercent) {
+            onViewportThresholdChanged(wholeViewportThreshold);
+        }
+    }, [onViewportThresholdChanged, viewportThresholdPercent]);
 
     const openColumnSelector = useCallback(() => {
         setDraftColumns(new Set(selectedFields.length > 0 ? selectedFields : knownTradeColumns));
@@ -1019,6 +1099,10 @@ function App(): React.ReactElement {
     }, [pageSize]);
 
     useEffect(() => {
+        setViewportThresholdInput(String(viewportThresholdPercent));
+    }, [viewportThresholdPercent]);
+
+    useEffect(() => {
         const api = gridApiRef.current;
         if (!api || columnDefs.length === 0) {
             return;
@@ -1042,10 +1126,20 @@ function App(): React.ReactElement {
             sortAscending,
             messageFormat,
             pageSize,
+            viewportThresholdPercent,
             filters: normalisedFilters,
             selectedFields
         });
-    }, [collectionId, messageFormat, normalisedFilters, pageSize, selectedFields, sortAscending, sortColumn]);
+    }, [
+        collectionId,
+        messageFormat,
+        normalisedFilters,
+        pageSize,
+        selectedFields,
+        sortAscending,
+        sortColumn,
+        viewportThresholdPercent
+    ]);
 
     useEffect(() => {
         const client = clientRef.current;
@@ -1054,12 +1148,9 @@ function App(): React.ReactElement {
         }
 
         isReloadingGridRef.current = true;
-        datasourceParamsRef.current = { collectionId, sortColumn, sortAscending, pageSize, filters: normalisedFilters, selectedFields, messageFormat };
         clearState();
         setIsLoadingSnapshot(true);
-        const initialSize = Math.max(pageSize, visibleRowCountRef.current * 10 || pageSize * 4);
-        const initialWindow = computeViewportWindow(0, Math.max(0, initialSize - 1), initialSize);
-        subscribedViewportRef.current = initialWindow;
+        const initialWindow = resetViewportToFirstPage();
         client.connect({
             collectionId,
             sortColumn,
@@ -1070,7 +1161,7 @@ function App(): React.ReactElement {
             fields: selectedFields.length > 0 ? selectedFields : undefined,
             messageFormat
         });
-    }, [clearState, collectionId, computeViewportWindow, messageFormat, normalisedFilters, pageSize, selectedFields, sortAscending, sortColumn]);
+    }, [clearState, collectionId, messageFormat, normalisedFilters, resetViewportToFirstPage, pageSize, selectedFields, sortAscending, sortColumn]);
 
     return React.createElement(
         React.Fragment,
@@ -1291,6 +1382,19 @@ function App(): React.ReactElement {
             React.createElement(
                 'label',
                 { className: 'control-label' },
+                'Expand threshold %',
+                React.createElement(SearchableDropdown, {
+                    id: 'viewport-threshold',
+                    value: viewportThresholdInput,
+                    options: defaultViewportThresholdPercents.map((percent) => String(percent)),
+                    onInputChange: setViewportThresholdInput,
+                    onCommit: commitViewportThreshold,
+                    inputMode: 'numeric'
+                })
+            ),
+            React.createElement(
+                'label',
+                { className: 'control-label' },
                 'Message format',
                 React.createElement(
                     'select',
@@ -1430,15 +1534,11 @@ function App(): React.ReactElement {
                     onBodyScrollEnd: () => {
                         const api = gridApiRef.current;
                         const client = clientRef.current;
-                        if (!api || !client?.isConnected) {
+                        if (!api || !client?.isConnected || isLoadingSnapshot || isReloadingGridRef.current) {
                             return;
                         }
                         const firstRow = api.getFirstDisplayedRowIndex();
                         const lastRow = api.getLastDisplayedRowIndex();
-                        const visibleCount = lastRow - firstRow + 1;
-                        if (visibleCount > 0) {
-                            visibleRowCountRef.current = visibleCount;
-                        }
                         if (scrollViewportDebounceRef.current !== null) {
                             clearTimeout(scrollViewportDebounceRef.current);
                         }
