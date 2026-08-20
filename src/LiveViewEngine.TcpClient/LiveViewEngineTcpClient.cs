@@ -53,12 +53,29 @@ public sealed class LiveViewEngineTcpClient(
                 using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
                 var connectedTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 var receiveTask = ReceiveLoopAsync(stream, linkedCts.Token, connectedTcs);
-                await connectedTcs.Task.WaitAsync(linkedCts.Token).ConfigureAwait(false);
-                var sendTask = SendLoopAsync(stream, linkedCts.Token);
-                var completedTask = await Task.WhenAny(sendTask, receiveTask).ConfigureAwait(false);
-                linkedCts.Cancel();
-                await completedTask.ConfigureAwait(false);
-                await Task.WhenAll(sendTask, receiveTask).ConfigureAwait(false);
+                try
+                {
+                    await connectedTcs.Task.WaitAsync(linkedCts.Token).ConfigureAwait(false);
+                    var sendTask = SendLoopAsync(stream, linkedCts.Token);
+                    var completedTask = await Task.WhenAny(sendTask, receiveTask).ConfigureAwait(false);
+                    linkedCts.Cancel();
+                    await completedTask.ConfigureAwait(false);
+                    await Task.WhenAll(sendTask, receiveTask).ConfigureAwait(false);
+                }
+                catch
+                {
+                    linkedCts.Cancel();
+
+                    try
+                    {
+                        await receiveTask.ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                    }
+
+                    throw;
+                }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
