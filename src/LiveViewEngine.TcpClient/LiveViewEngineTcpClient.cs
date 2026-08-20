@@ -63,7 +63,7 @@ public sealed class LiveViewEngineTcpClient(
     });
     private readonly ConcurrentDictionary<long, QueuedRequest> _pending = new();
     private readonly ConcurrentDictionary<string, CachedCollectionSchema> _schemaCache =
-        new(StringComparer.OrdinalIgnoreCase);
+        new(StringComparer.Ordinal);
     private long _nextRequestId;
 
     public async Task RunAsync(CancellationToken stoppingToken)
