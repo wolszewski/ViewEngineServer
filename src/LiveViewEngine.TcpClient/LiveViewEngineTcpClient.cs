@@ -84,6 +84,7 @@ public sealed class LiveViewEngineTcpClient(
             catch (Exception ex)
             {
                 FailPendingRequests(ex);
+                _schemaCache.Clear();
                 logger.LogWarning(ex, "TCP ingestion client disconnected from {Host}:{Port}.", options.Host, options.Port);
 
                 try
