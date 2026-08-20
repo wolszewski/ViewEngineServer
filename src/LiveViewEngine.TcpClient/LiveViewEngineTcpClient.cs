@@ -51,8 +51,10 @@ public sealed class LiveViewEngineTcpClient(
 
                 await using var stream = client.GetStream();
                 using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                var connectedTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var receiveTask = ReceiveLoopAsync(stream, linkedCts.Token, connectedTcs);
+                await connectedTcs.Task.WaitAsync(linkedCts.Token).ConfigureAwait(false);
                 var sendTask = SendLoopAsync(stream, linkedCts.Token);
-                var receiveTask = ReceiveLoopAsync(stream, linkedCts.Token);
                 var completedTask = await Task.WhenAny(sendTask, receiveTask).ConfigureAwait(false);
                 linkedCts.Cancel();
                 await completedTask.ConfigureAwait(false);
@@ -228,9 +230,13 @@ public sealed class LiveViewEngineTcpClient(
         }
     }
 
-    private async Task ReceiveLoopAsync(NetworkStream stream, CancellationToken ct)
+    private async Task ReceiveLoopAsync(
+        NetworkStream stream,
+        CancellationToken ct,
+        TaskCompletionSource? connectedTcs = null)
     {
         var reader = PipeReader.Create(stream, new StreamPipeReaderOptions(leaveOpen: true));
+        var connected = connectedTcs is null;
         try
         {
             while (!ct.IsCancellationRequested)
@@ -241,18 +247,41 @@ public sealed class LiveViewEngineTcpClient(
                 while (TryReadLine(ref buffer, out var line))
                 {
                     var response = TcpProtocolCodec.ParseResponse(DecodeLine(line));
+                    if (!connected && response is not ConnectedResponseMessage)
+                    {
+                        throw new InvalidOperationException(
+                            $"Expected initial response '{nameof(ConnectedResponseMessage)}' but received '{response.GetType().Name}'.");
+                    }
+
                     await HandleResponseAsync(response).ConfigureAwait(false);
+                    if (!connected)
+                    {
+                        connected = true;
+                        connectedTcs!.TrySetResult();
+                    }
                 }
 
                 reader.AdvanceTo(buffer.Start, buffer.End);
                 if (result.IsCompleted)
                 {
-                    throw new IOException("TCP ingestion server closed the connection.");
+                    throw new IOException(connected
+                        ? "TCP ingestion server closed the connection."
+                        : "TCP ingestion server closed the connection before sending CONNECTED.");
                 }
             }
         }
+        catch (Exception ex)
+        {
+            connectedTcs?.TrySetException(ex);
+            throw;
+        }
         finally
         {
+            if (ct.IsCancellationRequested)
+            {
+                connectedTcs?.TrySetCanceled(ct);
+            }
+
             await reader.CompleteAsync().ConfigureAwait(false);
         }
     }
