@@ -32,7 +32,7 @@ public sealed class CollectionSchema
     public CollectionSchema(string collectionName, IList<string> fieldNames, IList<ScalarFieldType>? fieldTypes = null)
     {
         CollectionName = collectionName;
-        var resolvedTypes = fieldTypes ?? Enumerable.Repeat(ScalarFieldType.String, fieldNames.Count).ToArray();
+        var resolvedTypes = fieldTypes ?? new ScalarFieldType[fieldNames.Count];
         if (resolvedTypes.Count != fieldNames.Count)
         {
             throw new ArgumentException(

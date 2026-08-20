@@ -79,18 +79,28 @@ public sealed class JsonOutboundEventFormatter : IOutboundEventFormatter
     }
 
     private static IReadOnlyDictionary<string, string?> FormatRow(
-    IReadOnlyList<Data.FieldDefinition> fields,
-    string?[] values,
-    IReadOnlyList<int>? visibleFieldIndexes)
+        IReadOnlyList<Data.FieldDefinition> fields,
+        string?[] values,
+        IReadOnlyList<int>? visibleFieldIndexes)
     {
-    var indexes = visibleFieldIndexes ?? Enumerable.Range(0, fields.Count).ToArray();
-    var row = new Dictionary<string, string?>(indexes.Count);
-    for (int i = 0; i < indexes.Count; i++)
-    {
-        row[fields[indexes[i]].Name] = values[i];
-    }
+        if (visibleFieldIndexes is null)
+        {
+            var allFieldsRow = new Dictionary<string, string?>(fields.Count);
+            for (int i = 0; i < fields.Count; i++)
+            {
+                allFieldsRow[fields[i].Name] = values[i];
+            }
 
-    return row;
+            return allFieldsRow;
+        }
+
+        var row = new Dictionary<string, string?>(visibleFieldIndexes.Count);
+        for (int i = 0; i < visibleFieldIndexes.Count; i++)
+        {
+            row[fields[visibleFieldIndexes[i]].Name] = values[i];
+        }
+
+        return row;
     }
 
     private static IReadOnlyDictionary<string, string?> FormatChanges(

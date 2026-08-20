@@ -67,19 +67,23 @@ public struct FieldMask : IEquatable<FieldMask>
 
     public readonly int[] ToIndexes()
     {
-        var indexes = new List<int>();
         ReadOnlySpan<ulong> words = _words;
+        var count = 0;
+        for (int i = 0; i < WordCapacity; i++) { count += BitOperations.PopCount(words[i]); }
+
+        var indexes = new int[count];
+        var pos = 0;
         for (int wordIndex = 0; wordIndex < WordCapacity; wordIndex++)
         {
             ulong word = words[wordIndex];
             while (word != 0)
             {
                 int bitIndex = BitOperations.TrailingZeroCount(word);
-                indexes.Add((wordIndex << 6) + bitIndex);
+                indexes[pos++] = (wordIndex << 6) + bitIndex;
                 word &= word - 1;
             }
         }
-        return indexes.ToArray();
+        return indexes;
     }
 
     public readonly bool Equals(FieldMask other)
