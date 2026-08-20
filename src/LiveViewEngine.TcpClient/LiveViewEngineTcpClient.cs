@@ -261,6 +261,12 @@ public sealed class LiveViewEngineTcpClient(
         {
             await foreach (var queued in _queue.Reader.ReadAllAsync(ct).ConfigureAwait(false))
             {
+                if (queued.CancellationToken.IsCancellationRequested)
+                {
+                    queued.Completion?.TrySetCanceled(queued.CancellationToken);
+                    continue;
+                }
+
                 if (queued.ExpectsResponse)
                 {
                     _pending[queued.Request.RequestId] = queued;
@@ -402,7 +408,7 @@ public sealed class LiveViewEngineTcpClient(
         CancellationToken cancellationToken)
         where TResponse : TcpResponseMessage
     {
-        var queued = new QueuedRequest(request, expectsResponse: true);
+        var queued = new QueuedRequest(request, expectsResponse: true, cancellationToken);
         await _queue.Writer.WriteAsync(queued, cancellationToken).ConfigureAwait(false);
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -414,6 +420,11 @@ public sealed class LiveViewEngineTcpClient(
         }
         catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
         {
+            if (_pending.TryRemove(request.RequestId, out var timedOut))
+            {
+                timedOut.Completion!.TrySetCanceled(timeoutCts.Token);
+            }
+
             throw new TimeoutException($"TCP request '{request.RequestId}' timed out.", ex);
         }
         if (response is TResponse typedResponse)
@@ -427,7 +438,7 @@ public sealed class LiveViewEngineTcpClient(
 
     private async Task SendFireAndForgetAsync(TcpRequestMessage request, CancellationToken cancellationToken)
     {
-        var queued = new QueuedRequest(request, expectsResponse: false);
+        var queued = new QueuedRequest(request, expectsResponse: false, cancellationToken);
         await _queue.Writer.WriteAsync(queued, cancellationToken).ConfigureAwait(false);
     }
 
@@ -499,10 +510,11 @@ public sealed class LiveViewEngineTcpClient(
 
     private sealed class QueuedRequest
     {
-        public QueuedRequest(TcpRequestMessage request, bool expectsResponse)
+        public QueuedRequest(TcpRequestMessage request, bool expectsResponse, CancellationToken cancellationToken)
         {
             Request = request;
             ExpectsResponse = expectsResponse;
+            CancellationToken = cancellationToken;
             Completion = expectsResponse
                 ? new TaskCompletionSource<TcpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously)
                 : null;
@@ -510,6 +522,7 @@ public sealed class LiveViewEngineTcpClient(
 
         public TcpRequestMessage Request { get; }
         public bool ExpectsResponse { get; }
+        public CancellationToken CancellationToken { get; }
         public TaskCompletionSource<TcpResponseMessage>? Completion { get; }
     }
 
