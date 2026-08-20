@@ -79,7 +79,7 @@ public sealed class TcpIngestConnectionHandler(
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            logger.LogWarning(ex, "Invalid TCP ingest request line: {Line}", lineText);
+            logger.LogWarning(ex, "Invalid TCP ingest request line ({LineLength} characters).", lineText.Length);
             response = new ErrorResponseMessage(0, ex.Message);
         }
 
