@@ -625,6 +625,7 @@ public sealed class CollectionRuntime : IDisposable
             if (batchCount == _options.SnapshotBatchSize)
             {
                 deltas.Add(CreateSnapshotRowsDelta(viewId, selectedFieldIndexes, batch, batchCount, isPartial));
+                batch = new string?[_options.SnapshotBatchSize][];
                 batchCount = 0;
             }
         }
