@@ -675,7 +675,7 @@ public sealed class MutationPropagator
             }
         }
 
-        return filtered;
+        return filtered.Count == changedColumns.Count ? changedColumns : filtered;
     }
 
     private static string?[] ProjectRow(string?[] source, int[] selectedFieldIndexes)

@@ -272,42 +272,60 @@ public sealed class CollectionRuntime : IDisposable
             ];
         }
 
-        var results = new List<ViewDelta>();
+        var hasBeforeRange = newStart < overlapStart;
+        var hasAfterRange = overlapEnd < newEnd;
+
+        if (!hasBeforeRange && !hasAfterRange)
+        {
+            return [];
+        }
+
+        var viewId = viewport.SubscriptionKey.ToString();
         var totalCount = view.GetTotalCount();
 
-        if (newStart < overlapStart)
+        if (hasBeforeRange && !hasAfterRange)
         {
-            var size = overlapStart - newStart;
-            var indexes = view.GetPageIndexes(newStart, size);
-            results.Add(new SnapshotDelta
+            var indexes = view.GetPageIndexes(newStart, overlapStart - newStart);
+            return [new SnapshotDelta
             {
-                ViewId = viewport.SubscriptionKey.ToString(),
-                Schema = Collection.Schema,
-                TotalCount = totalCount,
-                StartIndex = newStart,
-                IsPartial = true,
+                ViewId = viewId, Schema = Collection.Schema, TotalCount = totalCount,
+                StartIndex = newStart, IsPartial = true,
                 Rows = BuildRows(Collection, indexes, viewport.SelectedFieldIndexes),
                 VisibleFieldIndexes = viewport.SelectedFieldIndexes
-            });
+            }];
         }
 
-        if (overlapEnd < newEnd)
+        if (!hasBeforeRange)
         {
-            var size = newEnd - overlapEnd;
-            var indexes = view.GetPageIndexes(overlapEnd, size);
-            results.Add(new SnapshotDelta
+            var indexes = view.GetPageIndexes(overlapEnd, newEnd - overlapEnd);
+            return [new SnapshotDelta
             {
-                ViewId = viewport.SubscriptionKey.ToString(),
-                Schema = Collection.Schema,
-                TotalCount = totalCount,
-                StartIndex = overlapEnd,
-                IsPartial = true,
+                ViewId = viewId, Schema = Collection.Schema, TotalCount = totalCount,
+                StartIndex = overlapEnd, IsPartial = true,
                 Rows = BuildRows(Collection, indexes, viewport.SelectedFieldIndexes),
                 VisibleFieldIndexes = viewport.SelectedFieldIndexes
-            });
+            }];
         }
 
-        return results;
+        var beforeIndexes = view.GetPageIndexes(newStart, overlapStart - newStart);
+        var afterIndexes = view.GetPageIndexes(overlapEnd, newEnd - overlapEnd);
+        return
+        [
+            new SnapshotDelta
+            {
+                ViewId = viewId, Schema = Collection.Schema, TotalCount = totalCount,
+                StartIndex = newStart, IsPartial = true,
+                Rows = BuildRows(Collection, beforeIndexes, viewport.SelectedFieldIndexes),
+                VisibleFieldIndexes = viewport.SelectedFieldIndexes
+            },
+            new SnapshotDelta
+            {
+                ViewId = viewId, Schema = Collection.Schema, TotalCount = totalCount,
+                StartIndex = overlapEnd, IsPartial = true,
+                Rows = BuildRows(Collection, afterIndexes, viewport.SelectedFieldIndexes),
+                VisibleFieldIndexes = viewport.SelectedFieldIndexes
+            }
+        ];
     }
 
     public IReadOnlyList<ViewDelta> HandleUnsubscribe(UnsubscribeCommand command)
