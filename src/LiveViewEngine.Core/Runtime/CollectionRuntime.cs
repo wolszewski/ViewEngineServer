@@ -511,16 +511,17 @@ public sealed class CollectionRuntime : IDisposable
         }
 
         requestedFields.Add(Collection.Schema.Fields[CollectionSchema.PrimaryKeyIndex].Name);
-        var indexes = new List<int>(requestedFields.Count);
+        var indexes = new int[requestedFields.Count];
+        var indexCount = 0;
         for (int i = 0; i < Collection.Schema.Fields.Count; i++)
         {
             if (requestedFields.Contains(Collection.Schema.Fields[i].Name))
             {
-                indexes.Add(i);
+                indexes[indexCount++] = i;
             }
         }
 
-        return indexes.ToArray();
+        return indexes;
     }
 
     private IReadOnlyList<ViewDelta> BuildStreamingViewportDeltas(
@@ -547,34 +548,33 @@ public sealed class CollectionRuntime : IDisposable
                 isPartial: false);
         }
 
-        var ranges = new List<(int Start, int Size)>();
-        if (newStart < overlapStart)
-        {
-            ranges.Add((newStart, overlapStart - newStart));
-        }
+        var hasBeforeRange = newStart < overlapStart;
+        var hasAfterRange = overlapEnd < newEnd;
 
-        if (overlapEnd < newEnd)
-        {
-            ranges.Add((overlapEnd, newEnd - overlapEnd));
-        }
-
-        if (ranges.Count == 0)
+        if (!hasBeforeRange && !hasAfterRange)
         {
             return [];
         }
 
-        var deltas = new List<ViewDelta>();
-        foreach (var (start, size) in ranges)
+        var viewId = viewport.SubscriptionKey.ToString();
+
+        if (hasBeforeRange && !hasAfterRange)
         {
-            deltas.AddRange(BuildStreamingSnapshotDeltas(
-                viewport.SubscriptionKey.ToString(),
-                view,
-                start,
-                size,
-                viewport.SelectedFieldIndexes,
-                isPartial: true));
+            return BuildStreamingSnapshotDeltas(viewId, view, newStart, overlapStart - newStart,
+                viewport.SelectedFieldIndexes, isPartial: true);
         }
 
+        if (!hasBeforeRange)
+        {
+            return BuildStreamingSnapshotDeltas(viewId, view, overlapEnd, newEnd - overlapEnd,
+                viewport.SelectedFieldIndexes, isPartial: true);
+        }
+
+        var deltas = new List<ViewDelta>();
+        deltas.AddRange(BuildStreamingSnapshotDeltas(viewId, view, newStart, overlapStart - newStart,
+            viewport.SelectedFieldIndexes, isPartial: true));
+        deltas.AddRange(BuildStreamingSnapshotDeltas(viewId, view, overlapEnd, newEnd - overlapEnd,
+            viewport.SelectedFieldIndexes, isPartial: true));
         return deltas;
     }
 
