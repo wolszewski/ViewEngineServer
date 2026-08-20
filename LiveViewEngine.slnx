@@ -4,6 +4,7 @@
   </Folder>
   <Folder Name="/docs/">
     <File Path="docs\system-design.md" />
+    <File Path="README.md" />
   </Folder>
   <Folder Name="/examples/">
     <Project Path="src/examples/LiveViewEngine.Poc.AppHost/LiveViewEngine.Poc.AppHost.csproj" />
@@ -15,6 +16,8 @@
     <Project Path="src/LiveViewEngine.Collections/LiveViewEngine.Collections.csproj" />
     <Project Path="src/LiveViewEngine.Core/LiveViewEngine.Core.csproj" />
     <Project Path="src/LiveViewEngine.HttpClient/LiveViewEngine.HttpClient.csproj" />
+    <Project Path="src/LiveViewEngine.TcpClient/LiveViewEngine.TcpClient.csproj" />
+    <Project Path="src/LiveViewEngine.TcpProtocol/LiveViewEngine.TcpProtocol.csproj" />
     <Project Path="src/LiveViewEngine.WebHost/LiveViewEngine.WebHost.csproj" />
   </Folder>
   <Folder Name="/tests/">

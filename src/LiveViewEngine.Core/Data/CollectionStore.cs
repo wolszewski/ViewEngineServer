@@ -9,6 +9,7 @@ public interface ICollectionStore
     bool TryCreate(CollectionSchema schema);
     bool TryGet(string collectionId, out RowCollection? collection);
     bool TryGetRuntime(string collectionId, out CollectionRuntime? runtime);
+    bool TryGetSchema(string collectionId, out CollectionSchema? schema);
     ICollection<string> CollectionIds { get; }
 }
 
@@ -32,6 +33,18 @@ public sealed class CollectionStore(IViewEngineMetrics? metrics, LiveViewEngineO
 
     public bool TryGetRuntime(string collectionId, out CollectionRuntime? runtime) =>
         _collections.TryGetValue(collectionId, out runtime);
+
+    public bool TryGetSchema(string collectionId, out CollectionSchema? schema)
+    {
+        if (TryGetRuntime(collectionId, out var runtime) && runtime is not null)
+        {
+            schema = runtime.Collection.Schema;
+            return true;
+        }
+
+        schema = null;
+        return false;
+    }
 
     public ICollection<string> CollectionIds => _collections.Keys;
 }

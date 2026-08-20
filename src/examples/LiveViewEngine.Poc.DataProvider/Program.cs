@@ -1,6 +1,6 @@
-using LiveViewEngine.HttpClient;
 using LiveViewEngine.Poc.DataProvider.Components;
 using LiveViewEngine.Poc.DataProvider.Services;
+using LiveViewEngine.TcpClient;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -8,10 +8,13 @@ builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
 builder.Services.AddSingleton<TradeGeneratorService>();
-builder.Services.AddHttpClient<LiveViewEngineHttpClient>((sp, client) =>
+builder.Services.AddLiveViewEngineTcpIngestionClient(options =>
 {
-    var baseAddress = builder.Configuration["WebHost:BaseUrl"] ?? "http://127.0.0.1:5100";
-    client.BaseAddress = new Uri(baseAddress);
+    options.Host = builder.Configuration["TcpIngest:Host"] ?? "127.0.0.1";
+    if (int.TryParse(builder.Configuration["TcpIngest:Port"], out var port))
+    {
+        options.Port = port;
+    }
 });
 
 var app = builder.Build();

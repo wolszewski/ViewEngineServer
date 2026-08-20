@@ -9,7 +9,6 @@
 
     <ItemGroup>
         <ProjectReference Include="..\LiveViewEngine.Poc.Shared\LiveViewEngine.Poc.Shared.csproj" />
-        <ProjectReference Include="..\..\LiveViewEngine.HttpClient\LiveViewEngine.HttpClient.csproj" />
+        <ProjectReference Include="..\..\LiveViewEngine.TcpClient\LiveViewEngine.TcpClient.csproj" />
     </ItemGroup>
-
 </Project>

@@ -36,7 +36,7 @@ interface PendingSnapshot {
     totalCount: number;
     rows: RowData[];
     isPartial: boolean;
-    startedAt: number;
+    firstMessageAt: number | null;
 }
 
 export class WebHostClient {
@@ -51,7 +51,7 @@ export class WebHostClient {
     private currentFields: string[] = [];
     private currentMessageFormat: MessageFormat = 'compact';
     private pendingSnapshot: PendingSnapshot | null = null;
-    private subscribeTime: number | null = null;
+    private snapshotRequestStartedAt: number | null = null;
 
     public constructor(webSocketUrl: string, callbacks: ClientCallbacks) {
         this.webSocketUrl = webSocketUrl;
@@ -75,6 +75,7 @@ export class WebHostClient {
         this.currentFields = [];
         this.currentMessageFormat = request.messageFormat ?? 'compact';
         this.pendingSnapshot = null;
+        this.snapshotRequestStartedAt = null;
         this.callbacks.onStatus('Connecting...');
 
         const socket = new WebSocket(this.webSocketUrl);
@@ -104,6 +105,7 @@ export class WebHostClient {
             this.hasReceivedSnapshot = false;
             this.currentFields = [];
             this.pendingSnapshot = null;
+            this.snapshotRequestStartedAt = null;
             if (this.socket === socket) {
                 this.socket = null;
             }
@@ -140,6 +142,7 @@ export class WebHostClient {
         this.activeSubscriptionId = null;
         this.currentFields = [];
         this.pendingSnapshot = null;
+        this.snapshotRequestStartedAt = null;
         if (socket) {
             socket.close();
         }
@@ -155,6 +158,7 @@ export class WebHostClient {
                     this.stopSubscribeRetry();
                     this.callbacks.onStatus('Connected');
                     this.pendingSnapshot = null;
+                    this.snapshotRequestStartedAt = null;
                     return;
                 }
 
@@ -164,7 +168,7 @@ export class WebHostClient {
                     totalCount: frame.totalCount,
                     rows: [],
                     isPartial: false,
-                    startedAt: performance.now()
+                    firstMessageAt: null
                 };
                 return;
             case 'snapshotStart':
@@ -178,7 +182,7 @@ export class WebHostClient {
                     totalCount: frame.totalCount,
                     rows: [],
                     isPartial: frame.isPartial === true,
-                    startedAt: performance.now()
+                    firstMessageAt: performance.now()
                 };
                 if (!frame.isPartial) {
                     this.hasReceivedSnapshot = false;
@@ -189,6 +193,7 @@ export class WebHostClient {
                     return;
                 }
 
+                this.pendingSnapshot.firstMessageAt ??= performance.now();
                 this.pendingSnapshot.rows.push(frame.row);
                 return;
             case 'eos':
@@ -198,17 +203,21 @@ export class WebHostClient {
 
                 {
                     const isPartial = this.pendingSnapshot.isPartial;
-                    const loadMs = performance.now() - this.pendingSnapshot.startedAt;
-                    if (!isPartial) {
-                        this.subscribeTime = null;
-                    }
+                    const now = performance.now();
+                    const firstMessageAt = this.pendingSnapshot.firstMessageAt ?? now;
+                    const waitMs = this.snapshotRequestStartedAt === null
+                        ? 0
+                        : Math.max(0, firstMessageAt - this.snapshotRequestStartedAt);
+                    const transferMs = Math.max(0, now - firstMessageAt);
+                    this.snapshotRequestStartedAt = null;
                     const snapshot: SnapshotEvent = {
                         type: 'snapshot',
                         subscriptionId: frame.subscriptionId,
                         totalCount: this.pendingSnapshot.totalCount,
                         startIndex: this.pendingSnapshot.startIndex,
                         rows: this.pendingSnapshot.rows,
-                        loadMs,
+                        waitMs,
+                        transferMs,
                         isPartial
                     };
 
@@ -272,8 +281,9 @@ export class WebHostClient {
         this.socket.send(JSON.stringify(message));
         if (request.sendSnapshot === false) {
             this.hasReceivedSnapshot = true;
+            this.snapshotRequestStartedAt = null;
         } else {
-            this.subscribeTime = performance.now();
+            this.snapshotRequestStartedAt ??= performance.now();
         }
     }
 
@@ -288,6 +298,7 @@ export class WebHostClient {
             startIndex,
             pageSize
         }));
+        this.snapshotRequestStartedAt = performance.now();
     }
 
     private startSubscribeRetry(): void {
