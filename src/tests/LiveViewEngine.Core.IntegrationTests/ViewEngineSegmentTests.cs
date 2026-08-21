@@ -7,10 +7,10 @@ namespace LiveViewEngine.Core.IntegrationTests;
 
 public class ViewEngineSegmentTests
 {
-    private static (ViewEngine engine, CapturingPublisher publisher) CreateEngine()
+    private static (ViewEngine engine, CapturingPublisher publisher) CreateEngine(LiveViewEngineOptions? options = null)
     {
         var metrics = new ViewEngineMetrics();
-        var store = new CollectionStore(metrics, new LiveViewEngineOptions { EagerIndexing = false });
+        var store = new CollectionStore(metrics, options ?? new LiveViewEngineOptions { EagerIndexing = false });
         var publisher = new CapturingPublisher();
         var engine = new ViewEngine(store, publisher, NullLogger<ViewEngine>.Instance, metrics);
         return (engine, publisher);
@@ -316,5 +316,36 @@ public class ViewEngineSegmentTests
             new ViewDefinition { CollectionId = "trades" });
 
         Assert.Equal(2, snap.TotalCount);
+    }
+
+    [Fact]
+    public async Task SegmentWorkersEnabled_SubscribeToSegment_ReturnsOnlyMatchingRows()
+    {
+        var (engine, _) = CreateEngine(new LiveViewEngineOptions
+        {
+            EagerIndexing = false,
+            EnableSegmentWorkers = true
+        });
+        await SetupTradesAsync(engine);
+        await engine.IngestAsync(new CreateSegmentCommand
+        {
+            CollectionId = "trades",
+            SegmentId = "today",
+            Filters = [new FilterSpec("valueDate", FilterOperator.Eq, "2024-01-15")]
+        });
+
+        await UpsertTrade(engine, "t1", "AAPL", "open", "1000", "2024-01-15");
+        await UpsertTrade(engine, "t2", "MSFT", "open", "2000", "2024-01-16");
+        await UpsertTrade(engine, "t3", "GOOG", "open", "3000", "2024-01-15");
+
+        var snap = await SubscribeAndGetSnapshot(engine, 1,
+            new ViewDefinition { CollectionId = "trades", SegmentId = "today" });
+
+        Assert.Equal(2, snap.TotalCount);
+        var keyIdx = snap.Schema.GetFieldIndex("key");
+        var ids = snap.Rows.Select(r => r[keyIdx]).ToHashSet();
+        Assert.Contains("t1", ids);
+        Assert.Contains("t3", ids);
+        Assert.DoesNotContain("t2", ids);
     }
 }

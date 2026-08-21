@@ -8,4 +8,7 @@ public sealed class LiveViewEngineOptions
 
     // When true, all sort indexes and typed columns are created upfront and never reaped.
     public bool EagerIndexing { get; init; } = false;
+
+    // When true, segment-backed views are processed on dedicated per-segment workers.
+    public bool EnableSegmentWorkers { get; init; } = false;
 }
