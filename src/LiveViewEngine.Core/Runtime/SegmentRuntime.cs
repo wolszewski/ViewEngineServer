@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using LiveViewEngine.Core.Data;
 using LiveViewEngine.Core.Views;
 
@@ -8,19 +7,16 @@ internal sealed class SegmentRuntime : IDisposable
 {
     private readonly CollectionWorker _worker = new();
     private readonly MutationPropagator _propagator = new();
-    private long _lastAppliedVersion;
 
     internal SegmentRuntime(
         string collectionId,
         string segmentId,
-        IReadOnlyList<FilterSpec> baseFilters,
-        long initialVersion)
+        IReadOnlyList<FilterSpec> baseFilters)
     {
         CollectionId = collectionId;
         SegmentId = segmentId;
         BaseFilters = baseFilters;
         SortCollectionId = $"{collectionId}#segment:{segmentId}";
-        _lastAppliedVersion = initialVersion;
         _worker.Start();
     }
 
@@ -29,7 +25,7 @@ internal sealed class SegmentRuntime : IDisposable
     internal string SortCollectionId { get; }
     internal IReadOnlyList<FilterSpec> BaseFilters { get; }
     internal SortIndexRegistry SortIndexes { get; } = new();
-    internal ConcurrentDictionary<ViewKey, SharedView> SharedViews { get; } = new();
+    internal Dictionary<ViewKey, SharedView> SharedViews { get; } = new();
     internal int WorkerQueueLength => _worker.QueuedCount;
 
     internal Task<T> EnqueueAsync<T>(IWorkItem<T> work, CancellationToken ct = default) =>
@@ -37,18 +33,11 @@ internal sealed class SegmentRuntime : IDisposable
 
     internal List<(IReadOnlyList<ViewDelta> Deltas, List<SubscriberTarget> Targets)>? Propagate(
         RowCollection collection,
-        ConcurrentDictionary<SubscriptionKey, ViewportState> viewports,
+        Dictionary<SubscriptionKey, ViewportState> viewports,
         MutationInfo mutation,
-        bool isDelete,
-        long version)
+        bool isDelete)
     {
-        if (version <= _lastAppliedVersion)
-        {
-            return null;
-        }
-
-        _lastAppliedVersion = version;
-        if (SortIndexes.Count == 0 || SharedViews.IsEmpty)
+        if (SortIndexes.Count == 0 || SharedViews.Count == 0)
         {
             return null;
         }

@@ -67,9 +67,10 @@ public sealed class ViewEngine : IViewEngine, IDisposable
 
             if (command is CreateSegmentCommand createSegment)
             {
-                return runtime.RegisterSegment(createSegment.SegmentId, createSegment.Filters);
+                return await runtime.EnqueueAsync(
+                    new RegisterSegmentRuntimeWork(runtime, createSegment.SegmentId, createSegment.Filters), ct);
             }
-            
+
             RuntimeWorkItem<MutationResult> work = command switch
             {
                 UpsertRowCommand upsert => new UpsertRuntimeWork(runtime, upsert),

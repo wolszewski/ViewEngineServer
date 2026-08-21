@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using LiveViewEngine.Core.Data;
 using LiveViewEngine.Core.Views;
@@ -8,16 +7,15 @@ namespace LiveViewEngine.Core.Runtime;
 public sealed class CollectionRuntime : IDisposable
 {
     private readonly CollectionWorker _worker = new();
-    private readonly ConcurrentDictionary<ViewKey, SharedView> _sharedViews = new();
-    private readonly ConcurrentDictionary<SubscriptionKey, ViewportState> _viewports = new();
-    private readonly ConcurrentDictionary<string, SegmentRuntime> _segmentRuntimes = new();
+    private readonly Dictionary<ViewKey, SharedView> _sharedViews = new();
+    private readonly Dictionary<SubscriptionKey, ViewportState> _viewports = new();
+    private readonly Dictionary<string, SegmentRuntime> _segmentRuntimes = new();
     private readonly Lock _subscriptionsByConnectionLock = new();
     private readonly Dictionary<int, HashSet<int>> _subscriptionsByConnection = [];
     private readonly SortIndexRegistry _sortIndexRegistry = new();
-    private readonly ConcurrentDictionary<string, IReadOnlyList<FilterSpec>> _segments = new();
+    private readonly Dictionary<string, IReadOnlyList<FilterSpec>> _segments = new();
     private readonly IViewEngineMetrics? _metrics;
     private readonly LiveViewEngineOptions _options;
-    private long _segmentMutationVersion;
 
     public CollectionRuntime(RowCollection collection, IViewEngineMetrics? metrics, LiveViewEngineOptions? options = null)
     {
@@ -33,7 +31,7 @@ public sealed class CollectionRuntime : IDisposable
 
     public RowCollection Collection { get; }
     private readonly MutationPropagator _propagator = new();
-    internal ConcurrentDictionary<SubscriptionKey, ViewportState> Viewports => _viewports;
+    internal Dictionary<SubscriptionKey, ViewportState> Viewports => _viewports;
 
     public int ActiveSubscriptionCount => _viewports.Count;
     public int ActiveSharedViewCount => _sharedViews.Count + _segmentRuntimes.Values.Sum(static x => x.SharedViews.Count);
@@ -196,7 +194,7 @@ public sealed class CollectionRuntime : IDisposable
         if (_viewports.TryGetValue(subscriptionKey, out var existingViewport))
         {
             DetachSubscription(existingViewport);
-            _viewports.TryRemove(subscriptionKey, out _);
+            _viewports.Remove(subscriptionKey);
             RemoveConnectionSubscription(existingViewport);
         }
 
@@ -381,7 +379,7 @@ public sealed class CollectionRuntime : IDisposable
             foreach (var subscriptionId in subscriptionIds)
             {
                 var subscriptionKey = new SubscriptionKey(command.ConnectionId, subscriptionId);
-                if (!_viewports.TryRemove(subscriptionKey, out var viewportState))
+                if (!_viewports.Remove(subscriptionKey, out var viewportState))
                 {
                     continue;
                 }
@@ -393,7 +391,7 @@ public sealed class CollectionRuntime : IDisposable
             return [];
         }
 
-        if (!_viewports.TryRemove(command.EffectiveSubscriptionKey, out var viewport))
+        if (!_viewports.Remove(command.EffectiveSubscriptionKey, out var viewport))
         {
             return [];
         }
@@ -494,17 +492,23 @@ public sealed class CollectionRuntime : IDisposable
             var segmentRuntime = GetOrCreateSegmentRuntime(viewKey.SegmentId);
             var sortIndexKey = CreateSortIndexKey(Collection, viewKey, segmentRuntime.SortCollectionId);
             var sortIndex = segmentRuntime.SortIndexes.GetOrCreate(sortIndexKey, Collection);
-            var view = segmentRuntime.SharedViews.GetOrAdd(
-                viewKey,
-                key => new SharedView(key, Collection, sortIndex, _options));
-            return (view, sortIndexKey, segmentRuntime.SortIndexes);
+            if (!segmentRuntime.SharedViews.TryGetValue(viewKey, out var existingView))
+            {
+                existingView = new SharedView(viewKey, Collection, sortIndex, _options);
+                segmentRuntime.SharedViews[viewKey] = existingView;
+            }
+
+            return (existingView, sortIndexKey, segmentRuntime.SortIndexes);
         }
 
         var nonSegmentSortIndexKey = CreateSortIndexKey(Collection, viewKey, viewKey.CollectionId);
         var nonSegmentSortIndex = _sortIndexRegistry.GetOrCreate(nonSegmentSortIndexKey, Collection);
-        var nonSegmentView = _sharedViews.GetOrAdd(
-            viewKey,
-            key => new SharedView(key, Collection, nonSegmentSortIndex, _options));
+        if (!_sharedViews.TryGetValue(viewKey, out var nonSegmentView))
+        {
+            nonSegmentView = new SharedView(viewKey, Collection, nonSegmentSortIndex, _options);
+            _sharedViews[viewKey] = nonSegmentView;
+        }
+
         return (nonSegmentView, nonSegmentSortIndexKey, _sortIndexRegistry);
     }
 
@@ -537,35 +541,34 @@ public sealed class CollectionRuntime : IDisposable
 
     private SegmentRuntime GetOrCreateSegmentRuntime(string segmentId)
     {
-        var filters = _segments.TryGetValue(segmentId, out var existingFilters) ? existingFilters : [];
-        return _segmentRuntimes.GetOrAdd(
-            segmentId,
-            id => new SegmentRuntime(
-                Collection.Schema.CollectionName,
-                id,
-                filters,
-                Volatile.Read(ref _segmentMutationVersion)));
+        if (!_segmentRuntimes.TryGetValue(segmentId, out var runtime))
+        {
+            var filters = _segments.TryGetValue(segmentId, out var existingFilters) ? existingFilters : [];
+            runtime = new SegmentRuntime(Collection.Schema.CollectionName, segmentId, filters);
+            _segmentRuntimes[segmentId] = runtime;
+        }
+
+        return runtime;
     }
 
     private List<(IReadOnlyList<ViewDelta>, List<SubscriberTarget>)>? ExecuteSegmentPropagation(
         MutationInfo mutation,
         bool isDelete)
     {
-        if (_segmentRuntimes.IsEmpty)
+        if (_segmentRuntimes.Count == 0)
         {
             return null;
         }
 
-        var version = Interlocked.Increment(ref _segmentMutationVersion);
         var tasks = new List<Task<List<(IReadOnlyList<ViewDelta>, List<SubscriberTarget>)>?>>();
         foreach (var segmentRuntime in _segmentRuntimes.Values)
         {
-            if (segmentRuntime.SharedViews.IsEmpty)
+            if (segmentRuntime.SharedViews.Count == 0)
             {
                 continue;
             }
 
-            var work = new SegmentMutationRuntimeWork(segmentRuntime, this, mutation, isDelete, version);
+            var work = new SegmentMutationRuntimeWork(segmentRuntime, this, mutation, isDelete);
             tasks.Add(segmentRuntime.EnqueueAsync(work));
         }
 
@@ -606,15 +609,12 @@ public sealed class CollectionRuntime : IDisposable
     public IngestResult RegisterSegment(string segmentId, IReadOnlyList<FilterSpec> filters)
     {
         _segments[segmentId] = filters;
-        if (_options.EnableSegmentWorkers)
+        if (_options.EnableSegmentWorkers && !_segmentRuntimes.ContainsKey(segmentId))
         {
-            _segmentRuntimes.GetOrAdd(
+            _segmentRuntimes[segmentId] = new SegmentRuntime(
+                Collection.Schema.CollectionName,
                 segmentId,
-                id => new SegmentRuntime(
-                    Collection.Schema.CollectionName,
-                    id,
-                    filters,
-                    Volatile.Read(ref _segmentMutationVersion)));
+                filters);
         }
 
         return IngestResult.Ok();
@@ -723,15 +723,13 @@ public sealed class CollectionRuntime : IDisposable
         {
             if (viewport.ViewKey.SegmentId is not null && _options.EnableSegmentWorkers)
             {
-                if (_segmentRuntimes.TryGetValue(viewport.ViewKey.SegmentId, out var segmentRuntime))
+                if (_segmentRuntimes.TryGetValue(viewport.ViewKey.SegmentId, out var segmentRuntime) &&
+                    segmentRuntime.SharedViews.Remove(viewport.ViewKey))
                 {
-                    if (segmentRuntime.SharedViews.TryRemove(viewport.ViewKey, out _))
-                    {
-                        view.Dispose();
-                    }
+                    view.Dispose();
                 }
             }
-            else if (_sharedViews.TryRemove(viewport.ViewKey, out _))
+            else if (_sharedViews.Remove(viewport.ViewKey))
             {
                 view.Dispose();
             }

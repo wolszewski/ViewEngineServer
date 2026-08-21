@@ -6,20 +6,17 @@ internal sealed class SegmentMutationRuntimeWork : RuntimeWorkItem<List<(IReadOn
     private readonly CollectionRuntime _collectionRuntime;
     private readonly MutationInfo _mutation;
     private readonly bool _isDelete;
-    private readonly long _version;
 
     public SegmentMutationRuntimeWork(
         SegmentRuntime segmentRuntime,
         CollectionRuntime collectionRuntime,
         MutationInfo mutation,
-        bool isDelete,
-        long version)
+        bool isDelete)
     {
         _segmentRuntime = segmentRuntime;
         _collectionRuntime = collectionRuntime;
         _mutation = mutation;
         _isDelete = isDelete;
-        _version = version;
     }
 
     protected override List<(IReadOnlyList<ViewDelta>, List<SubscriberTarget>)>? ExecuteCore()
@@ -28,7 +25,6 @@ internal sealed class SegmentMutationRuntimeWork : RuntimeWorkItem<List<(IReadOn
             _collectionRuntime.Collection,
             _collectionRuntime.Viewports,
             _mutation,
-            _isDelete,
-            _version);
+            _isDelete);
     }
 }

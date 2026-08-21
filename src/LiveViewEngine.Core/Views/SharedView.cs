@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using LiveViewEngine.Core.Data;
 
 namespace LiveViewEngine.Core.Views;
@@ -12,7 +11,7 @@ public sealed class SharedView : IDisposable
     private readonly FilterSet _filters;
     private readonly FilteredDataIndex? _filteredIndex;
     private readonly IRowIndex _activeIndex;
-    private readonly ConcurrentDictionary<SubscriptionKey, bool> _subscribers = new();
+    private readonly HashSet<SubscriptionKey> _subscribers = new();
 
     public SharedView(ViewKey key, RowCollection collection, SortIndex sortIndex, LiveViewEngineOptions? options = null)
     {
@@ -34,16 +33,15 @@ public sealed class SharedView : IDisposable
 
     internal SortIndex SortIndex => _sortIndex;
 
-    public IEnumerable<SubscriptionKey> Subscribers => _subscribers.Keys;
+    public IEnumerable<SubscriptionKey> Subscribers => _subscribers;
 
-    public bool IsEmpty => _subscribers.IsEmpty;
+    public bool IsEmpty => _subscribers.Count == 0;
 
     internal int FilteredCount => _activeIndex.Count;
 
-    public void AddSubscriber(SubscriptionKey subscriptionKey) => _subscribers[subscriptionKey] = true;
+    public void AddSubscriber(SubscriptionKey subscriptionKey) => _subscribers.Add(subscriptionKey);
 
-    public bool RemoveSubscriber(SubscriptionKey subscriptionKey) =>
-        _subscribers.TryRemove(subscriptionKey, out _);
+    public bool RemoveSubscriber(SubscriptionKey subscriptionKey) => _subscribers.Remove(subscriptionKey);
 
     public int[] GetPageIndexes(int startIndex, int? pageSize)
     {
