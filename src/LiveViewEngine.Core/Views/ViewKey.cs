@@ -12,16 +12,16 @@ public sealed class ViewKey : IEquatable<ViewKey>
 
     private readonly int _hashCode;
 
-    public ViewKey(string collectionId, string? segmentId, string? sortColumn, bool sortAscending,
+    public ViewKey(string collectionId, string? filterPresetId, string? sortColumn, bool sortAscending,
         IReadOnlyList<FilterSpec>? filters)
     {
         CollectionId = collectionId;
-        FilterPresetId = segmentId;
+        FilterPresetId = filterPresetId;
         SortColumn = sortColumn;
         SortAscending = sortAscending;
         Filters = filters ?? [];
 
-        Id = $"{collectionId}|{segmentId}|{sortColumn}|{(sortAscending ? "asc" : "desc")}|" +
+        Id = $"{collectionId}|{filterPresetId}|{sortColumn}|{(sortAscending ? "asc" : "desc")}|" +
              string.Join(",", Filters.Select(f => $"{f.FieldName}:{f.Operator}:{f.Value}"));
 
         _hashCode = ComputeHash();
