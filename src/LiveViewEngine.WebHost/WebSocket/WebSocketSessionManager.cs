@@ -263,6 +263,7 @@ public sealed class WebSocketSessionManager
             View = new ViewDefinition
             {
                 CollectionId = msg.CollectionId ?? string.Empty,
+                SegmentId = msg.FieldPresetId,
                 SortColumn = msg.SortColumn,
                 SortAscending = msg.SortAscending,
                 Filters = msg.Filters?.Select(f => new FilterSpec(

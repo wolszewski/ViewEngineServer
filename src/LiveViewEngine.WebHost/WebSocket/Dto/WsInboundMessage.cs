@@ -6,6 +6,7 @@ public sealed class WsInboundMessage
     public int? SubscriptionId { get; set; }
 
     public string? CollectionId { get; set; }
+    public string? FieldPresetId { get; set; }
     public string? SortColumn { get; set; }
     public bool SortAscending { get; set; } = true;
     public List<WsFilterDto>? Filters { get; set; }

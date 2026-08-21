@@ -36,6 +36,71 @@ public class WebSocketSessionManagerTests
         Assert.True(accepted.GetProperty("snapshotFollows").GetBoolean());
     }
 
+    [Fact]
+    public async Task HandleConnectionAsync_SubscribeWithFieldPresetId_AppliesSegmentFilter()
+    {
+        var metrics = new ViewEngineMetrics();
+        var store = new CollectionStore(metrics, new LiveViewEngineOptions { EagerIndexing = false });
+        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance);
+        var engine = new ViewEngine(store, publisher, NullLogger<ViewEngine>.Instance, metrics);
+        var manager = new WebSocketSessionManager(
+            engine,
+            store,
+            publisher,
+            NullLogger<WebSocketSessionManager>.Instance);
+
+        await engine.IngestAsync(new CreateCollectionCommand
+        {
+            CollectionId = "trades",
+            Schema = new CollectionSchema("trades", ["instrument", "status", "amount", "valueDate"],
+                [ScalarFieldType.String, ScalarFieldType.String, ScalarFieldType.Decimal, ScalarFieldType.DateOnly])
+        });
+        await engine.IngestAsync(new CreateSegmentCommand
+        {
+            CollectionId = "trades",
+            SegmentId = "today",
+            Filters = [new FilterSpec("valueDate", FilterOperator.Eq, "2024-01-15")]
+        });
+        await engine.IngestAsync(new UpsertRowCommand
+        {
+            CollectionId = "trades",
+            Key = "t1",
+            Fields = new Dictionary<string, string?>
+            {
+                ["instrument"] = "AAPL",
+                ["status"] = "open",
+                ["amount"] = "1000",
+                ["valueDate"] = "2024-01-15"
+            }
+        });
+        await engine.IngestAsync(new UpsertRowCommand
+        {
+            CollectionId = "trades",
+            Key = "t2",
+            Fields = new Dictionary<string, string?>
+            {
+                ["instrument"] = "MSFT",
+                ["status"] = "open",
+                ["amount"] = "2000",
+                ["valueDate"] = "2024-01-16"
+            }
+        });
+
+        var socket = new ScriptedWebSocket([
+            "{\"type\":\"subscribe\",\"collectionId\":\"trades\",\"fieldPresetId\":\"today\",\"startIndex\":0,\"pageSize\":50,\"sendSnapshot\":true,\"messageFormat\":\"json\"}"
+        ]);
+
+        await manager.HandleConnectionAsync(socket, CancellationToken.None);
+        await socket.WaitForMessagesAsync(1);
+
+        var accepted = socket.SentMessages
+            .Select(static message => JsonDocument.Parse(message))
+            .Select(static document => document.RootElement)
+            .First(static root => root.GetProperty("type").GetString() == "subscriptionAccepted");
+
+        Assert.Equal(1, accepted.GetProperty("totalCount").GetInt32());
+    }
+
     private sealed class ScriptedWebSocket : WebSocket
     {
         private readonly Queue<string> _inboundMessages;
