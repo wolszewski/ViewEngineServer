@@ -125,24 +125,28 @@ public sealed class ViewEngine : IViewEngine, IDisposable
                 bool subscriptionRemoved = false;
                 try
                 {
-                    if (_subscriptionRoutes.TryGetValue(subscriptionKey, out var previousCollectionId) &&
+                    CollectionRuntime? previousRuntime = null;
+                    bool isCrossCollectionReplacement =
+                        _subscriptionRoutes.TryGetValue(subscriptionKey, out var previousCollectionId) &&
                         !string.Equals(previousCollectionId, subscribeCollectionId, StringComparison.Ordinal) &&
-                        _collectionRuntimes.TryGetValue(previousCollectionId, out var previousRuntime))
-                    {
-                        await previousRuntime.EnqueueAsync(
-                            new UnsubscribeRuntimeWork(previousRuntime, new UnsubscribeCommand
-                            {
-                                ConnectionId = subscribe.ConnectionId,
-                                SubscriptionId = subscribe.SubscriptionId
-                            }),
-                            ct);
-                    }
+                        _collectionRuntimes.TryGetValue(previousCollectionId!, out previousRuntime);
 
                     var deltas = await subscribeRuntime.EnqueueAsync(
                         new SubscribeRuntimeWork(subscribeRuntime, subscribe),
                         ct);
                     if (subscribeRuntime.ContainsSubscription(subscriptionKey))
                     {
+                        if (isCrossCollectionReplacement)
+                        {
+                            await previousRuntime!.EnqueueAsync(
+                                new UnsubscribeRuntimeWork(previousRuntime, new UnsubscribeCommand
+                                {
+                                    ConnectionId = subscribe.ConnectionId,
+                                    SubscriptionId = subscribe.SubscriptionId
+                                }),
+                                ct);
+                        }
+
                         _subscriptionRoutes[subscriptionKey] = subscribeCollectionId;
                     }
                     else
