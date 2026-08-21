@@ -12,7 +12,7 @@ public sealed class CollectionRuntime : IDisposable
     private readonly Lock _subscriptionsByConnectionLock = new();
     private readonly Dictionary<int, HashSet<int>> _subscriptionsByConnection = [];
     private readonly SortIndexRegistry _sortIndexRegistry = new();
-    private readonly Dictionary<string, IReadOnlyList<FilterSpec>> _filterPresets = new();
+    private readonly Dictionary<string, IReadOnlyList<FilterSpec>> _segments = new();
     private readonly IViewEngineMetrics? _metrics;
     private readonly LiveViewEngineOptions _options;
     private int _activeSubscriptionCount;
@@ -145,7 +145,7 @@ public sealed class CollectionRuntime : IDisposable
     {
         var subscriptionKey = command.EffectiveSubscriptionKey;
 
-        if (command.View.FilterPresetId is not null && !_filterPresets.ContainsKey(command.View.FilterPresetId))
+        if (command.View.SegmentId is not null && !_segments.ContainsKey(command.View.SegmentId))
         {
             return [];
         }
@@ -446,20 +446,20 @@ public sealed class CollectionRuntime : IDisposable
         return false;
     }
 
-    public IngestResult RegisterFilterPreset(string filterPresetId, IReadOnlyList<FilterSpec> filters)
+    public IngestResult RegisterSegment(string segmentId, IReadOnlyList<FilterSpec> filters)
     {
-        _filterPresets[filterPresetId] = filters;
+        _segments[segmentId] = filters;
         return IngestResult.Ok();
     }
 
     private ViewKey ResolveViewKey(ViewDefinition def)
     {
-        if (def.FilterPresetId is null)
+        if (def.SegmentId is null)
         {
             return ViewKey.From(def);
         }
 
-        var baseFilters = _filterPresets[def.FilterPresetId];
+        var baseFilters = _segments[def.SegmentId];
         if (baseFilters.Count == 0)
         {
             return ViewKey.From(def);
@@ -468,7 +468,7 @@ public sealed class CollectionRuntime : IDisposable
         var combined = def.Filters.Count > 0
             ? [.. baseFilters, .. def.Filters]
             : baseFilters;
-        return new ViewKey(def.CollectionId, def.FilterPresetId, def.SortColumn, def.SortAscending, combined);
+        return new ViewKey(def.CollectionId, def.SegmentId, def.SortColumn, def.SortAscending, combined);
     }
 
     private void EagerlyInitializeIndexes()

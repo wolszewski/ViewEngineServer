@@ -5,7 +5,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace LiveViewEngine.Core.IntegrationTests;
 
-public class ViewEngineFilterPresetTests
+public class ViewEngineSegmentTests
 {
     private static (ViewEngine engine, CapturingPublisher publisher) CreateEngine(LiveViewEngineOptions? options = null)
     {
@@ -68,7 +68,7 @@ public class ViewEngineFilterPresetTests
         {
             ConnectionId = 1,
             SubscriptionId = 1,
-            View = new ViewDefinition { CollectionId = "trades", FilterPresetId = "nonexistent" },
+            View = new ViewDefinition { CollectionId = "trades", SegmentId = "nonexistent" },
             StartIndex = 0
         });
 
@@ -81,16 +81,16 @@ public class ViewEngineFilterPresetTests
         var (engine, _) = CreateEngine();
         await SetupTradesAsync(engine);
 
-        var r1 = await engine.IngestAsync(new CreateFilterPresetCommand
+        var r1 = await engine.IngestAsync(new CreateSegmentCommand
         {
             CollectionId = "trades",
-            FilterPresetId = "today",
+            SegmentId = "today",
             Filters = [new FilterSpec("valueDate", FilterOperator.Eq, "2024-01-15")]
         });
-        var r2 = await engine.IngestAsync(new CreateFilterPresetCommand
+        var r2 = await engine.IngestAsync(new CreateSegmentCommand
         {
             CollectionId = "trades",
-            FilterPresetId = "today",
+            SegmentId = "today",
             Filters = [new FilterSpec("valueDate", FilterOperator.Eq, "2024-01-16")]
         });
 
@@ -110,10 +110,10 @@ public class ViewEngineFilterPresetTests
     {
         var (engine, _) = CreateEngine();
 
-        var result = await engine.IngestAsync(new CreateFilterPresetCommand
+        var result = await engine.IngestAsync(new CreateSegmentCommand
         {
             CollectionId = "nonexistent",
-            FilterPresetId = "today",
+            SegmentId = "today",
             Filters = [new FilterSpec("valueDate", FilterOperator.Eq, "2024-01-15")]
         });
 
@@ -125,10 +125,10 @@ public class ViewEngineFilterPresetTests
     {
         var (engine, _) = CreateEngine();
         await SetupTradesAsync(engine);
-        await engine.IngestAsync(new CreateFilterPresetCommand
+        await engine.IngestAsync(new CreateSegmentCommand
         {
             CollectionId = "trades",
-            FilterPresetId = "today",
+            SegmentId = "today",
             Filters = [new FilterSpec("valueDate", FilterOperator.Eq, "2024-01-15")]
         });
 
@@ -137,7 +137,7 @@ public class ViewEngineFilterPresetTests
         await UpsertTrade(engine, "t3", "GOOG", "open", "3000", "2024-01-15");
 
         var snap = await SubscribeAndGetSnapshot(engine, 1,
-            new ViewDefinition { CollectionId = "trades", FilterPresetId = "today" });
+            new ViewDefinition { CollectionId = "trades", SegmentId = "today" });
 
         Assert.Equal(2, snap.TotalCount);
         var keyIdx = snap.Schema.GetFieldIndex("key");
@@ -152,10 +152,10 @@ public class ViewEngineFilterPresetTests
     {
         var (engine, _) = CreateEngine();
         await SetupTradesAsync(engine);
-        await engine.IngestAsync(new CreateFilterPresetCommand
+        await engine.IngestAsync(new CreateSegmentCommand
         {
             CollectionId = "trades",
-            FilterPresetId = "today",
+            SegmentId = "today",
             Filters = [new FilterSpec("valueDate", FilterOperator.Eq, "2024-01-15")]
         });
 
@@ -168,7 +168,7 @@ public class ViewEngineFilterPresetTests
             new ViewDefinition
             {
                 CollectionId = "trades",
-                FilterPresetId = "today",
+                SegmentId = "today",
                 Filters = [new FilterSpec("status", FilterOperator.Eq, "open")]
             });
 
@@ -184,10 +184,10 @@ public class ViewEngineFilterPresetTests
     {
         var (engine, _) = CreateEngine();
         await SetupTradesAsync(engine);
-        await engine.IngestAsync(new CreateFilterPresetCommand
+        await engine.IngestAsync(new CreateSegmentCommand
         {
             CollectionId = "trades",
-            FilterPresetId = "today",
+            SegmentId = "today",
             Filters = [new FilterSpec("valueDate", FilterOperator.Eq, "2024-01-15")]
         });
 
@@ -199,7 +199,7 @@ public class ViewEngineFilterPresetTests
             new ViewDefinition
             {
                 CollectionId = "trades",
-                FilterPresetId = "today",
+                SegmentId = "today",
                 SortColumn = "instrument",
                 SortAscending = true
             });
@@ -215,10 +215,10 @@ public class ViewEngineFilterPresetTests
     {
         var (engine, publisher) = CreateEngine();
         await SetupTradesAsync(engine);
-        await engine.IngestAsync(new CreateFilterPresetCommand
+        await engine.IngestAsync(new CreateSegmentCommand
         {
             CollectionId = "trades",
-            FilterPresetId = "today",
+            SegmentId = "today",
             Filters = [new FilterSpec("valueDate", FilterOperator.Eq, "2024-01-15")]
         });
 
@@ -226,7 +226,7 @@ public class ViewEngineFilterPresetTests
         {
             ConnectionId = 1,
             SubscriptionId = 1,
-            View = new ViewDefinition { CollectionId = "trades", FilterPresetId = "today" },
+            View = new ViewDefinition { CollectionId = "trades", SegmentId = "today" },
             StartIndex = 0,
             PageSize = 50
         });
@@ -244,10 +244,10 @@ public class ViewEngineFilterPresetTests
     {
         var (engine, publisher) = CreateEngine();
         await SetupTradesAsync(engine);
-        await engine.IngestAsync(new CreateFilterPresetCommand
+        await engine.IngestAsync(new CreateSegmentCommand
         {
             CollectionId = "trades",
-            FilterPresetId = "today",
+            SegmentId = "today",
             Filters = [new FilterSpec("valueDate", FilterOperator.Eq, "2024-01-15")]
         });
 
@@ -255,7 +255,7 @@ public class ViewEngineFilterPresetTests
         {
             ConnectionId = 1,
             SubscriptionId = 1,
-            View = new ViewDefinition { CollectionId = "trades", FilterPresetId = "today" },
+            View = new ViewDefinition { CollectionId = "trades", SegmentId = "today" },
             StartIndex = 0,
             PageSize = 50
         });
@@ -274,16 +274,16 @@ public class ViewEngineFilterPresetTests
         var (engine, _) = CreateEngine();
         await SetupTradesAsync(engine);
 
-        await engine.IngestAsync(new CreateFilterPresetCommand
+        await engine.IngestAsync(new CreateSegmentCommand
         {
             CollectionId = "trades",
-            FilterPresetId = "today",
+            SegmentId = "today",
             Filters = [new FilterSpec("valueDate", FilterOperator.Eq, "2024-01-15")]
         });
-        await engine.IngestAsync(new CreateFilterPresetCommand
+        await engine.IngestAsync(new CreateSegmentCommand
         {
             CollectionId = "trades",
-            FilterPresetId = "tomorrow",
+            SegmentId = "tomorrow",
             Filters = [new FilterSpec("valueDate", FilterOperator.Eq, "2024-01-16")]
         });
 
@@ -292,9 +292,9 @@ public class ViewEngineFilterPresetTests
         await UpsertTrade(engine, "t3", "GOOG", "open", "3000", "2024-01-17");
 
         var todaySnap = await SubscribeAndGetSnapshot(engine, 1,
-            new ViewDefinition { CollectionId = "trades", FilterPresetId = "today" });
+            new ViewDefinition { CollectionId = "trades", SegmentId = "today" });
         var tomorrowSnap = await SubscribeAndGetSnapshot(engine, 2,
-            new ViewDefinition { CollectionId = "trades", FilterPresetId = "tomorrow" });
+            new ViewDefinition { CollectionId = "trades", SegmentId = "tomorrow" });
 
         Assert.Equal(1, todaySnap.TotalCount);
         Assert.Equal(1, tomorrowSnap.TotalCount);
@@ -309,10 +309,10 @@ public class ViewEngineFilterPresetTests
     {
         var (engine, _) = CreateEngine();
         await SetupTradesAsync(engine);
-        await engine.IngestAsync(new CreateFilterPresetCommand
+        await engine.IngestAsync(new CreateSegmentCommand
         {
             CollectionId = "trades",
-            FilterPresetId = "today",
+            SegmentId = "today",
             Filters = [new FilterSpec("valueDate", FilterOperator.Eq, "2024-01-15")]
         });
 
@@ -333,10 +333,10 @@ public class ViewEngineFilterPresetTests
             EagerIndexing = false
         });
         await SetupTradesAsync(engine);
-        await engine.IngestAsync(new CreateFilterPresetCommand
+        await engine.IngestAsync(new CreateSegmentCommand
         {
             CollectionId = "trades",
-            FilterPresetId = "today",
+            SegmentId = "today",
             Filters = [new FilterSpec("valueDate", FilterOperator.Eq, "2024-01-15")]
         });
 
@@ -345,7 +345,7 @@ public class ViewEngineFilterPresetTests
         await UpsertTrade(engine, "t3", "GOOG", "open", "3000", "2024-01-15");
 
         var snap = await SubscribeAndGetSnapshot(engine, 1,
-            new ViewDefinition { CollectionId = "trades", FilterPresetId = "today" });
+            new ViewDefinition { CollectionId = "trades", SegmentId = "today" });
 
         Assert.Equal(2, snap.TotalCount);
         var keyIdx = snap.Schema.GetFieldIndex("key");
