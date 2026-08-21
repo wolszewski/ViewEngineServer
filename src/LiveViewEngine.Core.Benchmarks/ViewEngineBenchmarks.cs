@@ -403,26 +403,12 @@ public class ViewEngineSnapshotBenchmarks
     }
 
     [Benchmark]
-    public Task LegacySnapshot30k()
+    public Task StreamedSnapshot30k()
     {
         return _engine.SubscribeAsync(new SubscribeCommand
         {
             ConnectionId = 1,
             SubscriptionId = 1,
-            View = new ViewDefinition { CollectionId = "objects" },
-            StartIndex = 0,
-            PageSize = SnapshotRowCount
-        });
-    }
-
-    [Benchmark]
-    public Task StreamedSnapshot30k()
-    {
-        return _engine.SubscribeAsync(new SubscribeCommand
-        {
-            ConnectionId = 2,
-            SubscriptionId = 2,
-            StreamSnapshot = true,
             View = new ViewDefinition { CollectionId = "objects" },
             StartIndex = 0,
             PageSize = SnapshotRowCount

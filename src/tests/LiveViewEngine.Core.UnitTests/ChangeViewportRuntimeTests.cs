@@ -5,7 +5,7 @@ using LiveViewEngine.Core.Views;
 
 namespace LiveViewEngine.Core.UnitTests;
 
-public class ChangeViewportRuntimeTests
+public class UpdateViewRuntimeTests
 {
     private static CollectionRuntime MakeRuntime(int rowCount)
     {
@@ -46,12 +46,12 @@ public class ChangeViewportRuntimeTests
     }
 
     [Fact]
-    public void ChangeViewport_NullPageSize_InheritsPreviousWindow()
+    public void UpdateView_NullPageSize_InheritsPreviousWindow()
     {
         var runtime = MakeRuntime(200);
         Subscribe(runtime, 0, 50);
 
-        var deltas = runtime.HandleChangeViewport(new ChangeViewportCommand
+        var deltas = runtime.HandleUpdateView(new UpdateViewCommand
         {
             ConnectionId = 1,
             SubscriptionId = 1,
@@ -59,19 +59,22 @@ public class ChangeViewportRuntimeTests
             PageSize = null
         });
 
-        var snapshot = Assert.IsType<SnapshotDelta>(Assert.Single(deltas));
-        Assert.True(snapshot.IsPartial);
-        Assert.Equal(50, snapshot.StartIndex);
-        Assert.Equal(20, snapshot.Rows.Count);
+        var start = Assert.IsType<SnapshotStartDelta>(deltas[0]);
+        Assert.True(start.IsPartial);
+        Assert.Equal(50, start.StartIndex);
+
+        var rows = Assert.IsType<SnapshotRowsDelta>(deltas[1]);
+        Assert.Equal(20, rows.Rows.Count);
+        Assert.IsType<EndOfSnapshotDelta>(deltas[^1]);
     }
 
     [Fact]
-    public void ChangeViewport_WhenViewportExpandsRight_ReturnsPartialSnapshotForNewRightRows()
+    public void UpdateView_WhenViewportExpandsRight_ReturnsPartialSnapshotForNewRightRows()
     {
         var runtime = MakeRuntime(200);
         Subscribe(runtime, 0, 50);
 
-        var deltas = runtime.HandleChangeViewport(new ChangeViewportCommand
+        var deltas = runtime.HandleUpdateView(new UpdateViewCommand
         {
             ConnectionId = 1,
             SubscriptionId = 1,
@@ -79,25 +82,27 @@ public class ChangeViewportRuntimeTests
             PageSize = 100
         });
 
-        var snapshot = Assert.IsType<SnapshotDelta>(Assert.Single(deltas));
-        Assert.True(snapshot.IsPartial);
-        Assert.Equal(50, snapshot.StartIndex);
-        Assert.Equal(50, snapshot.Rows.Count);
+        var start = Assert.IsType<SnapshotStartDelta>(deltas[0]);
+        Assert.True(start.IsPartial);
+        Assert.Equal(50, start.StartIndex);
+
+        var rows = Assert.IsType<SnapshotRowsDelta>(deltas[1]);
+        Assert.Equal(50, rows.Rows.Count);
+        Assert.IsType<EndOfSnapshotDelta>(deltas[^1]);
     }
 
     [Fact]
-    public void ChangeViewport_StreamSnapshot_WhenViewportExpandsRight_EmitsPartialStreamStart()
+    public void UpdateView_WhenViewportExpandsRight_EmitsPartialStreamStart()
     {
         var runtime = MakeRuntime(200);
         Subscribe(runtime, 0, 50);
 
-        var deltas = runtime.HandleChangeViewport(new ChangeViewportCommand
+        var deltas = runtime.HandleUpdateView(new UpdateViewCommand
         {
             ConnectionId = 1,
             SubscriptionId = 1,
             StartIndex = 0,
-            PageSize = 100,
-            StreamSnapshot = true
+            PageSize = 100
         });
 
         var start = Assert.IsType<SnapshotStartDelta>(deltas[0]);

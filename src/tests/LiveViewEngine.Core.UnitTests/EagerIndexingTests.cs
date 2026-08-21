@@ -132,10 +132,14 @@ public class EagerIndexingTests
             }
         });
 
-        var snapshot = Assert.IsType<SnapshotDelta>(Assert.Single(deltas));
-        Assert.Equal(100, snapshot.TotalCount);
-        Assert.Equal(10, snapshot.Rows.Count);
-        Assert.Equal("row-050", snapshot.Rows[0][0]);
-        Assert.Equal("row-059", snapshot.Rows[^1][0]);
+        var start = Assert.IsType<SnapshotStartDelta>(deltas[0]);
+        Assert.Equal(100, start.TotalCount);
+        Assert.Equal(50, start.StartIndex);
+
+        var rows = Assert.IsType<SnapshotRowsDelta>(deltas[1]);
+        Assert.Equal(10, rows.Rows.Count);
+        Assert.Equal("row-050", rows.Rows[0][0]);
+        Assert.Equal("row-059", rows.Rows[^1][0]);
+        Assert.IsType<EndOfSnapshotDelta>(deltas[^1]);
     }
 }

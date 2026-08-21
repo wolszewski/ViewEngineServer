@@ -64,7 +64,7 @@ public class ViewEngineConcurrencyTests
             PageSize = tasks * rowsPerTask
         });
 
-        var delta = Assert.IsType<SnapshotDelta>(snapshot.Single());
+        var delta = snapshot.ToSnapshotDelta();
         Assert.Equal(tasks * rowsPerTask, delta.TotalCount);
     }
 
@@ -106,7 +106,7 @@ public class ViewEngineConcurrencyTests
         await Task.WhenAll(insertTask, subscribeTask);
 
         var deltas = await subscribeTask;
-        var snapshot = Assert.IsType<SnapshotDelta>(deltas.Single());
+        var snapshot = deltas.ToSnapshotDelta();
 
         // Snapshot must be internally consistent: every row index it claimed must be valid.
         Assert.True(snapshot.TotalCount >= totalRows / 2,
@@ -197,9 +197,8 @@ public class ViewEngineConcurrencyTests
                     StartIndex = 0,
                     PageSize = 10
                 });
-                // Must return exactly one snapshot delta without throwing.
-                Assert.Single(result);
-                Assert.IsType<SnapshotDelta>(result[0]);
+                Assert.IsType<SnapshotStartDelta>(result[0]);
+                Assert.IsType<EndOfSnapshotDelta>(result[^1]);
             }
         });
 

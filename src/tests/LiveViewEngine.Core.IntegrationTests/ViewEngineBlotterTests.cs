@@ -85,7 +85,7 @@ public class ViewEngineBlotterTests
                 StartIndex = start,
                 PageSize = pageSize
             });
-            var snap = Assert.IsType<SnapshotDelta>(evts.Single());
+            var snap = evts.ToSnapshotDelta();
             int idIdx = snap.Schema.GetFieldIndex("id");
             foreach (var row in snap.Rows)
             {
@@ -145,8 +145,8 @@ public class ViewEngineBlotterTests
             StartIndex = 500,
             PageSize = 500
         });
-        var snap0 = Assert.IsType<SnapshotDelta>(evts0.Single());
-        var snap1 = Assert.IsType<SnapshotDelta>(evts1.Single());
+        var snap0 = evts0.ToSnapshotDelta();
+        var snap1 = evts1.ToSnapshotDelta();
         int dateIdx = snap0.Schema.GetFieldIndex("date");
 
         // Within first page: descending
@@ -220,7 +220,7 @@ public class ViewEngineBlotterTests
             StartIndex = 0,
             PageSize = 500
         });
-        var snap = Assert.IsType<SnapshotDelta>(evts.Single());
+        var snap = evts.ToSnapshotDelta();
         int dateIdx = snap.Schema.GetFieldIndex("date");
         int catIdx = snap.Schema.GetFieldIndex("category");
         Assert.All(snap.Rows, row => Assert.Equal("category1", row[catIdx]));
@@ -305,8 +305,8 @@ public class ViewEngineBlotterTests
             PageSize = 50
         });
 
-        var snapA = Assert.IsType<SnapshotDelta>(evtsA.Single());
-        var snapB = Assert.IsType<SnapshotDelta>(evtsB.Single());
+        var snapA = evtsA.ToSnapshotDelta();
+        var snapB = evtsB.ToSnapshotDelta();
         int idIdx = snapA.Schema.GetFieldIndex("id");
 
         Assert.Equal(10000, snapA.TotalCount);
@@ -442,7 +442,7 @@ public class ViewEngineBlotterTests
             PageSize = 50
         });
 
-        var snapshot = Assert.IsType<SnapshotDelta>(events.Single());
+        var snapshot = events.ToSnapshotDelta();
         Assert.Collection(snapshot.Rows[0]!,
             value => Assert.Equal("O00001", value), // key auto-included at index 0
             value => Assert.Equal("O00001", value), // id at index 1
@@ -648,7 +648,7 @@ public class ViewEngineBlotterTests
             StartIndex = 0,
             PageSize = 100
         });
-        var lateSnap = Assert.IsType<SnapshotDelta>(lateDeltas.Single());
+        var lateSnap = lateDeltas.ToSnapshotDelta();
 
         // Subscribe a third connection to get a definitive snapshot for comparison
         var verifyDeltas = await engine.SubscribeAsync(new SubscribeCommand
@@ -658,7 +658,7 @@ public class ViewEngineBlotterTests
             StartIndex = 0,
             PageSize = 100
         });
-        var verifySnap = Assert.IsType<SnapshotDelta>(verifyDeltas.Single());
+        var verifySnap = verifyDeltas.ToSnapshotDelta();
 
         // Late subscriber and verify connection must see identical state
         Assert.Equal(verifySnap.TotalCount, lateSnap.TotalCount);
@@ -710,7 +710,7 @@ public class ViewEngineBlotterTests
             PageSize = 50
         });
 
-        var snapshot = Assert.IsType<SnapshotDelta>(events.Single());
+        var snapshot = events.ToSnapshotDelta();
         Assert.Contains(0, snapshot.VisibleFieldIndexes);
         Assert.Equal("O00001", snapshot.Rows[0]![0]);
     }
@@ -734,7 +734,7 @@ public class ViewEngineBlotterTests
             PageSize = 50
         });
 
-        var snapshot = Assert.IsType<SnapshotDelta>(events.Single());
+        var snapshot = events.ToSnapshotDelta();
         Assert.Equal(2, snapshot.VisibleFieldIndexes!.Count);
         Assert.Equal(0, snapshot.VisibleFieldIndexes[0]);
     }

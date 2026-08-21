@@ -1,11 +1,11 @@
 namespace LiveViewEngine.Core.Runtime;
 
-internal sealed class ChangeViewportRuntimeWork : RuntimeWorkItem<IReadOnlyList<ViewDelta>>
+internal sealed class UpdateViewRuntimeWork : RuntimeWorkItem<IReadOnlyList<ViewDelta>>
 {
     private readonly CollectionRuntime _runtime;
     private readonly UpdateViewCommand _command;
 
-    public ChangeViewportRuntimeWork(CollectionRuntime runtime, UpdateViewCommand command)
+    public UpdateViewRuntimeWork(CollectionRuntime runtime, UpdateViewCommand command)
     {
         _runtime = runtime;
         _command = command;

@@ -171,6 +171,7 @@ public sealed class CollectionRuntime : IDisposable
         var viewport = new ViewportState
         {
             SubscriptionKey = subscriptionKey,
+            View = command.View,
             ViewKey = viewKey,
             StartIndex = command.StartIndex,
             PageSize = command.PageSize,
@@ -186,23 +187,6 @@ public sealed class CollectionRuntime : IDisposable
             return [];
         }
 
-        if (!command.StreamSnapshot)
-        {
-            var indexes = view.GetPageIndexes(command.StartIndex, command.PageSize);
-            return
-            [
-                new SnapshotDelta
-                {
-                    ViewId = subscriptionKey.ToString(),
-                    Schema = Collection.Schema,
-                    TotalCount = view.GetTotalCount(),
-                    StartIndex = command.StartIndex,
-                    Rows = BuildRows(Collection, indexes, selectedFieldIndexes),
-                    VisibleFieldIndexes = selectedFieldIndexes
-                }
-            ];
-        }
-
         return BuildStreamingSnapshotDeltas(
             subscriptionKey.ToString(),
             view,
@@ -211,41 +195,69 @@ public sealed class CollectionRuntime : IDisposable
             selectedFieldIndexes);
     }
 
-    public IReadOnlyList<ViewDelta> HandleChangeViewport(ChangeViewportCommand command)
+    public IReadOnlyList<ViewDelta> HandleUpdateView(UpdateViewCommand command)
     {
-        if (!_viewports.TryGetValue(command.EffectiveSubscriptionKey, out var viewport) ||
-            !TryGetSharedView(viewport.ViewKey, out var view))
+        if (!_viewports.TryGetValue(command.EffectiveSubscriptionKey, out var viewport))
         {
             return [];
         }
 
+        var nextView = BuildUpdatedView(viewport.View, command);
+        var viewChanged = !ViewEquals(viewport.View, nextView);
+
+        if (!viewChanged && TryGetSharedView(viewport.ViewKey, out var view))
+        {
+            return HandleViewportChange(
+                viewport,
+                view,
+                command.StartIndex ?? viewport.StartIndex,
+                command.PageSize ?? viewport.PageSize);
+        }
+
+        return HandleSubscribe(new SubscribeCommand
+        {
+            ConnectionId = command.ConnectionId,
+            SubscriptionId = command.SubscriptionId,
+            StartIndex = command.StartIndex ?? viewport.StartIndex,
+            PageSize = command.PageSize ?? viewport.PageSize,
+            SendSnapshot = command.SendSnapshot,
+            View = nextView
+        });
+    }
+
+    public IReadOnlyList<ViewDelta> HandleChangeViewport(ChangeViewportCommand command)
+    {
+        return HandleUpdateView(command);
+    }
+
+    private IReadOnlyList<ViewDelta> HandleViewportChange(
+        ViewportState viewport,
+        SharedView view,
+        int startIndex,
+        int? pageSize)
+    {
         var oldStart = viewport.StartIndex;
         var oldPageSize = viewport.PageSize ?? 0;
         var oldEnd = oldStart + oldPageSize;
 
-        viewport.StartIndex = command.StartIndex;
-        if (command.PageSize.HasValue)
+        viewport.StartIndex = startIndex;
+        if (pageSize.HasValue)
         {
-            viewport.PageSize = command.PageSize;
+            viewport.PageSize = pageSize;
         }
 
-        var newStart = command.StartIndex;
-        var newPageSize = command.PageSize ?? oldPageSize;
+        var newStart = startIndex;
+        var newPageSize = pageSize ?? oldPageSize;
         var newEnd = newStart + newPageSize;
 
-        if (command.StreamSnapshot)
-        {
-            return BuildStreamingViewportDeltas(
-                viewport,
-                view,
-                oldStart,
-                oldPageSize,
-                newStart,
-                newPageSize,
-                newEnd);
-        }
-
-        return BuildIncrementalSnapshot(viewport, view, oldStart, oldEnd, newStart, newPageSize, newEnd);
+        return BuildStreamingViewportDeltas(
+            viewport,
+            view,
+            oldStart,
+            oldPageSize,
+            newStart,
+            newPageSize,
+            newEnd);
     }
 
     private IReadOnlyList<ViewDelta> BuildIncrementalSnapshot(
@@ -474,6 +486,56 @@ public sealed class CollectionRuntime : IDisposable
             ? [.. baseFilters, .. def.Filters]
             : baseFilters;
         return new ViewKey(def.CollectionId, def.FilterPresetId, def.SortColumn, def.SortAscending, combined);
+    }
+
+    private static ViewDefinition BuildUpdatedView(ViewDefinition current, UpdateViewCommand command)
+    {
+        return new ViewDefinition
+        {
+            CollectionId = current.CollectionId,
+            FilterPresetId = current.FilterPresetId,
+            SortColumn = command.SortColumn ?? current.SortColumn,
+            SortAscending = command.SortAscending ?? current.SortAscending,
+            Filters = command.Filters ?? current.Filters,
+            Fields = command.Fields is null
+                ? current.Fields
+                : command.Fields.Count == 0
+                    ? null
+                    : command.Fields
+        };
+    }
+
+    private static bool ViewEquals(ViewDefinition left, ViewDefinition right)
+    {
+        return string.Equals(left.CollectionId, right.CollectionId, StringComparison.Ordinal)
+            && string.Equals(left.FilterPresetId, right.FilterPresetId, StringComparison.Ordinal)
+            && string.Equals(left.SortColumn, right.SortColumn, StringComparison.Ordinal)
+            && left.SortAscending == right.SortAscending
+            && left.Filters.SequenceEqual(right.Filters)
+            && SequenceEqual(left.Fields, right.Fields);
+    }
+
+    private static bool SequenceEqual<T>(IReadOnlyList<T>? left, IReadOnlyList<T>? right)
+    {
+        if (ReferenceEquals(left, right))
+        {
+            return true;
+        }
+
+        if (left is null || right is null || left.Count != right.Count)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < left.Count; i++)
+        {
+            if (!EqualityComparer<T>.Default.Equals(left[i], right[i]))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private void EagerlyInitializeIndexes()

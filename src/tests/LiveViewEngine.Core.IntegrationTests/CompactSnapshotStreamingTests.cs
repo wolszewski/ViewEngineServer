@@ -15,7 +15,7 @@ public class CompactSnapshotStreamingTests
     }
 
     [Fact]
-    public async Task Subscribe_StreamSnapshot_UsesSchemaOrderForRequestedFields()
+    public async Task Subscribe_StreamsSnapshot_UsesSchemaOrderForRequestedFields()
     {
         var (engine, _) = CreateEngine();
         await engine.IngestAsync(new CreateCollectionCommand
@@ -39,7 +39,6 @@ public class CompactSnapshotStreamingTests
         {
             ConnectionId = 1,
             SubscriptionId = 7,
-            StreamSnapshot = true,
             View = new ViewDefinition
             {
                 CollectionId = "orders",
@@ -62,7 +61,7 @@ public class CompactSnapshotStreamingTests
     }
 
     [Fact]
-    public async Task Subscribe_StreamSnapshot_BatchesLargePageAndEndsWithEos()
+    public async Task Subscribe_StreamsSnapshot_BatchesLargePageAndEndsWithEos()
     {
         var (engine, _) = CreateEngine();
         await engine.IngestAsync(new CreateCollectionCommand
@@ -85,7 +84,6 @@ public class CompactSnapshotStreamingTests
         {
             ConnectionId = 1,
             SubscriptionId = 7,
-            StreamSnapshot = true,
             View = new ViewDefinition { CollectionId = "orders" },
             StartIndex = 0,
             PageSize = 300

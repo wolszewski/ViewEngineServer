@@ -100,7 +100,7 @@ public class ViewEngineIngestTests
             PageSize = 50
         });
 
-        var snapshot = Assert.IsType<SnapshotDelta>(events.Single());
+        var snapshot = events.ToSnapshotDelta();
         Assert.Equal(2, snapshot.TotalCount);
         Assert.Equal("o1", snapshot.Rows[0][CollectionSchema.PrimaryKeyIndex]);
         Assert.Equal("o2", snapshot.Rows[1][CollectionSchema.PrimaryKeyIndex]);
@@ -178,7 +178,7 @@ public class ViewEngineIngestTests
             PageSize = 10
         });
 
-        var snapshot = Assert.IsType<SnapshotDelta>(events.Single());
+        var snapshot = events.ToSnapshotDelta();
         var amountIndex = snapshot.Schema.GetFieldIndex("amount");
         var amounts = snapshot.Rows.Select(row => row[amountIndex]).ToList();
         Assert.Equal(["200", "100"], amounts);
@@ -219,8 +219,8 @@ public class ViewEngineIngestTests
             PageSize = 10
         });
 
-        var ascendingSnapshot = Assert.IsType<SnapshotDelta>(ascendingEvents.Single());
-        var descendingSnapshot = Assert.IsType<SnapshotDelta>(descendingEvents.Single());
+        var ascendingSnapshot = ascendingEvents.ToSnapshotDelta();
+        var descendingSnapshot = descendingEvents.ToSnapshotDelta();
         var amountIndex = ascendingSnapshot.Schema.GetFieldIndex("amount");
 
         var ascendingAmounts = ascendingSnapshot.Rows.Select(row => row[amountIndex]).ToList();
@@ -307,8 +307,8 @@ public class ViewEngineIngestTests
             PageSize = 5
         });
 
-        var ascendingSnapshot = Assert.IsType<SnapshotDelta>(ascendingEvents.Single());
-        var descendingSnapshot = Assert.IsType<SnapshotDelta>(descendingEvents.Single());
+        var ascendingSnapshot = ascendingEvents.ToSnapshotDelta();
+        var descendingSnapshot = descendingEvents.ToSnapshotDelta();
         var amountIndex = ascendingSnapshot.Schema.GetFieldIndex("amount");
 
         var ascendingAmounts = ascendingSnapshot.Rows.Select(row => row[amountIndex]).ToList();
@@ -352,8 +352,8 @@ public class ViewEngineIngestTests
             PageSize = 10
         });
 
-        Assert.Equal(1, Assert.IsType<SnapshotDelta>(openSnapshot.Single()).TotalCount);
-        Assert.Equal(1, Assert.IsType<SnapshotDelta>(closedSnapshot.Single()).TotalCount);
+        Assert.Equal(1, openSnapshot.ToSnapshotDelta().TotalCount);
+        Assert.Equal(1, closedSnapshot.ToSnapshotDelta().TotalCount);
 
         Assert.True(store.TryGetRuntime("orders", out var runtime));
         Assert.NotNull(runtime);
@@ -433,7 +433,7 @@ public class ViewEngineIngestTests
     }
 
     [Fact]
-    public async Task Subscribe_SameSubscriptionId_ReplacesViewAndCleansUpOldSharedView()
+    public async Task UpdateView_SameSubscriptionId_UpdatesExistingSubscription()
     {
         var (engine, _, store) = CreateEngine();
         await CreateOrders(engine);
@@ -455,22 +455,18 @@ public class ViewEngineIngestTests
             PageSize = 10
         });
 
-        var replacement = await engine.SubscribeAsync(new SubscribeCommand
+        var replacement = await engine.SubscribeAsync(new UpdateViewCommand
         {
             ConnectionId = 1,
             SubscriptionId = 1,
-            View = new ViewDefinition
-            {
-                CollectionId = "orders",
-                SortColumn = "amount",
-                SortAscending = true,
-                Filters = [new FilterSpec("status", FilterOperator.Eq, "open")]
-            },
             StartIndex = 0,
-            PageSize = 10
+            PageSize = 10,
+            SortColumn = "amount",
+            SortAscending = true,
+            Filters = [new FilterSpec("status", FilterOperator.Eq, "open")]
         });
 
-        var snapshot = Assert.IsType<SnapshotDelta>(replacement.Single());
+        var snapshot = replacement.ToSnapshotDelta();
         Assert.Equal("1:1", snapshot.ViewId);
         Assert.Equal(2, snapshot.TotalCount);
 
@@ -479,51 +475,6 @@ public class ViewEngineIngestTests
         Assert.Equal(1, runtime.ActiveSubscriptionCount);
         Assert.Equal(1, runtime.ActiveSharedViewCount);
         Assert.Equal(1, runtime.SortIndexCount);
-    }
-
-    [Fact]
-    public async Task Subscribe_SameSubscriptionIdAcrossCollections_UnsubscribesPreviousCollection()
-    {
-        var (engine, publisher, store) = CreateEngine();
-        await CreateOrders(engine);
-        await CreateTrades(engine);
-        await UpsertToCollection(engine, "orders", "o1", "Alice", "100", "open");
-        await UpsertToCollection(engine, "trades", "t1", "Alice", "100", "open");
-
-        await engine.SubscribeAsync(new SubscribeCommand
-        {
-            ConnectionId = 7,
-            SubscriptionId = 3,
-            View = new ViewDefinition { CollectionId = "orders" },
-            StartIndex = 0,
-            PageSize = 10
-        });
-
-        await engine.SubscribeAsync(new SubscribeCommand
-        {
-            ConnectionId = 7,
-            SubscriptionId = 3,
-            View = new ViewDefinition { CollectionId = "trades" },
-            StartIndex = 0,
-            PageSize = 10
-        });
-
-        Assert.True(store.TryGetRuntime("orders", out var ordersRuntime));
-        Assert.NotNull(ordersRuntime);
-        Assert.Equal(0, ordersRuntime.ActiveSubscriptionCount);
-        Assert.Equal(0, ordersRuntime.ActiveSharedViewCount);
-
-        Assert.True(store.TryGetRuntime("trades", out var tradesRuntime));
-        Assert.NotNull(tradesRuntime);
-        Assert.Equal(1, tradesRuntime.ActiveSubscriptionCount);
-        Assert.Equal(1, tradesRuntime.ActiveSharedViewCount);
-
-        await UpsertToCollection(engine, "orders", "o2", "Bob", "200", "open");
-        await UpsertToCollection(engine, "trades", "t2", "Bob", "200", "open");
-
-        var socketEvents = publisher.EventsFor(7).OfType<RowInsertEvent>().ToList();
-        Assert.DoesNotContain(socketEvents, static e => e.Row["key"] == "o2");
-        Assert.Contains(socketEvents, static e => e.SubscriptionId == 3 && e.Row["key"] == "t2");
     }
 
     [Fact]
@@ -547,7 +498,7 @@ public class ViewEngineIngestTests
             PageSize = 10
         });
 
-        var snapshot = Assert.IsType<SnapshotDelta>(events.Single());
+        var snapshot = events.ToSnapshotDelta();
         Assert.Equal(2, snapshot.TotalCount);
         var statusIndex = snapshot.Schema.GetFieldIndex("status");
         Assert.All(snapshot.Rows, row => Assert.Equal("open", row[statusIndex]));
@@ -883,7 +834,7 @@ public class ViewEngineIngestTests
             StartIndex = 0,
             PageSize = 10
         });
-        var snapshot = Assert.IsType<SnapshotDelta>(events.Single());
+        var snapshot = events.ToSnapshotDelta();
         var amountIdx = snapshot.Schema.GetFieldIndex("amount");
         Assert.Equal("100", snapshot.Rows[0][amountIdx]);
         Assert.Equal("200", snapshot.Rows[1][amountIdx]);

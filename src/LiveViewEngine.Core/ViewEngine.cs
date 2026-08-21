@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Threading.Channels;
 using LiveViewEngine.Core.Data;
 using LiveViewEngine.Core.Runtime;
 using Microsoft.Extensions.Logging;
@@ -21,7 +22,10 @@ public sealed class ViewEngine : IViewEngine, IDisposable
     private readonly IViewEngineMetrics? _metrics;
     private readonly ConcurrentDictionary<string, CollectionRuntime> _collectionRuntimes = new();
     private readonly ConcurrentDictionary<SubscriptionKey, string> _subscriptionRoutes = new();
-    private readonly ConcurrentDictionary<SubscriptionKey, SemaphoreSlim> _subscriptionRouteLocks = new();
+    private readonly Channel<IQueuedViewEngineCommand> _commands;
+    private readonly CancellationTokenSource _disposeCts = new();
+    private readonly Task _commandProcessorTask;
+    private bool _disposed;
 
     public ViewEngine(
         ICollectionStore store,
@@ -33,6 +37,12 @@ public sealed class ViewEngine : IViewEngine, IDisposable
         _publisher = publisher;
         _logger = logger;
         _metrics = metrics;
+        _commands = Channel.CreateUnbounded<IQueuedViewEngineCommand>(new UnboundedChannelOptions
+        {
+            SingleReader = true,
+            SingleWriter = false
+        });
+        _commandProcessorTask = ProcessCommandsAsync();
 
         metrics?.RegisterSortIndexGaugeSource(() => _collectionRuntimes.Values.Sum(static r => r.SortIndexCount));
 
@@ -50,7 +60,81 @@ public sealed class ViewEngine : IViewEngine, IDisposable
                 new KeyValuePair<string, object?>("collectionId", r.Collection.Schema.CollectionName))));
     }
 
-    public async Task<IngestResult> IngestAsync(IngestCommand command, CancellationToken ct = default)
+    public Task<IngestResult> IngestAsync(IngestCommand command, CancellationToken ct = default)
+    {
+        return EnqueueAsync(new QueuedIngestCommand(command, ct), ct);
+    }
+
+    public Task<IReadOnlyList<ViewDelta>> SubscribeAsync(SubscriptionCommand command, CancellationToken ct = default)
+    {
+        return EnqueueAsync(new QueuedSubscribeCommand(command, ct), ct);
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        _commands.Writer.TryComplete();
+        _disposeCts.Cancel();
+        try
+        {
+            _commandProcessorTask.GetAwaiter().GetResult();
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            _disposeCts.Dispose();
+        }
+
+        foreach (var runtime in _collectionRuntimes.Values)
+        {
+            runtime.Dispose();
+        }
+    }
+
+    private async Task<T> EnqueueAsync<T>(QueuedViewEngineCommand<T> command, CancellationToken ct)
+    {
+        ThrowIfDisposed();
+        try
+        {
+            await _commands.Writer.WriteAsync(command, ct);
+        }
+        catch (ChannelClosedException)
+        {
+            throw new ObjectDisposedException(nameof(ViewEngine));
+        }
+
+        return await command.ResultTask.WaitAsync(ct);
+    }
+
+    private async Task ProcessCommandsAsync()
+    {
+        try
+        {
+            await foreach (var command in _commands.Reader.ReadAllAsync(_disposeCts.Token))
+            {
+                await command.ExecuteAsync(this);
+            }
+        }
+        catch (OperationCanceledException) when (_disposeCts.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            while (_commands.Reader.TryRead(out var pendingCommand))
+            {
+                pendingCommand.TrySetException(new ObjectDisposedException(nameof(ViewEngine)));
+            }
+        }
+    }
+
+    private async Task<IngestResult> ProcessIngestAsync(IngestCommand command, CancellationToken ct)
     {
         try
         {
@@ -103,8 +187,7 @@ public sealed class ViewEngine : IViewEngine, IDisposable
         }
     }
 
-    public async Task<IReadOnlyList<ViewDelta>> SubscribeAsync(
-        SubscriptionCommand command, CancellationToken ct = default)
+    private async Task<IReadOnlyList<ViewDelta>> ProcessSubscribeAsync(SubscriptionCommand command, CancellationToken ct)
     {
         var started = Stopwatch.GetTimestamp();
         string? metricsCollectionId = GetCollectionIdForSubscription(command);
@@ -120,51 +203,36 @@ public sealed class ViewEngine : IViewEngine, IDisposable
                 }
 
                 var subscriptionKey = subscribe.EffectiveSubscriptionKey;
-                var subscriptionRouteLock = GetSubscriptionRouteLock(subscriptionKey);
-                await subscriptionRouteLock.WaitAsync(ct);
-                bool subscriptionRemoved = false;
-                try
+                CollectionRuntime? previousRuntime = null;
+                bool isCrossCollectionReplacement =
+                    _subscriptionRoutes.TryGetValue(subscriptionKey, out var previousCollectionId) &&
+                    !string.Equals(previousCollectionId, subscribeCollectionId, StringComparison.Ordinal) &&
+                    _collectionRuntimes.TryGetValue(previousCollectionId, out previousRuntime);
+
+                var deltas = await subscribeRuntime.EnqueueAsync(
+                    new SubscribeRuntimeWork(subscribeRuntime, subscribe),
+                    ct);
+                if (subscribeRuntime.ContainsSubscription(subscriptionKey))
                 {
-                    CollectionRuntime? previousRuntime = null;
-                    bool isCrossCollectionReplacement =
-                        _subscriptionRoutes.TryGetValue(subscriptionKey, out var previousCollectionId) &&
-                        !string.Equals(previousCollectionId, subscribeCollectionId, StringComparison.Ordinal) &&
-                        _collectionRuntimes.TryGetValue(previousCollectionId!, out previousRuntime);
-
-                    var deltas = await subscribeRuntime.EnqueueAsync(
-                        new SubscribeRuntimeWork(subscribeRuntime, subscribe),
-                        ct);
-                    if (subscribeRuntime.ContainsSubscription(subscriptionKey))
+                    if (isCrossCollectionReplacement)
                     {
-                        if (isCrossCollectionReplacement)
-                        {
-                            await previousRuntime!.EnqueueAsync(
-                                new UnsubscribeRuntimeWork(previousRuntime, new UnsubscribeCommand
-                                {
-                                    ConnectionId = subscribe.ConnectionId,
-                                    SubscriptionId = subscribe.SubscriptionId
-                                }),
-                                ct);
-                        }
-
-                        _subscriptionRoutes[subscriptionKey] = subscribeCollectionId;
-                    }
-                    else
-                    {
-                        _subscriptionRoutes.TryRemove(subscriptionKey, out _);
-                        subscriptionRemoved = true;
+                        await previousRuntime!.EnqueueAsync(
+                            new UnsubscribeRuntimeWork(previousRuntime, new UnsubscribeCommand
+                            {
+                                ConnectionId = subscribe.ConnectionId,
+                                SubscriptionId = subscribe.SubscriptionId
+                            }),
+                            ct);
                     }
 
-                    return deltas;
+                    _subscriptionRoutes[subscriptionKey] = subscribeCollectionId;
                 }
-                finally
+                else
                 {
-                    subscriptionRouteLock.Release();
-                    if (subscriptionRemoved)
-                    {
-                        TryReclaimSubscriptionRouteLock(subscriptionKey, subscriptionRouteLock);
-                    }
+                    _subscriptionRoutes.TryRemove(subscriptionKey, out _);
                 }
+
+                return deltas;
             }
 
             if (command is UnsubscribeCommand unsubscribe && unsubscribe.SubscriptionId == 0)
@@ -176,25 +244,15 @@ public sealed class ViewEngine : IViewEngine, IDisposable
             if (command is UnsubscribeCommand unsubscribeCommand)
             {
                 var key = unsubscribeCommand.EffectiveSubscriptionKey;
-                var subscriptionRouteLock = GetSubscriptionRouteLock(key);
-                await subscriptionRouteLock.WaitAsync(ct);
-                try
+                var collectionId = GetCollectionIdForSubscription(command);
+                if (collectionId is null || !_collectionRuntimes.TryGetValue(collectionId, out var unsubRuntime))
                 {
-                    var collectionId = GetCollectionIdForSubscription(command);
-                    if (collectionId is null || !_collectionRuntimes.TryGetValue(collectionId, out var unsubRuntime))
-                    {
-                        _subscriptionRoutes.TryRemove(key, out _);
-                    }
-                    else
-                    {
-                        await unsubRuntime.EnqueueAsync(new UnsubscribeRuntimeWork(unsubRuntime, unsubscribeCommand), ct);
-                        _subscriptionRoutes.TryRemove(key, out _);
-                    }
+                    _subscriptionRoutes.TryRemove(key, out _);
                 }
-                finally
+                else
                 {
-                    subscriptionRouteLock.Release();
-                    TryReclaimSubscriptionRouteLock(key, subscriptionRouteLock);
+                    await unsubRuntime.EnqueueAsync(new UnsubscribeRuntimeWork(unsubRuntime, unsubscribeCommand), ct);
+                    _subscriptionRoutes.TryRemove(key, out _);
                 }
 
                 return [];
@@ -208,7 +266,7 @@ public sealed class ViewEngine : IViewEngine, IDisposable
 
             RuntimeWorkItem<IReadOnlyList<ViewDelta>> work = command switch
             {
-                ChangeViewportCommand change => new ChangeViewportRuntimeWork(runtime, change),
+                UpdateViewCommand update => new UpdateViewRuntimeWork(runtime, update),
                 _ => new UnknownSubscriptionRuntimeWork(command),
             };
 
@@ -221,32 +279,6 @@ public sealed class ViewEngine : IViewEngine, IDisposable
             {
                 _metrics?.RecordSubscriptionDuration(durationMs, command.GetType().Name, metricsCollectionId);
             }
-        }
-    }
-
-    public void Dispose()
-    {
-        foreach (var runtime in _collectionRuntimes.Values)
-        {
-            runtime.Dispose();
-        }
-
-        foreach (var subscriptionRouteLock in _subscriptionRouteLocks)
-        {
-            subscriptionRouteLock.Value.Dispose();
-        }
-    }
-
-    private SemaphoreSlim GetSubscriptionRouteLock(SubscriptionKey subscriptionKey)
-    {
-        return _subscriptionRouteLocks.GetOrAdd(subscriptionKey, static _ => new SemaphoreSlim(1, 1));
-    }
-
-    private void TryReclaimSubscriptionRouteLock(SubscriptionKey subscriptionKey, SemaphoreSlim semaphore)
-    {
-        if (_subscriptionRouteLocks.TryRemove(subscriptionKey, out _))
-        {
-            semaphore.Dispose();
         }
     }
 
@@ -281,10 +313,6 @@ public sealed class ViewEngine : IViewEngine, IDisposable
             if (subscriptionKey.ConnectionId == connectionId)
             {
                 _subscriptionRoutes.TryRemove(subscriptionKey, out _);
-                if (_subscriptionRouteLocks.TryRemove(subscriptionKey, out var removedLock))
-                {
-                    removedLock.Dispose();
-                }
             }
         }
     }
@@ -309,4 +337,79 @@ public sealed class ViewEngine : IViewEngine, IDisposable
         return IngestResult.Ok();
     }
 
+    private void ThrowIfDisposed()
+    {
+        if (_disposed)
+        {
+            throw new ObjectDisposedException(nameof(ViewEngine));
+        }
+    }
+
+    private interface IQueuedViewEngineCommand
+    {
+        Task ExecuteAsync(ViewEngine engine);
+        void TrySetException(Exception exception);
+    }
+
+    private abstract class QueuedViewEngineCommand<T> : IQueuedViewEngineCommand
+    {
+        private readonly TaskCompletionSource<T> _result =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<T> ResultTask => _result.Task;
+
+        public async Task ExecuteAsync(ViewEngine engine)
+        {
+            try
+            {
+                var result = await ExecuteCoreAsync(engine);
+                _result.TrySetResult(result);
+            }
+            catch (Exception ex)
+            {
+                _result.TrySetException(ex);
+            }
+        }
+
+        public void TrySetException(Exception exception)
+        {
+            _result.TrySetException(exception);
+        }
+
+        protected abstract Task<T> ExecuteCoreAsync(ViewEngine engine);
+    }
+
+    private sealed class QueuedIngestCommand : QueuedViewEngineCommand<IngestResult>
+    {
+        private readonly IngestCommand _command;
+        private readonly CancellationToken _ct;
+
+        public QueuedIngestCommand(IngestCommand command, CancellationToken ct)
+        {
+            _command = command;
+            _ct = ct;
+        }
+
+        protected override Task<IngestResult> ExecuteCoreAsync(ViewEngine engine)
+        {
+            return engine.ProcessIngestAsync(_command, _ct);
+        }
+    }
+
+    private sealed class QueuedSubscribeCommand : QueuedViewEngineCommand<IReadOnlyList<ViewDelta>>
+    {
+        private readonly SubscriptionCommand _command;
+        private readonly CancellationToken _ct;
+
+        public QueuedSubscribeCommand(SubscriptionCommand command, CancellationToken ct)
+        {
+            _command = command;
+            _ct = ct;
+        }
+
+        protected override Task<IReadOnlyList<ViewDelta>> ExecuteCoreAsync(ViewEngine engine)
+        {
+            return engine.ProcessSubscribeAsync(_command, _ct);
+        }
+    }
 }

@@ -54,7 +54,7 @@ public class ViewEngineFilterPresetTests
             View = view,
             StartIndex = 0
         });
-        return Assert.IsType<SnapshotDelta>(Assert.Single(events));
+        return events.ToSnapshotDelta();
     }
 
     [Fact]

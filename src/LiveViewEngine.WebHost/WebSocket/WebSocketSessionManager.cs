@@ -1,8 +1,6 @@
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
-using System.Linq;
-using System.Threading;
 using LiveViewEngine.Core;
 using LiveViewEngine.Core.Data;
 using LiveViewEngine.Core.Views;
@@ -37,22 +35,22 @@ public sealed class WebSocketSessionManager
 
     public async Task HandleConnectionAsync(System.Net.WebSockets.WebSocket socket, CancellationToken ct)
     {
-        var connectionId = _connectionIdProvider.Next();
-        _publisher.Register(connectionId, socket);
-        _logger.LogInformation("Client '{ConnectionId}' connected.", connectionId);
-        var activeSubscriptionIds = new HashSet<int>();
-        var subscriptionIdProvider = new UniqueIdProvider();
+        var context = new ClientConnectionContext(_connectionIdProvider.Next());
+        _publisher.Register(context.ConnectionId, socket);
+        _logger.LogInformation("Client '{ConnectionId}' connected.", context.ConnectionId);
 
-        var buffer = new byte[16_384];
         try
         {
             while (socket.State == WebSocketState.Open && !ct.IsCancellationRequested)
             {
                 WebSocketReceiveResult result;
-                try { result = await socket.ReceiveAsync(buffer, ct); }
+                try
+                {
+                    result = await socket.ReceiveAsync(context.Buffer, ct);
+                }
                 catch (WebSocketException ex)
                 {
-                    _logger.LogDebug(ex, "Receive error for client '{ConnectionId}'.", connectionId);
+                    _logger.LogDebug(ex, "Receive error for client '{ConnectionId}'.", context.ConnectionId);
                     break;
                 }
 
@@ -61,12 +59,15 @@ public sealed class WebSocketSessionManager
                     break;
                 }
 
-                var json = Encoding.UTF8.GetString(buffer, 0, result.Count);
+                var json = Encoding.UTF8.GetString(context.Buffer, 0, result.Count);
                 WsInboundMessage? msg;
-                try { msg = JsonSerializer.Deserialize<WsInboundMessage>(json, JsonOptions); }
+                try
+                {
+                    msg = JsonSerializer.Deserialize<WsInboundMessage>(json, JsonOptions);
+                }
                 catch (JsonException ex)
                 {
-                    _logger.LogDebug(ex, "Invalid JSON from client '{ConnectionId}'.", connectionId);
+                    _logger.LogDebug(ex, "Invalid JSON from client '{ConnectionId}'.", context.ConnectionId);
                     continue;
                 }
 
@@ -78,10 +79,8 @@ public sealed class WebSocketSessionManager
                 var messageFormat = ResolveMessageFormat(msg.MessageFormat);
 
                 var command = MapCommand(
-                    connectionId,
+                    context,
                     msg,
-                    activeSubscriptionIds,
-                    subscriptionIdProvider,
                     out var clientSubscriptionId);
                 if (command is null)
                 {
@@ -91,14 +90,14 @@ public sealed class WebSocketSessionManager
                 if (command is SubscribeCommand subscribe && clientSubscriptionId > 0)
                 {
                     _publisher.ConfigureSubscription(
-                        connectionId,
+                        context.ConnectionId,
                         clientSubscriptionId,
                         messageFormat,
-                        snapshotActive: subscribe.SendSnapshot && subscribe.StreamSnapshot);
+                        snapshotActive: subscribe.SendSnapshot);
                 }
-                else if (command is ChangeViewportCommand changeViewport && changeViewport.StreamSnapshot)
+                else if (command is UpdateViewCommand { SendSnapshot: true })
                 {
-                    _publisher.SetSnapshotActive(connectionId, command.SubscriptionId, snapshotActive: true);
+                    _publisher.SetSnapshotActive(context.ConnectionId, command.SubscriptionId, snapshotActive: true);
                 }
 
                 var events = await _engine.SubscribeAsync(command, ct);
@@ -109,7 +108,7 @@ public sealed class WebSocketSessionManager
                     var snapshotFollows = start is not null ||
                                           ShouldWaitForDeferredSnapshot(subscribeCommand, originalEvents);
                     await _publisher.PublishSubscriptionAcceptedAsync(
-                        connectionId,
+                        context.ConnectionId,
                         messageFormat,
                         new SubscriptionAcceptedPayload
                         {
@@ -129,22 +128,22 @@ public sealed class WebSocketSessionManager
                 if (events.Count > 0)
                 {
                     await _publisher.PublishAsync(
-                        [new SubscriberTarget(connectionId, command.SubscriptionId)],
+                        [new SubscriberTarget(context.ConnectionId, command.SubscriptionId)],
                         events,
                         ct);
                 }
 
                 if (command is UnsubscribeCommand && clientSubscriptionId > 0)
                 {
-                    activeSubscriptionIds.Remove(clientSubscriptionId);
-                    _publisher.RemoveSubscription(connectionId, clientSubscriptionId);
+                    context.ActiveSubscriptionIds.Remove(clientSubscriptionId);
+                    _publisher.RemoveSubscription(context.ConnectionId, clientSubscriptionId);
                 }
             }
         }
         finally
         {
-            _publisher.Unregister(connectionId);
-            await _engine.SubscribeAsync(new UnsubscribeCommand { ConnectionId = connectionId },
+            _publisher.Unregister(context.ConnectionId);
+            await _engine.SubscribeAsync(new UnsubscribeCommand { ConnectionId = context.ConnectionId },
                 CancellationToken.None);
 
             if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
@@ -157,15 +156,13 @@ public sealed class WebSocketSessionManager
                 catch (WebSocketException) { /* already closed */ }
             }
 
-            _logger.LogInformation("Client '{ConnectionId}' disconnected.", connectionId);
+            _logger.LogInformation("Client '{ConnectionId}' disconnected.", context.ConnectionId);
         }
     }
 
     private static SubscriptionCommand? MapCommand(
-        int connectionId,
+        ClientConnectionContext context,
         WsInboundMessage msg,
-        ISet<int> activeSubscriptionIds,
-        UniqueIdProvider subscriptionIdProvider,
         out int clientSubscriptionId)
     {
         clientSubscriptionId = 0;
@@ -173,28 +170,42 @@ public sealed class WebSocketSessionManager
         return msg.Type.ToLowerInvariant() switch
         {
             "subscribe" => CreateSubscribeCommand(
-                connectionId,
+                context,
                 msg,
-                activeSubscriptionIds,
-                subscriptionIdProvider,
                 out clientSubscriptionId),
-            "setviewport" => TryCreateExistingCommand(
-                connectionId,
+            "updateview" => TryCreateExistingCommand(
+                context,
                 msg,
-                activeSubscriptionIds,
                 out clientSubscriptionId,
-                static (connId, subscriptionId, inbound) => new ChangeViewportCommand
+                static (connId, subscriptionId, inbound) => new UpdateViewCommand
                 {
                     ConnectionId = connId,
                     SubscriptionId = subscriptionId,
                     StartIndex = inbound.StartIndex,
                     PageSize = inbound.PageSize,
-                    StreamSnapshot = true
+                    SortColumn = inbound.SortColumn,
+                    SortAscending = inbound.SortAscending,
+                    Filters = inbound.Filters?.Select(f => new FilterSpec(
+                        f.Field,
+                        Enum.TryParse<FilterOperator>(f.Operator, ignoreCase: true, out var op)
+                            ? op : FilterOperator.Eq,
+                        f.Value)).ToList() ?? [],
+                    Fields = inbound.Fields
+                }),
+            "setviewport" => TryCreateExistingCommand(
+                context,
+                msg,
+                out clientSubscriptionId,
+                static (connId, subscriptionId, inbound) => new UpdateViewCommand
+                {
+                    ConnectionId = connId,
+                    SubscriptionId = subscriptionId,
+                    StartIndex = inbound.StartIndex,
+                    PageSize = inbound.PageSize
                 }),
             "unsubscribe" => TryCreateExistingCommand(
-                connectionId,
+                context,
                 msg,
-                activeSubscriptionIds,
                 out clientSubscriptionId,
                 static (connId, subscriptionId, _) => new UnsubscribeCommand
                 {
@@ -205,46 +216,31 @@ public sealed class WebSocketSessionManager
         };
     }
 
-    private static SubscribeCommand? CreateSubscribeCommand(
-        int connectionId,
+    private static SubscribeCommand CreateSubscribeCommand(
+        ClientConnectionContext context,
         WsInboundMessage msg,
-        ISet<int> activeSubscriptionIds,
-        UniqueIdProvider subscriptionIdProvider,
         out int clientSubscriptionId)
     {
-        if (msg.SubscriptionId is { } existingSubscriptionId)
-        {
-            if (!activeSubscriptionIds.Contains(existingSubscriptionId))
-            {
-                clientSubscriptionId = 0;
-                return null;
-            }
-
-            clientSubscriptionId = existingSubscriptionId;
-            return BuildSubscribeCommand(connectionId, clientSubscriptionId, msg);
-        }
-
-        clientSubscriptionId = subscriptionIdProvider.Next();
-        activeSubscriptionIds.Add(clientSubscriptionId);
-        return BuildSubscribeCommand(connectionId, clientSubscriptionId, msg);
+        clientSubscriptionId = context.SubscriptionIdProvider.Next();
+        context.ActiveSubscriptionIds.Add(clientSubscriptionId);
+        return BuildSubscribeCommand(context.ConnectionId, clientSubscriptionId, msg);
     }
 
     private static SubscriptionCommand? TryCreateExistingCommand(
-        int connectionId,
+        ClientConnectionContext context,
         WsInboundMessage msg,
-        ISet<int> activeSubscriptionIds,
         out int clientSubscriptionId,
         Func<int, int, WsInboundMessage, SubscriptionCommand> factory)
     {
         if (msg.SubscriptionId is not { } requestedSubscriptionId ||
-            !activeSubscriptionIds.Contains(requestedSubscriptionId))
+            !context.ActiveSubscriptionIds.Contains(requestedSubscriptionId))
         {
             clientSubscriptionId = 0;
             return null;
         }
 
         clientSubscriptionId = requestedSubscriptionId;
-        return factory(connectionId, clientSubscriptionId, msg);
+        return factory(context.ConnectionId, clientSubscriptionId, msg);
     }
 
     private static SubscribeCommand BuildSubscribeCommand(
@@ -259,7 +255,6 @@ public sealed class WebSocketSessionManager
             StartIndex = msg.StartIndex,
             PageSize = msg.PageSize,
             SendSnapshot = msg.SendSnapshot ?? true,
-            StreamSnapshot = true,
             View = new ViewDefinition
             {
                 CollectionId = msg.CollectionId ?? string.Empty,
@@ -294,7 +289,7 @@ public sealed class WebSocketSessionManager
         SubscribeCommand subscribeCommand,
         IReadOnlyList<ViewDelta> events)
     {
-        if (!subscribeCommand.SendSnapshot || !subscribeCommand.StreamSnapshot || events.Count > 0)
+        if (!subscribeCommand.SendSnapshot || events.Count > 0)
         {
             return false;
         }
@@ -353,5 +348,18 @@ public sealed class WebSocketSessionManager
         return rawFormat?.Equals("json", StringComparison.OrdinalIgnoreCase) == true
             ? OutboundMessageFormat.Json
             : OutboundMessageFormat.Compact;
+    }
+
+    private sealed class ClientConnectionContext
+    {
+        public ClientConnectionContext(int connectionId)
+        {
+            ConnectionId = connectionId;
+        }
+
+        public int ConnectionId { get; }
+        public HashSet<int> ActiveSubscriptionIds { get; } = new();
+        public UniqueIdProvider SubscriptionIdProvider { get; } = new();
+        public byte[] Buffer { get; } = new byte[16_384];
     }
 }

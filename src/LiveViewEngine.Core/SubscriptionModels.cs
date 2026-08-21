@@ -13,6 +13,7 @@ public readonly record struct SubscriberTarget(int ConnectionId, int Subscriptio
 public sealed class ViewportState
 {
     public required SubscriptionKey SubscriptionKey { get; init; }
+    public required ViewDefinition View { get; set; }
     public required ViewKey ViewKey { get; set; }
     public int StartIndex { get; set; }
     public int? PageSize { get; set; }
@@ -32,17 +33,22 @@ public abstract class SubscriptionCommand
 public sealed class SubscribeCommand : SubscriptionCommand
 {
     public required ViewDefinition View { get; init; }
-    public int StartIndex { get; init; } = 0;
+    public int StartIndex { get; init; }
     public int? PageSize { get; init; }
     public bool SendSnapshot { get; init; } = true;
-    public bool StreamSnapshot { get; init; }
 }
 
-public sealed class ChangeViewportCommand : SubscriptionCommand
+public class UpdateViewCommand : SubscriptionCommand
 {
-    public int StartIndex { get; init; } = 0;
-    public int? PageSize { get; init; } = null;
-    public bool StreamSnapshot { get; init; }
+    public int? StartIndex { get; init; }
+    public int? PageSize { get; init; }
+    public string? SortColumn { get; init; }
+    public bool? SortAscending { get; init; }
+    public IReadOnlyList<FilterSpec>? Filters { get; init; }
+    public IReadOnlyList<string>? Fields { get; init; }
+    public bool SendSnapshot { get; init; } = true;
 }
+
+public sealed class ChangeViewportCommand : UpdateViewCommand { }
 
 public sealed class UnsubscribeCommand : SubscriptionCommand { }

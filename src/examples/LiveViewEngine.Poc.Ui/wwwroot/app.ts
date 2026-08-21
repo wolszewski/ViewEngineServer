@@ -1034,7 +1034,7 @@ function App(): React.ReactElement {
         setIsLoadingSnapshot(true);
         const initialWindow = resetViewportToFirstPage();
         appendLog(
-            `subscribe: ${collectionId} | order by ${sortColumn} ${sortAscending ? 'asc' : 'desc'} | viewport ${initialWindow.start.toLocaleString()} - ${initialWindow.end.toLocaleString()}`
+            `sync view: ${collectionId} | order by ${sortColumn} ${sortAscending ? 'asc' : 'desc'} | viewport ${initialWindow.start.toLocaleString()} - ${initialWindow.end.toLocaleString()}`
         );
         clientRef.current?.connect({
             collectionId,

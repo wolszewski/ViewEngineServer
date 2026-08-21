@@ -64,7 +64,17 @@ export class WebHostClient {
 
     public connect(request: SubscribeRequest): void {
         if (this.socket && this.socket.readyState === WebSocket.OPEN) {
-            this.sendSubscribe(request);
+            const sameCollection = this.lastSubscribe?.collectionId === request.collectionId;
+            const sameMessageFormat = (this.lastSubscribe?.messageFormat ?? 'compact') === (request.messageFormat ?? 'compact');
+            if (this.activeSubscriptionId !== null && sameCollection && sameMessageFormat) {
+                this.sendUpdateView(request);
+            } else {
+                if (this.activeSubscriptionId !== null) {
+                    this.sendUnsubscribe(this.activeSubscriptionId);
+                }
+
+                this.sendSubscribe(request);
+            }
             return;
         }
 
@@ -131,7 +141,11 @@ export class WebHostClient {
             return;
         }
 
-        this.sendSetViewport(startIndex, pageSize);
+        this.sendUpdateView({
+            ...this.lastSubscribe,
+            startIndex,
+            pageSize
+        });
     }
 
     public disconnect(): void {
@@ -270,10 +284,6 @@ export class WebHostClient {
             }))
         };
 
-        if (this.activeSubscriptionId !== null) {
-            message.subscriptionId = this.activeSubscriptionId;
-        }
-
         if (request.fields && request.fields.length > 0) {
             message.fields = request.fields;
         }
@@ -287,18 +297,41 @@ export class WebHostClient {
         }
     }
 
-    private sendSetViewport(startIndex: number, pageSize: number): void {
+    private sendUpdateView(request: SubscribeRequest): void {
         if (!this.socket || this.socket.readyState !== WebSocket.OPEN || this.activeSubscriptionId === null) {
             return;
         }
 
-        this.socket.send(JSON.stringify({
-            type: 'setviewport',
+        this.lastSubscribe = request;
+        const message: Record<string, unknown> = {
+            type: 'updateview',
             subscriptionId: this.activeSubscriptionId,
-            startIndex,
-            pageSize
-        }));
+            startIndex: request.startIndex,
+            pageSize: request.pageSize,
+            sortColumn: request.sortColumn,
+            sortAscending: request.sortAscending,
+            filters: (request.filters ?? []).map((filter) => ({
+                field: filter.field,
+                operator: filter.operator,
+                value: filter.value
+            })),
+            fields: request.fields ?? []
+        };
+
+        this.socket.send(JSON.stringify(message));
+        this.hasReceivedSnapshot = false;
         this.snapshotRequestStartedAt = performance.now();
+    }
+
+    private sendUnsubscribe(subscriptionId: number): void {
+        if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+            return;
+        }
+
+        this.socket.send(JSON.stringify({
+            type: 'unsubscribe',
+            subscriptionId
+        }));
     }
 
     private startSubscribeRetry(): void {
