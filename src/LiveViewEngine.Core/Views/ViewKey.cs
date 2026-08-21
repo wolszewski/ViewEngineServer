@@ -3,7 +3,7 @@ namespace LiveViewEngine.Core.Views;
 public sealed class ViewKey : IEquatable<ViewKey>
 {
     public string CollectionId { get; }
-    public string? SegmentId { get; }
+    public string? FilterPresetId { get; }
     public string? SortColumn { get; }
     public bool SortAscending { get; }
     public IReadOnlyList<FilterSpec> Filters { get; }
@@ -12,23 +12,23 @@ public sealed class ViewKey : IEquatable<ViewKey>
 
     private readonly int _hashCode;
 
-    public ViewKey(string collectionId, string? segmentId, string? sortColumn, bool sortAscending,
+    public ViewKey(string collectionId, string? filterPresetId, string? sortColumn, bool sortAscending,
         IReadOnlyList<FilterSpec>? filters)
     {
         CollectionId = collectionId;
-        SegmentId = segmentId;
+        FilterPresetId = filterPresetId;
         SortColumn = sortColumn;
         SortAscending = sortAscending;
         Filters = filters ?? [];
 
-        Id = $"{collectionId}|{segmentId}|{sortColumn}|{(sortAscending ? "asc" : "desc")}|" +
+        Id = $"{collectionId}|{filterPresetId}|{sortColumn}|{(sortAscending ? "asc" : "desc")}|" +
              string.Join(",", Filters.Select(f => $"{f.FieldName}:{f.Operator}:{f.Value}"));
 
         _hashCode = ComputeHash();
     }
 
     public static ViewKey From(ViewDefinition def) =>
-        new(def.CollectionId, def.SegmentId, def.SortColumn, def.SortAscending, def.Filters);
+        new(def.CollectionId, def.FilterPresetId, def.SortColumn, def.SortAscending, def.Filters);
 
     public bool Equals(ViewKey? other)
     {
@@ -42,7 +42,7 @@ public sealed class ViewKey : IEquatable<ViewKey>
             return false;
         }
 
-        if (SegmentId != other.SegmentId)
+        if (FilterPresetId != other.FilterPresetId)
         {
             return false;
         }
@@ -83,7 +83,7 @@ public sealed class ViewKey : IEquatable<ViewKey>
     {
         var hc = new HashCode();
         hc.Add(CollectionId);
-        hc.Add(SegmentId);
+        hc.Add(FilterPresetId);
         hc.Add(SortColumn);
         hc.Add(SortAscending);
         foreach (var f in Filters)
