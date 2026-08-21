@@ -21,6 +21,7 @@ public sealed class ViewEngine : IViewEngine, IDisposable
     private readonly IViewEngineMetrics? _metrics;
     private readonly ConcurrentDictionary<string, CollectionRuntime> _collectionRuntimes = new();
     private readonly ConcurrentDictionary<SubscriptionKey, string> _subscriptionRoutes = new();
+    private readonly SemaphoreSlim[] _subscriptionRouteLocks = CreateSubscriptionRouteLocks();
 
     public ViewEngine(
         ICollectionStore store,
@@ -115,30 +116,41 @@ public sealed class ViewEngine : IViewEngine, IDisposable
                 }
 
                 var subscriptionKey = subscribe.EffectiveSubscriptionKey;
-                if (_subscriptionRoutes.TryGetValue(subscriptionKey, out var previousCollectionId) &&
-                    !string.Equals(previousCollectionId, subscribeCollectionId, StringComparison.Ordinal) &&
-                    _collectionRuntimes.TryGetValue(previousCollectionId, out var previousRuntime))
+                var subscriptionRouteLock = GetSubscriptionRouteLock(subscriptionKey);
+                await subscriptionRouteLock.WaitAsync(ct);
+                try
                 {
-                    await previousRuntime.EnqueueAsync(
-                        new UnsubscribeRuntimeWork(previousRuntime, new UnsubscribeCommand
-                        {
-                            ConnectionId = subscribe.ConnectionId,
-                            SubscriptionId = subscribe.SubscriptionId
-                        }),
+                    if (_subscriptionRoutes.TryGetValue(subscriptionKey, out var previousCollectionId) &&
+                        !string.Equals(previousCollectionId, subscribeCollectionId, StringComparison.Ordinal) &&
+                        _collectionRuntimes.TryGetValue(previousCollectionId, out var previousRuntime))
+                    {
+                        await previousRuntime.EnqueueAsync(
+                            new UnsubscribeRuntimeWork(previousRuntime, new UnsubscribeCommand
+                            {
+                                ConnectionId = subscribe.ConnectionId,
+                                SubscriptionId = subscribe.SubscriptionId
+                            }),
+                            ct);
+                    }
+
+                    var deltas = await subscribeRuntime.EnqueueAsync(
+                        new SubscribeRuntimeWork(subscribeRuntime, subscribe),
                         ct);
-                }
+                    if (subscribeRuntime.ContainsSubscription(subscriptionKey))
+                    {
+                        _subscriptionRoutes[subscriptionKey] = subscribeCollectionId;
+                    }
+                    else
+                    {
+                        _subscriptionRoutes.TryRemove(subscriptionKey, out _);
+                    }
 
-                var deltas = await subscribeRuntime.EnqueueAsync(new SubscribeRuntimeWork(subscribeRuntime, subscribe), ct);
-                if (subscribeRuntime.ContainsSubscription(subscriptionKey))
-                {
-                    _subscriptionRoutes[subscriptionKey] = subscribeCollectionId;
+                    return deltas;
                 }
-                else
+                finally
                 {
-                    _subscriptionRoutes.TryRemove(subscriptionKey, out _);
+                    subscriptionRouteLock.Release();
                 }
-
-                return deltas;
             }
 
             if (command is UnsubscribeCommand unsubscribe && unsubscribe.SubscriptionId == 0)
@@ -189,6 +201,29 @@ public sealed class ViewEngine : IViewEngine, IDisposable
         {
             runtime.Dispose();
         }
+
+        foreach (var subscriptionRouteLock in _subscriptionRouteLocks)
+        {
+            subscriptionRouteLock.Dispose();
+        }
+    }
+
+    private static SemaphoreSlim[] CreateSubscriptionRouteLocks()
+    {
+        const int lockCount = 64;
+        var locks = new SemaphoreSlim[lockCount];
+        for (var i = 0; i < lockCount; i++)
+        {
+            locks[i] = new SemaphoreSlim(1, 1);
+        }
+
+        return locks;
+    }
+
+    private SemaphoreSlim GetSubscriptionRouteLock(SubscriptionKey subscriptionKey)
+    {
+        var lockIndex = (subscriptionKey.GetHashCode() & int.MaxValue) % _subscriptionRouteLocks.Length;
+        return _subscriptionRouteLocks[lockIndex];
     }
 
     private string? GetCollectionIdForSubscription(SubscriptionCommand command)
