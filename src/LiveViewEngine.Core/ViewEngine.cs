@@ -169,41 +169,46 @@ public sealed class ViewEngine : IViewEngine, IDisposable
                 return [];
             }
 
-            var collectionId = GetCollectionIdForSubscription(command);
-            if (collectionId is null || !_collectionRuntimes.TryGetValue(collectionId, out var runtime))
+            if (command is UnsubscribeCommand unsubscribeCommand)
             {
-                if (command is UnsubscribeCommand unmatchedUnsubscribe)
+                var key = unsubscribeCommand.EffectiveSubscriptionKey;
+                var subscriptionRouteLock = GetSubscriptionRouteLock(key);
+                await subscriptionRouteLock.WaitAsync(ct);
+                try
                 {
-                    var key = unmatchedUnsubscribe.EffectiveSubscriptionKey;
-                    _subscriptionRoutes.TryRemove(key, out _);
-                    if (_subscriptionRouteLocks.TryRemove(key, out var orphanedLock))
+                    var collectionId = GetCollectionIdForSubscription(command);
+                    if (collectionId is null || !_collectionRuntimes.TryGetValue(collectionId, out var unsubRuntime))
                     {
-                        orphanedLock.Dispose();
+                        _subscriptionRoutes.TryRemove(key, out _);
+                    }
+                    else
+                    {
+                        await unsubRuntime.EnqueueAsync(new UnsubscribeRuntimeWork(unsubRuntime, unsubscribeCommand), ct);
+                        _subscriptionRoutes.TryRemove(key, out _);
                     }
                 }
+                finally
+                {
+                    subscriptionRouteLock.Release();
+                    TryReclaimSubscriptionRouteLock(key, subscriptionRouteLock);
+                }
 
+                return [];
+            }
+
+            var nonUnsubCollectionId = GetCollectionIdForSubscription(command);
+            if (nonUnsubCollectionId is null || !_collectionRuntimes.TryGetValue(nonUnsubCollectionId, out var runtime))
+            {
                 return [];
             }
 
             RuntimeWorkItem<IReadOnlyList<ViewDelta>> work = command switch
             {
                 ChangeViewportCommand change => new ChangeViewportRuntimeWork(runtime, change),
-                UnsubscribeCommand unsub => new UnsubscribeRuntimeWork(runtime, unsub),
                 _ => new UnknownSubscriptionRuntimeWork(command),
             };
 
-            var result = await runtime.EnqueueAsync(work, ct);
-            if (command is UnsubscribeCommand unsubscribeCommand)
-            {
-                var key = unsubscribeCommand.EffectiveSubscriptionKey;
-                _subscriptionRoutes.TryRemove(key, out _);
-                if (_subscriptionRouteLocks.TryRemove(key, out var removedLock))
-                {
-                    removedLock.Dispose();
-                }
-            }
-
-            return result;
+            return await runtime.EnqueueAsync(work, ct);
         }
         finally
         {
