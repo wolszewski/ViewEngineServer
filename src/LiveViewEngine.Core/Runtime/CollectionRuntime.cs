@@ -508,20 +508,31 @@ public sealed class CollectionRuntime : IDisposable
         return (nonSegmentView, nonSegmentSortIndexKey, _sortIndexRegistry);
     }
 
-    private bool TryGetSharedView(ViewKey key, out SharedView? view)
+    private bool TryGetSharedView(ViewKey key, out SharedView view)
     {
         if (_options.EnableSegmentWorkers && key.SegmentId is not null)
         {
             if (_segmentRuntimes.TryGetValue(key.SegmentId, out var segmentRuntime))
             {
-                return segmentRuntime.SharedViews.TryGetValue(key, out view);
+                if (segmentRuntime.SharedViews.TryGetValue(key, out var segmentView))
+                {
+                    view = segmentView;
+                    return true;
+                }
             }
 
-            view = null;
+            view = null!;
             return false;
         }
 
-        return _sharedViews.TryGetValue(key, out view);
+        if (_sharedViews.TryGetValue(key, out var nonSegmentView))
+        {
+            view = nonSegmentView;
+            return true;
+        }
+
+        view = null!;
+        return false;
     }
 
     private SegmentRuntime GetOrCreateSegmentRuntime(string segmentId)
