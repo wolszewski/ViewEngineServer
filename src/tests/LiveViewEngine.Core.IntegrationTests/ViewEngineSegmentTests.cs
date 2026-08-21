@@ -76,7 +76,7 @@ public class ViewEngineSegmentTests
     }
 
     [Fact]
-    public async Task CreateSegment_DuplicateId_OverwritesPrevious()
+    public async Task CreateSegment_DuplicateId_Fails()
     {
         var (engine, _) = CreateEngine();
         await SetupTradesAsync(engine);
@@ -95,14 +95,7 @@ public class ViewEngineSegmentTests
         });
 
         Assert.True(r1.Success);
-        Assert.True(r2.Success);
-
-        await UpsertTrade(engine, "t1", "AAPL", "open", "1000", "2024-01-15");
-        await UpsertTrade(engine, "t2", "MSFT", "open", "2000", "2024-01-16");
-        var snapshot = await SubscribeAndGetSnapshot(engine, 1,
-            new ViewDefinition { CollectionId = "trades", FilterPresetId = "today" });
-        var keyIndex = snapshot.Schema.GetFieldIndex("key");
-        Assert.Equal("t2", Assert.Single(snapshot.Rows)[keyIndex]);
+        Assert.False(r2.Success);
     }
 
     [Fact]

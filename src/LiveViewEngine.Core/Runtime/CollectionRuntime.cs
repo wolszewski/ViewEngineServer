@@ -448,6 +448,11 @@ public sealed class CollectionRuntime : IDisposable
 
     public IngestResult RegisterSegment(string segmentId, IReadOnlyList<FilterSpec> filters)
     {
+        if (_segments.ContainsKey(segmentId))
+        {
+            return IngestResult.Fail($"Segment '{segmentId}' is already registered and cannot be overwritten.");
+        }
+
         _segments[segmentId] = filters;
         return IngestResult.Ok();
     }
