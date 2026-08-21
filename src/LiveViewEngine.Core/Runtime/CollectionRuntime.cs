@@ -150,6 +150,12 @@ public sealed class CollectionRuntime : IDisposable
     public IReadOnlyList<ViewDelta> HandleSubscribe(SubscribeCommand command)
     {
         var subscriptionKey = command.EffectiveSubscriptionKey;
+
+        if (command.View.SegmentId is not null && !_segments.ContainsKey(command.View.SegmentId))
+        {
+            return [];
+        }
+
         var selectedFieldIndexes = ResolveVisibleFieldIndexes(command.View);
 
         if (_viewports.TryGetValue(subscriptionKey, out var existingViewport))
@@ -420,8 +426,13 @@ public sealed class CollectionRuntime : IDisposable
 
     private ViewKey ResolveViewKey(ViewDefinition def)
     {
-        if (def.SegmentId is null || !_segments.TryGetValue(def.SegmentId, out var baseFilters) ||
-            baseFilters.Count == 0)
+        if (def.SegmentId is null)
+        {
+            return ViewKey.From(def);
+        }
+
+        var baseFilters = _segments[def.SegmentId];
+        if (baseFilters.Count == 0)
         {
             return ViewKey.From(def);
         }

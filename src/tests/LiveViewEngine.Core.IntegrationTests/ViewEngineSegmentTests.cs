@@ -58,6 +58,24 @@ public class ViewEngineSegmentTests
     }
 
     [Fact]
+    public async Task SubscribeToUnknownSegment_ReturnsEmpty()
+    {
+        var (engine, _) = CreateEngine();
+        await SetupTradesAsync(engine);
+        await UpsertTrade(engine, "t1", "AAPL", "open", "1000", "2024-01-15");
+
+        var events = await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = 1,
+            SubscriptionId = 1,
+            View = new ViewDefinition { CollectionId = "trades", SegmentId = "nonexistent" },
+            StartIndex = 0
+        });
+
+        Assert.Empty(events);
+    }
+
+    [Fact]
     public async Task CreateSegment_DuplicateId_OverwritesPrevious()
     {
         var (engine, _) = CreateEngine();
