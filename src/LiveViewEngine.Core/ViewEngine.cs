@@ -21,7 +21,7 @@ public sealed class ViewEngine : IViewEngine, IDisposable
     private readonly IViewEngineMetrics? _metrics;
     private readonly ConcurrentDictionary<string, CollectionRuntime> _collectionRuntimes = new();
     private readonly ConcurrentDictionary<SubscriptionKey, string> _subscriptionRoutes = new();
-    private readonly SemaphoreSlim[] _subscriptionRouteLocks = CreateSubscriptionRouteLocks();
+    private readonly ConcurrentDictionary<SubscriptionKey, SemaphoreSlim> _subscriptionRouteLocks = new();
 
     public ViewEngine(
         ICollectionStore store,
@@ -204,26 +204,13 @@ public sealed class ViewEngine : IViewEngine, IDisposable
 
         foreach (var subscriptionRouteLock in _subscriptionRouteLocks)
         {
-            subscriptionRouteLock.Dispose();
+            subscriptionRouteLock.Value.Dispose();
         }
-    }
-
-    private static SemaphoreSlim[] CreateSubscriptionRouteLocks()
-    {
-        const int lockCount = 64;
-        var locks = new SemaphoreSlim[lockCount];
-        for (var i = 0; i < lockCount; i++)
-        {
-            locks[i] = new SemaphoreSlim(1, 1);
-        }
-
-        return locks;
     }
 
     private SemaphoreSlim GetSubscriptionRouteLock(SubscriptionKey subscriptionKey)
     {
-        var lockIndex = (subscriptionKey.GetHashCode() & int.MaxValue) % _subscriptionRouteLocks.Length;
-        return _subscriptionRouteLocks[lockIndex];
+        return _subscriptionRouteLocks.GetOrAdd(subscriptionKey, static _ => new SemaphoreSlim(1, 1));
     }
 
     private string? GetCollectionIdForSubscription(SubscriptionCommand command)
