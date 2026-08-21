@@ -15,6 +15,8 @@ public sealed class CollectionRuntime : IDisposable
     private readonly Dictionary<string, IReadOnlyList<FilterSpec>> _filterPresets = new();
     private readonly IViewEngineMetrics? _metrics;
     private readonly LiveViewEngineOptions _options;
+    private int _activeSubscriptionCount;
+    private int _activeSharedViewCount;
 
     public CollectionRuntime(RowCollection collection, IViewEngineMetrics? metrics, LiveViewEngineOptions? options = null)
     {
@@ -30,10 +32,9 @@ public sealed class CollectionRuntime : IDisposable
 
     public RowCollection Collection { get; }
     private readonly MutationPropagator _propagator = new();
-    internal Dictionary<SubscriptionKey, ViewportState> Viewports => _viewports;
 
-    public int ActiveSubscriptionCount => _viewports.Count;
-    public int ActiveSharedViewCount => _sharedViews.Count;
+    public int ActiveSubscriptionCount => Volatile.Read(ref _activeSubscriptionCount);
+    public int ActiveSharedViewCount => Volatile.Read(ref _activeSharedViewCount);
     public int SortIndexCount => _sortIndexRegistry.Count;
     public int WorkerQueueLength => _worker.QueuedCount;
 
@@ -63,13 +64,6 @@ public sealed class CollectionRuntime : IDisposable
         collectionId = null;
         return false;
     }
-
-    public bool TryGetCollectionIdForSubscription(SubscriptionKey subscriptionKey, out string? collectionId)
-    {
-        collectionId = _viewports.TryGetValue(subscriptionKey, out var viewport) ? viewport.ViewKey.CollectionId : null;
-        return collectionId is not null;
-    }
-
 
     public MutationResult HandleUpsert(UpsertRowCommand command)
     {
@@ -161,7 +155,11 @@ public sealed class CollectionRuntime : IDisposable
         if (_viewports.TryGetValue(subscriptionKey, out var existingViewport))
         {
             DetachSubscription(existingViewport);
-            _viewports.Remove(subscriptionKey);
+            if (_viewports.Remove(subscriptionKey))
+            {
+                DecrementActiveSubscriptionCount();
+            }
+
             RemoveConnectionSubscription(existingViewport);
         }
 
@@ -181,6 +179,7 @@ public sealed class CollectionRuntime : IDisposable
             SelectedFieldIndexes = selectedFieldIndexes
         };
         _viewports[subscriptionKey] = viewport;
+        IncrementActiveSubscriptionCount();
         AddConnectionSubscription(viewport);
 
         if (!command.SendSnapshot)
@@ -351,6 +350,7 @@ public sealed class CollectionRuntime : IDisposable
                     continue;
                 }
 
+                DecrementActiveSubscriptionCount();
                 DetachSubscription(viewportState);
                 RemoveConnectionSubscription(viewportState);
             }
@@ -363,6 +363,7 @@ public sealed class CollectionRuntime : IDisposable
             return [];
         }
 
+        DecrementActiveSubscriptionCount();
         DetachSubscription(viewport);
         RemoveConnectionSubscription(viewport);
         return [];
@@ -427,6 +428,7 @@ public sealed class CollectionRuntime : IDisposable
         {
             view = new SharedView(viewKey, Collection, sortIndex, _options);
             _sharedViews[viewKey] = view;
+            IncrementActiveSharedViewCount();
         }
 
         return (view, sortIndexKey, _sortIndexRegistry);
@@ -538,6 +540,15 @@ public sealed class CollectionRuntime : IDisposable
         }
     }
 
+    public bool ContainsSubscription(SubscriptionKey subscriptionKey)
+    {
+        lock (_subscriptionsByConnectionLock)
+        {
+            return _subscriptionsByConnection.TryGetValue(subscriptionKey.ConnectionId, out var subscriptions) &&
+                   subscriptions.Contains(subscriptionKey.SubscriptionId);
+        }
+    }
+
     private void DetachSubscription(ViewportState viewport)
     {
         if (!TryGetSharedView(viewport.ViewKey, out var view))
@@ -553,6 +564,7 @@ public sealed class CollectionRuntime : IDisposable
         {
             if (_sharedViews.Remove(viewport.ViewKey))
             {
+                DecrementActiveSharedViewCount();
                 view.Dispose();
             }
         }
@@ -561,6 +573,30 @@ public sealed class CollectionRuntime : IDisposable
         {
             _sortIndexRegistry.FlagForRemoval(new SortIndexKey(viewport.ViewKey.CollectionId, sortIndex.FieldIndex));
         }
+    }
+
+    private void IncrementActiveSubscriptionCount()
+    {
+        Interlocked.Increment(ref _activeSubscriptionCount);
+        _metrics?.RecordActiveSubscriptionDelta(1, Collection.Schema.CollectionName);
+    }
+
+    private void DecrementActiveSubscriptionCount()
+    {
+        Interlocked.Decrement(ref _activeSubscriptionCount);
+        _metrics?.RecordActiveSubscriptionDelta(-1, Collection.Schema.CollectionName);
+    }
+
+    private void IncrementActiveSharedViewCount()
+    {
+        Interlocked.Increment(ref _activeSharedViewCount);
+        _metrics?.RecordActiveSharedViewDelta(1, Collection.Schema.CollectionName);
+    }
+
+    private void DecrementActiveSharedViewCount()
+    {
+        Interlocked.Decrement(ref _activeSharedViewCount);
+        _metrics?.RecordActiveSharedViewDelta(-1, Collection.Schema.CollectionName);
     }
 
     private int[] ResolveVisibleFieldIndexes(ViewDefinition view)

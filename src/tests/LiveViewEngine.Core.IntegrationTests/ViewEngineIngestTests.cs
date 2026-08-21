@@ -19,6 +19,7 @@ public class ViewEngineIngestTests
     }
 
     private static CollectionSchema OrdersSchema() => new("orders", ["customer", "amount", "status"]);
+    private static CollectionSchema TradesSchema() => new("trades", ["customer", "amount", "status"]);
 
     private static Task<IngestResult> CreateOrders(ViewEngine engine) =>
         engine.IngestAsync(new CreateCollectionCommand
@@ -27,15 +28,31 @@ public class ViewEngineIngestTests
             Schema = OrdersSchema()
         });
 
+    private static Task<IngestResult> CreateTrades(ViewEngine engine) =>
+        engine.IngestAsync(new CreateCollectionCommand
+        {
+            CollectionId = "trades",
+            Schema = TradesSchema()
+        });
+
     private static Task<IngestResult> Upsert(
         ViewEngine engine,
         string key,
         string customer,
         string amount,
         string status = "open") =>
+        UpsertToCollection(engine, "orders", key, customer, amount, status);
+
+    private static Task<IngestResult> UpsertToCollection(
+        ViewEngine engine,
+        string collectionId,
+        string key,
+        string customer,
+        string amount,
+        string status = "open") =>
         engine.IngestAsync(new UpsertRowCommand
         {
-            CollectionId = "orders",
+            CollectionId = collectionId,
             Key = key,
             Fields = new Dictionary<string, string?>
             {
@@ -462,6 +479,51 @@ public class ViewEngineIngestTests
         Assert.Equal(1, runtime.ActiveSubscriptionCount);
         Assert.Equal(1, runtime.ActiveSharedViewCount);
         Assert.Equal(1, runtime.SortIndexCount);
+    }
+
+    [Fact]
+    public async Task Subscribe_SameSubscriptionIdAcrossCollections_UnsubscribesPreviousCollection()
+    {
+        var (engine, publisher, store) = CreateEngine();
+        await CreateOrders(engine);
+        await CreateTrades(engine);
+        await UpsertToCollection(engine, "orders", "o1", "Alice", "100", "open");
+        await UpsertToCollection(engine, "trades", "t1", "Alice", "100", "open");
+
+        await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = 7,
+            SubscriptionId = 3,
+            View = new ViewDefinition { CollectionId = "orders" },
+            StartIndex = 0,
+            PageSize = 10
+        });
+
+        await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = 7,
+            SubscriptionId = 3,
+            View = new ViewDefinition { CollectionId = "trades" },
+            StartIndex = 0,
+            PageSize = 10
+        });
+
+        Assert.True(store.TryGetRuntime("orders", out var ordersRuntime));
+        Assert.NotNull(ordersRuntime);
+        Assert.Equal(0, ordersRuntime.ActiveSubscriptionCount);
+        Assert.Equal(0, ordersRuntime.ActiveSharedViewCount);
+
+        Assert.True(store.TryGetRuntime("trades", out var tradesRuntime));
+        Assert.NotNull(tradesRuntime);
+        Assert.Equal(1, tradesRuntime.ActiveSubscriptionCount);
+        Assert.Equal(1, tradesRuntime.ActiveSharedViewCount);
+
+        await UpsertToCollection(engine, "orders", "o2", "Bob", "200", "open");
+        await UpsertToCollection(engine, "trades", "t2", "Bob", "200", "open");
+
+        var socketEvents = publisher.EventsFor(7).OfType<RowInsertEvent>().ToList();
+        Assert.DoesNotContain(socketEvents, static e => e.Row["key"] == "o2");
+        Assert.Contains(socketEvents, static e => e.SubscriptionId == 3 && e.Row["key"] == "t2");
     }
 
     [Fact]

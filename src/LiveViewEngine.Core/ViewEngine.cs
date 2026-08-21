@@ -20,6 +20,7 @@ public sealed class ViewEngine : IViewEngine, IDisposable
     private readonly ILogger<ViewEngine> _logger;
     private readonly IViewEngineMetrics? _metrics;
     private readonly ConcurrentDictionary<string, CollectionRuntime> _collectionRuntimes = new();
+    private readonly ConcurrentDictionary<SubscriptionKey, string> _subscriptionRoutes = new();
 
     public ViewEngine(
         ICollectionStore store,
@@ -32,10 +33,7 @@ public sealed class ViewEngine : IViewEngine, IDisposable
         _logger = logger;
         _metrics = metrics;
 
-        metrics?.RegisterGaugeSources(
-            () => _collectionRuntimes.Values.Sum(static r => r.ActiveSubscriptionCount),
-            () => _collectionRuntimes.Values.Sum(static r => r.ActiveSharedViewCount),
-            () => _collectionRuntimes.Values.Sum(static r => r.SortIndexCount));
+        metrics?.RegisterSortIndexGaugeSource(() => _collectionRuntimes.Values.Sum(static r => r.SortIndexCount));
 
         metrics?.RegisterTypedColumnGaugeSource(() =>
             _collectionRuntimes.Values
@@ -104,19 +102,22 @@ public sealed class ViewEngine : IViewEngine, IDisposable
         SubscriptionCommand command, CancellationToken ct = default)
     {
         var started = Stopwatch.GetTimestamp();
+        string? metricsCollectionId = GetCollectionIdForSubscription(command);
         try
         {
             if (command is SubscribeCommand subscribe)
             {
+                metricsCollectionId = subscribe.View.CollectionId;
                 string subscribeCollectionId = subscribe.View.CollectionId;
                 if (!_collectionRuntimes.TryGetValue(subscribeCollectionId, out var subscribeRuntime))
                 {
                     return [];
                 }
 
-                if (TryGetRuntimeForSubscription(subscribe.EffectiveSubscriptionKey, out var previousRuntime) &&
-                    previousRuntime is not null &&
-                    !ReferenceEquals(previousRuntime, subscribeRuntime))
+                var subscriptionKey = subscribe.EffectiveSubscriptionKey;
+                if (_subscriptionRoutes.TryGetValue(subscriptionKey, out var previousCollectionId) &&
+                    !string.Equals(previousCollectionId, subscribeCollectionId, StringComparison.Ordinal) &&
+                    _collectionRuntimes.TryGetValue(previousCollectionId, out var previousRuntime))
                 {
                     await previousRuntime.EnqueueAsync(
                         new UnsubscribeRuntimeWork(previousRuntime, new UnsubscribeCommand
@@ -127,7 +128,17 @@ public sealed class ViewEngine : IViewEngine, IDisposable
                         ct);
                 }
 
-                return await subscribeRuntime.EnqueueAsync(new SubscribeRuntimeWork(subscribeRuntime, subscribe), ct);
+                var deltas = await subscribeRuntime.EnqueueAsync(new SubscribeRuntimeWork(subscribeRuntime, subscribe), ct);
+                if (subscribeRuntime.ContainsSubscription(subscriptionKey))
+                {
+                    _subscriptionRoutes[subscriptionKey] = subscribeCollectionId;
+                }
+                else
+                {
+                    _subscriptionRoutes.TryRemove(subscriptionKey, out _);
+                }
+
+                return deltas;
             }
 
             if (command is UnsubscribeCommand unsubscribe && unsubscribe.SubscriptionId == 0)
@@ -136,9 +147,14 @@ public sealed class ViewEngine : IViewEngine, IDisposable
                 return [];
             }
 
-            string? collectionId = GetCollectionIdForSubscription(command);
+            var collectionId = GetCollectionIdForSubscription(command);
             if (collectionId is null || !_collectionRuntimes.TryGetValue(collectionId, out var runtime))
             {
+                if (command is UnsubscribeCommand unmatchedUnsubscribe)
+                {
+                    _subscriptionRoutes.TryRemove(unmatchedUnsubscribe.EffectiveSubscriptionKey, out _);
+                }
+
                 return [];
             }
 
@@ -149,15 +165,20 @@ public sealed class ViewEngine : IViewEngine, IDisposable
                 _ => new UnknownSubscriptionRuntimeWork(command),
             };
 
-            return await runtime.EnqueueAsync(work, ct);
+            var result = await runtime.EnqueueAsync(work, ct);
+            if (command is UnsubscribeCommand unsubscribeCommand)
+            {
+                _subscriptionRoutes.TryRemove(unsubscribeCommand.EffectiveSubscriptionKey, out _);
+            }
+
+            return result;
         }
         finally
         {
-            string? collectionId = GetMetricsCollectionId(command);
             var durationMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
-            if (collectionId is not null)
+            if (metricsCollectionId is not null)
             {
-                _metrics?.RecordSubscriptionDuration(durationMs, command.GetType().Name, collectionId);
+                _metrics?.RecordSubscriptionDuration(durationMs, command.GetType().Name, metricsCollectionId);
             }
         }
     }
@@ -177,44 +198,9 @@ public sealed class ViewEngine : IViewEngine, IDisposable
             return sub.View.CollectionId;
         }
 
-        if (TryGetRuntimeForSubscription(command.EffectiveSubscriptionKey, out var bySubscription) &&
-            bySubscription is not null)
-        {
-            return bySubscription.Collection.Schema.CollectionName;
-        }
-
-        return null;
-    }
-
-    private string? GetMetricsCollectionId(SubscriptionCommand command)
-    {
-        if (command is SubscribeCommand subscribe)
-        {
-            return subscribe.View.CollectionId;
-        }
-
-        if (TryGetRuntimeForSubscription(command.EffectiveSubscriptionKey, out var runtime) &&
-            runtime is not null)
-        {
-            return runtime.Collection.Schema.CollectionName;
-        }
-
-        return null;
-    }
-
-    private bool TryGetRuntimeForSubscription(SubscriptionKey subscriptionKey, out CollectionRuntime? runtime)
-    {
-        foreach (var candidate in _collectionRuntimes.Values)
-        {
-            if (candidate.TryGetCollectionIdForSubscription(subscriptionKey, out _))
-            {
-                runtime = candidate;
-                return true;
-            }
-        }
-
-        runtime = null;
-        return false;
+        return _subscriptionRoutes.TryGetValue(command.EffectiveSubscriptionKey, out var collectionId)
+            ? collectionId
+            : null;
     }
 
     private async Task UnsubscribeAllForConnectionAsync(int connectionId, CancellationToken ct)
@@ -229,6 +215,14 @@ public sealed class ViewEngine : IViewEngine, IDisposable
             await runtime.EnqueueAsync(
                 new UnsubscribeRuntimeWork(runtime, new UnsubscribeCommand { ConnectionId = connectionId }),
                 ct);
+        }
+
+        foreach (var subscriptionKey in _subscriptionRoutes.Keys)
+        {
+            if (subscriptionKey.ConnectionId == connectionId)
+            {
+                _subscriptionRoutes.TryRemove(subscriptionKey, out _);
+            }
         }
     }
 
