@@ -430,21 +430,21 @@ public class ViewEngineSnapshotBenchmarks
     }
 }
 
-// Benchmarks comparing EnableSegmentWorkers = false vs true.
-// 8 segments with sizes matching the described scenario (50k, 5k, 1k, 500, 200, 100, 50, 10).
-// Rows are distributed across segments via a "segment" field whose value is the segment id.
-// Each segment has 10 subscribers watching a sorted+filtered view over that segment.
+// Benchmarks comparing EnableSegmentWorkers = false vs true, and a no-segments baseline.
+// 8 groups with sizes matching the described scenario (50k, 5k, 1k, 500, 200, 100, 50, 10).
+// Rows are distributed across groups via a "segment" field whose value is the group id.
+// Each group has 10 subscribers watching a sorted+filtered view over that group.
 [MemoryDiagnoser]
-[HideColumns("Error", "StdDev", "RatioSD")]
+[HideColumns("Error", "StdDev", "Ratio", "RatioSD")]
 public class SegmentWorkersBenchmarks
 {
     private const string CollectionId = "objects";
     private const int TotalRows = 100_000;
     private const int ModifyCount = 10_000;
-    private const int SubscribersPerSegment = 10;
+    private const int SubscribersPerGroup = 10;
 
-    // Segment ids and their target row counts. The largest segment dominates propagation cost.
-    private static readonly (string Id, int Size)[] Segments =
+    // Group ids and their target row counts. The largest group dominates propagation cost.
+    private static readonly (string Id, int Size)[] Groups =
     [
         ("seg0", 50_000),
         ("seg1",  5_000),
@@ -461,7 +461,8 @@ public class SegmentWorkersBenchmarks
 
     private UpsertRowCommand[] _insertCommands = [];
     private UpsertRowCommand[] _modifyCommands = [];
-    private ViewEngine _populatedEngine = null!;
+    private ViewEngine _populatedSegmentEngine = null!;
+    private ViewEngine _populatedNoSegmentEngine = null!;
 
     [GlobalSetup]
     public void GlobalSetup()
@@ -473,17 +474,19 @@ public class SegmentWorkersBenchmarks
     [IterationSetup]
     public void IterationSetup()
     {
-        _populatedEngine = CreateAndPopulateEngine(EnableSegmentWorkers, _insertCommands);
+        _populatedSegmentEngine = CreateAndPopulate(CreateSegmentEngine(EnableSegmentWorkers), _insertCommands);
+        _populatedNoSegmentEngine = CreateAndPopulate(CreateNoSegmentEngine(), _insertCommands);
     }
 
     [IterationCleanup]
     public void IterationCleanup()
     {
-        _populatedEngine.Dispose();
+        _populatedSegmentEngine.Dispose();
+        _populatedNoSegmentEngine.Dispose();
     }
 
     [Benchmark]
-    public async Task Insert100k_8Segments_10SubscribersEach()
+    public async Task Insert100k_Segments()
     {
         using var engine = CreateSegmentEngine(EnableSegmentWorkers);
         foreach (var cmd in _insertCommands)
@@ -493,37 +496,56 @@ public class SegmentWorkersBenchmarks
     }
 
     [Benchmark]
-    public async Task Modify10k_8Segments_10SubscribersEach()
+    public async Task Insert100k_NoSegments()
     {
-        foreach (var cmd in _modifyCommands)
+        using var engine = CreateNoSegmentEngine();
+        foreach (var cmd in _insertCommands)
         {
-            await _populatedEngine.IngestAsync(cmd);
+            await engine.IngestAsync(cmd);
         }
     }
 
-    // Distributes TotalRows across segments proportionally to their declared sizes.
-    // Remaining rows go into a "remainder" bucket that has no subscribers.
+    [Benchmark]
+    public async Task Modify10k_Segments()
+    {
+        foreach (var cmd in _modifyCommands)
+        {
+            await _populatedSegmentEngine.IngestAsync(cmd);
+        }
+    }
+
+    [Benchmark]
+    public async Task Modify10k_NoSegments()
+    {
+        foreach (var cmd in _modifyCommands)
+        {
+            await _populatedNoSegmentEngine.IngestAsync(cmd);
+        }
+    }
+
+    // Distributes TotalRows across groups proportionally to their declared sizes.
+    // Remaining rows go into a "none" bucket that has no subscribers.
     private static UpsertRowCommand[] BuildSegmentedInserts(int total)
     {
         var commands = new UpsertRowCommand[total];
 
-        // segmentIndex[i] = index into Segments[], or Segments.Length meaning "no segment".
-        var segmentIndex = new int[total];
-        Array.Fill(segmentIndex, Segments.Length);
+        // groupIndex[i] = index into Groups[], or Groups.Length meaning "no group".
+        var groupIndex = new int[total];
+        Array.Fill(groupIndex, Groups.Length);
 
         int rowIdx = 0;
-        for (int s = 0; s < Segments.Length && rowIdx < total; s++)
+        for (int g = 0; g < Groups.Length && rowIdx < total; g++)
         {
-            for (int r = 0; r < Segments[s].Size && rowIdx < total; r++, rowIdx++)
+            for (int r = 0; r < Groups[g].Size && rowIdx < total; r++, rowIdx++)
             {
-                segmentIndex[rowIdx] = s;
+                groupIndex[rowIdx] = g;
             }
         }
 
         for (int i = 0; i < total; i++)
         {
-            int s = segmentIndex[i];
-            string segId = s < Segments.Length ? Segments[s].Id : "none";
+            int g = groupIndex[i];
+            string groupId = g < Groups.Length ? Groups[g].Id : "none";
             commands[i] = new UpsertRowCommand
             {
                 CollectionId = CollectionId,
@@ -531,7 +553,7 @@ public class SegmentWorkersBenchmarks
                 Fields = new Dictionary<string, string?>
                 {
                     ["id"] = $"O{i:D6}",
-                    ["segment"] = segId,
+                    ["segment"] = groupId,
                     ["date"] = $"2024-{(i % 12 + 1):D2}-{(i % 28 + 1):D2}",
                     ["f01"] = $"v{i % 100}",
                     ["f02"] = i % 2 == 0 ? "A" : "B",
@@ -543,7 +565,7 @@ public class SegmentWorkersBenchmarks
         return commands;
     }
 
-    // Updates random fields on the first ModifyCount keys (spread across all segments).
+    // Updates random fields on random keys spread across all groups.
     private static UpsertRowCommand[] BuildModifyCommands(int count)
     {
         var rng = new Random(42);
@@ -565,39 +587,39 @@ public class SegmentWorkersBenchmarks
         return commands;
     }
 
+    private static CollectionSchema BuildSchema() =>
+        new(CollectionId, ["id", "segment", "date", "f01", "f02", "f03"]);
+
     private static ViewEngine CreateSegmentEngine(bool enableSegmentWorkers)
     {
         var options = new LiveViewEngineOptions { EnableSegmentWorkers = enableSegmentWorkers };
         var store = new CollectionStore(null, options);
         var engine = new ViewEngine(store, new ViewEngineBenchmarks.NullPublisher(), NullLogger<ViewEngine>.Instance, null);
 
-        var schema = new CollectionSchema(CollectionId,
-            ["id", "segment", "date", "f01", "f02", "f03"]);
-
-        engine.IngestAsync(new CreateCollectionCommand { CollectionId = CollectionId, Schema = schema })
+        engine.IngestAsync(new CreateCollectionCommand { CollectionId = CollectionId, Schema = BuildSchema() })
               .GetAwaiter().GetResult();
 
-        for (int s = 0; s < Segments.Length; s++)
+        for (int g = 0; g < Groups.Length; g++)
         {
-            var (segId, _) = Segments[s];
+            var (groupId, _) = Groups[g];
             engine.IngestAsync(new CreateSegmentCommand
             {
                 CollectionId = CollectionId,
-                SegmentId = segId,
-                Filters = [new FilterSpec("segment", FilterOperator.Eq, segId)]
+                SegmentId = groupId,
+                Filters = [new FilterSpec("segment", FilterOperator.Eq, groupId)]
             }).GetAwaiter().GetResult();
 
-            for (int sub = 0; sub < SubscribersPerSegment; sub++)
+            for (int sub = 0; sub < SubscribersPerGroup; sub++)
             {
                 engine.SubscribeAsync(new SubscribeCommand
                 {
-                    ConnectionId = s * SubscribersPerSegment + sub + 1,
+                    ConnectionId = g * SubscribersPerGroup + sub + 1,
                     SubscriptionId = 1,
                     SendSnapshot = false,
                     View = new ViewDefinition
                     {
                         CollectionId = CollectionId,
-                        SegmentId = segId,
+                        SegmentId = groupId,
                         SortColumn = "date",
                         SortAscending = false
                     },
@@ -610,9 +632,43 @@ public class SegmentWorkersBenchmarks
         return engine;
     }
 
-    private static ViewEngine CreateAndPopulateEngine(bool enableSegmentWorkers, UpsertRowCommand[] inserts)
+    // Same topology but using plain ViewDefinition.Filters — no CreateSegmentCommand, no SegmentId.
+    private static ViewEngine CreateNoSegmentEngine()
     {
-        var engine = CreateSegmentEngine(enableSegmentWorkers);
+        var store = new CollectionStore(null, new LiveViewEngineOptions());
+        var engine = new ViewEngine(store, new ViewEngineBenchmarks.NullPublisher(), NullLogger<ViewEngine>.Instance, null);
+
+        engine.IngestAsync(new CreateCollectionCommand { CollectionId = CollectionId, Schema = BuildSchema() })
+              .GetAwaiter().GetResult();
+
+        for (int g = 0; g < Groups.Length; g++)
+        {
+            var (groupId, _) = Groups[g];
+            for (int sub = 0; sub < SubscribersPerGroup; sub++)
+            {
+                engine.SubscribeAsync(new SubscribeCommand
+                {
+                    ConnectionId = g * SubscribersPerGroup + sub + 1,
+                    SubscriptionId = 1,
+                    SendSnapshot = false,
+                    View = new ViewDefinition
+                    {
+                        CollectionId = CollectionId,
+                        SortColumn = "date",
+                        SortAscending = false,
+                        Filters = [new FilterSpec("segment", FilterOperator.Eq, groupId)]
+                    },
+                    StartIndex = 0,
+                    PageSize = 50
+                }).GetAwaiter().GetResult();
+            }
+        }
+
+        return engine;
+    }
+
+    private static ViewEngine CreateAndPopulate(ViewEngine engine, UpsertRowCommand[] inserts)
+    {
         foreach (var cmd in inserts)
         {
             engine.IngestAsync(cmd).GetAwaiter().GetResult();
