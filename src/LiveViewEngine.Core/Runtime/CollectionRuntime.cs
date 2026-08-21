@@ -9,7 +9,6 @@ public sealed class CollectionRuntime : IDisposable
     private readonly CollectionWorker _worker = new();
     private readonly Dictionary<ViewKey, SharedView> _sharedViews = new();
     private readonly Dictionary<SubscriptionKey, ViewportState> _viewports = new();
-    private readonly Dictionary<string, SegmentRuntime> _segmentRuntimes = new();
     private readonly Lock _subscriptionsByConnectionLock = new();
     private readonly Dictionary<int, HashSet<int>> _subscriptionsByConnection = [];
     private readonly SortIndexRegistry _sortIndexRegistry = new();
@@ -34,9 +33,9 @@ public sealed class CollectionRuntime : IDisposable
     internal Dictionary<SubscriptionKey, ViewportState> Viewports => _viewports;
 
     public int ActiveSubscriptionCount => _viewports.Count;
-    public int ActiveSharedViewCount => _sharedViews.Count + _segmentRuntimes.Values.Sum(static x => x.SharedViews.Count);
-    public int SortIndexCount => _sortIndexRegistry.Count + _segmentRuntimes.Values.Sum(static x => x.SortIndexes.Count);
-    public int WorkerQueueLength => _worker.QueuedCount + _segmentRuntimes.Values.Sum(static x => x.WorkerQueueLength);
+    public int ActiveSharedViewCount => _sharedViews.Count;
+    public int SortIndexCount => _sortIndexRegistry.Count;
+    public int WorkerQueueLength => _worker.QueuedCount;
 
     public IEnumerable<(string CollectionId, string FieldName, int RefCount)> GetActiveTypedColumns()
     {
@@ -85,17 +84,6 @@ public sealed class CollectionRuntime : IDisposable
                 {
                     sortIndex.CaptureOldValue(existingRowIndex);
                 }
-
-                if (_options.EnableSegmentWorkers)
-                {
-                    foreach (var segmentRuntime in _segmentRuntimes.Values)
-                    {
-                        foreach (var sortIndex in segmentRuntime.SortIndexes.GetAllForCollection(segmentRuntime.SortCollectionId))
-                        {
-                            sortIndex.CaptureOldValue(existingRowIndex);
-                        }
-                    }
-                }
             }
 
             var mutation = Collection.AddOrUpdate(command.Key, command.Fields);
@@ -109,11 +97,6 @@ public sealed class CollectionRuntime : IDisposable
                     _sortIndexRegistry.GetAllForCollection(Collection.Schema.CollectionName),
                     mutation,
                     isDelete: false);
-            }
-
-            if (_options.EnableSegmentWorkers)
-            {
-                groups = MergeGroups(groups, ExecuteSegmentPropagation(mutation, isDelete: false));
             }
 
             return new MutationResult(IngestResult.Ok(), groups);
@@ -141,17 +124,6 @@ public sealed class CollectionRuntime : IDisposable
             {
                 sortIndex.CaptureOldValue(existingRowIndex);
             }
-
-            if (_options.EnableSegmentWorkers)
-            {
-                foreach (var segmentRuntime in _segmentRuntimes.Values)
-                {
-                    foreach (var sortIndex in segmentRuntime.SortIndexes.GetAllForCollection(segmentRuntime.SortCollectionId))
-                    {
-                        sortIndex.CaptureOldValue(existingRowIndex);
-                    }
-                }
-            }
         }
 
         var mutation = Collection.Delete(command.Key);
@@ -170,11 +142,6 @@ public sealed class CollectionRuntime : IDisposable
                 _sortIndexRegistry.GetAllForCollection(Collection.Schema.CollectionName),
                 mutation,
                 isDelete: true);
-        }
-
-        if (_options.EnableSegmentWorkers)
-        {
-            groups = MergeGroups(groups, ExecuteSegmentPropagation(mutation, isDelete: true));
         }
 
         return new MutationResult(IngestResult.Ok(), groups);
@@ -403,11 +370,6 @@ public sealed class CollectionRuntime : IDisposable
 
     public void Dispose()
     {
-        foreach (var segmentRuntime in _segmentRuntimes.Values)
-        {
-            segmentRuntime.Dispose();
-        }
-
         _worker.Dispose();
     }
 
@@ -426,34 +388,6 @@ public sealed class CollectionRuntime : IDisposable
             if (DateTime.UtcNow - flaggedAt >= _options.StaleIndexGracePeriod)
             {
                 await EnqueueAsync(new RemoveStaleTypedColumnRuntimeWork(this, fieldIndex), ct).ConfigureAwait(false);
-            }
-        }
-
-        foreach (var segmentRuntime in _segmentRuntimes.Values)
-        {
-            foreach (var (key, flaggedAt) in segmentRuntime.SortIndexes.GetFlagged())
-            {
-                if (DateTime.UtcNow - flaggedAt < _options.StaleIndexGracePeriod)
-                {
-                    continue;
-                }
-
-                if (!segmentRuntime.SortIndexes.TryGet(key, out var index) || index is null)
-                {
-                    segmentRuntime.SortIndexes.UnflagForRemoval(key);
-                    continue;
-                }
-
-                if (index.SubscriberCount > 0)
-                {
-                    segmentRuntime.SortIndexes.UnflagForRemoval(key);
-                    continue;
-                }
-
-                segmentRuntime.SortIndexes.Remove(key);
-                segmentRuntime.SortIndexes.UnflagForRemoval(key);
-                Collection.ReleaseTypedFieldRef(key.FieldIndex);
-                Collection.TryDeactivatePendingTypedColumn(key.FieldIndex);
             }
         }
     }
@@ -487,48 +421,19 @@ public sealed class CollectionRuntime : IDisposable
 
     private (SharedView View, SortIndexKey SortIndexKey, SortIndexRegistry Registry) GetOrCreateSharedView(ViewKey viewKey)
     {
-        if (_options.EnableSegmentWorkers && viewKey.SegmentId is not null)
+        var sortIndexKey = CreateSortIndexKey(Collection, viewKey, viewKey.CollectionId);
+        var sortIndex = _sortIndexRegistry.GetOrCreate(sortIndexKey, Collection);
+        if (!_sharedViews.TryGetValue(viewKey, out var view))
         {
-            var segmentRuntime = GetOrCreateSegmentRuntime(viewKey.SegmentId);
-            var sortIndexKey = CreateSortIndexKey(Collection, viewKey, segmentRuntime.SortCollectionId);
-            var sortIndex = segmentRuntime.SortIndexes.GetOrCreate(sortIndexKey, Collection);
-            if (!segmentRuntime.SharedViews.TryGetValue(viewKey, out var existingView))
-            {
-                existingView = new SharedView(viewKey, Collection, sortIndex, _options);
-                segmentRuntime.SharedViews[viewKey] = existingView;
-            }
-
-            return (existingView, sortIndexKey, segmentRuntime.SortIndexes);
+            view = new SharedView(viewKey, Collection, sortIndex, _options);
+            _sharedViews[viewKey] = view;
         }
 
-        var nonSegmentSortIndexKey = CreateSortIndexKey(Collection, viewKey, viewKey.CollectionId);
-        var nonSegmentSortIndex = _sortIndexRegistry.GetOrCreate(nonSegmentSortIndexKey, Collection);
-        if (!_sharedViews.TryGetValue(viewKey, out var nonSegmentView))
-        {
-            nonSegmentView = new SharedView(viewKey, Collection, nonSegmentSortIndex, _options);
-            _sharedViews[viewKey] = nonSegmentView;
-        }
-
-        return (nonSegmentView, nonSegmentSortIndexKey, _sortIndexRegistry);
+        return (view, sortIndexKey, _sortIndexRegistry);
     }
 
     private bool TryGetSharedView(ViewKey key, out SharedView view)
     {
-        if (_options.EnableSegmentWorkers && key.SegmentId is not null)
-        {
-            if (_segmentRuntimes.TryGetValue(key.SegmentId, out var segmentRuntime))
-            {
-                if (segmentRuntime.SharedViews.TryGetValue(key, out var segmentView))
-                {
-                    view = segmentView;
-                    return true;
-                }
-            }
-
-            view = null!;
-            return false;
-        }
-
         if (_sharedViews.TryGetValue(key, out var nonSegmentView))
         {
             view = nonSegmentView;
@@ -539,84 +444,9 @@ public sealed class CollectionRuntime : IDisposable
         return false;
     }
 
-    private SegmentRuntime GetOrCreateSegmentRuntime(string segmentId)
-    {
-        if (!_segmentRuntimes.TryGetValue(segmentId, out var runtime))
-        {
-            var filters = _segments.TryGetValue(segmentId, out var existingFilters) ? existingFilters : [];
-            runtime = new SegmentRuntime(Collection.Schema.CollectionName, segmentId, filters);
-            _segmentRuntimes[segmentId] = runtime;
-        }
-
-        return runtime;
-    }
-
-    private List<(IReadOnlyList<ViewDelta>, List<SubscriberTarget>)>? ExecuteSegmentPropagation(
-        MutationInfo mutation,
-        bool isDelete)
-    {
-        if (_segmentRuntimes.Count == 0)
-        {
-            return null;
-        }
-
-        var tasks = new List<Task<List<(IReadOnlyList<ViewDelta>, List<SubscriberTarget>)>?>>();
-        foreach (var segmentRuntime in _segmentRuntimes.Values)
-        {
-            if (segmentRuntime.SharedViews.Count == 0)
-            {
-                continue;
-            }
-
-            var work = new SegmentMutationRuntimeWork(segmentRuntime, this, mutation, isDelete);
-            tasks.Add(segmentRuntime.EnqueueAsync(work));
-        }
-
-        if (tasks.Count == 0)
-        {
-            return null;
-        }
-
-        Task.WhenAll(tasks).GetAwaiter().GetResult();
-
-        List<(IReadOnlyList<ViewDelta>, List<SubscriberTarget>)>? merged = null;
-        foreach (var task in tasks)
-        {
-            merged = MergeGroups(merged, task.Result);
-        }
-
-        return merged;
-    }
-
-    private static List<(IReadOnlyList<ViewDelta>, List<SubscriberTarget>)>? MergeGroups(
-        List<(IReadOnlyList<ViewDelta>, List<SubscriberTarget>)>? groups,
-        List<(IReadOnlyList<ViewDelta>, List<SubscriberTarget>)>? toAppend)
-    {
-        if (toAppend is null || toAppend.Count == 0)
-        {
-            return groups;
-        }
-
-        if (groups is null)
-        {
-            groups = [];
-        }
-
-        groups.AddRange(toAppend);
-        return groups;
-    }
-
     public IngestResult RegisterSegment(string segmentId, IReadOnlyList<FilterSpec> filters)
     {
         _segments[segmentId] = filters;
-        if (_options.EnableSegmentWorkers && !_segmentRuntimes.ContainsKey(segmentId))
-        {
-            _segmentRuntimes[segmentId] = new SegmentRuntime(
-                Collection.Schema.CollectionName,
-                segmentId,
-                filters);
-        }
-
         return IngestResult.Ok();
     }
 
@@ -721,15 +551,7 @@ public sealed class CollectionRuntime : IDisposable
 
         if (view.IsEmpty)
         {
-            if (viewport.ViewKey.SegmentId is not null && _options.EnableSegmentWorkers)
-            {
-                if (_segmentRuntimes.TryGetValue(viewport.ViewKey.SegmentId, out var segmentRuntime) &&
-                    segmentRuntime.SharedViews.Remove(viewport.ViewKey))
-                {
-                    view.Dispose();
-                }
-            }
-            else if (_sharedViews.Remove(viewport.ViewKey))
+            if (_sharedViews.Remove(viewport.ViewKey))
             {
                 view.Dispose();
             }
@@ -737,15 +559,6 @@ public sealed class CollectionRuntime : IDisposable
 
         if (sortIndex.SubscriberCount == 0)
         {
-            if (viewport.ViewKey.SegmentId is not null &&
-                _options.EnableSegmentWorkers &&
-                _segmentRuntimes.TryGetValue(viewport.ViewKey.SegmentId, out var segmentRuntime))
-            {
-                segmentRuntime.SortIndexes.FlagForRemoval(
-                    new SortIndexKey(segmentRuntime.SortCollectionId, sortIndex.FieldIndex));
-                return;
-            }
-
             _sortIndexRegistry.FlagForRemoval(new SortIndexKey(viewport.ViewKey.CollectionId, sortIndex.FieldIndex));
         }
     }

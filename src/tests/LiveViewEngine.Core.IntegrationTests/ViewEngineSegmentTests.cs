@@ -319,12 +319,11 @@ public class ViewEngineSegmentTests
     }
 
     [Fact]
-    public async Task SegmentWorkersEnabled_SubscribeToSegment_ReturnsOnlyMatchingRows()
+    public async Task SubscribeToSegment_AfterPrePopulation_ReturnsOnlyMatchingRows()
     {
         var (engine, _) = CreateEngine(new LiveViewEngineOptions
         {
-            EagerIndexing = false,
-            EnableSegmentWorkers = true
+            EagerIndexing = false
         });
         await SetupTradesAsync(engine);
         await engine.IngestAsync(new CreateSegmentCommand
