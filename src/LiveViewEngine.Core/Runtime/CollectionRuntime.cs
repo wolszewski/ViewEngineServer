@@ -145,7 +145,7 @@ public sealed class CollectionRuntime : IDisposable
     {
         var subscriptionKey = command.EffectiveSubscriptionKey;
 
-        if (command.View.SegmentId is not null && !_segments.ContainsKey(command.View.SegmentId))
+        if (command.View.FilterPresetId is not null && !_segments.ContainsKey(command.View.FilterPresetId))
         {
             return [];
         }
@@ -459,12 +459,12 @@ public sealed class CollectionRuntime : IDisposable
 
     private ViewKey ResolveViewKey(ViewDefinition def)
     {
-        if (def.SegmentId is null)
+        if (def.FilterPresetId is null)
         {
             return ViewKey.From(def);
         }
 
-        var baseFilters = _segments[def.SegmentId];
+        var baseFilters = _segments[def.FilterPresetId];
         if (baseFilters.Count == 0)
         {
             return ViewKey.From(def);
@@ -473,7 +473,7 @@ public sealed class CollectionRuntime : IDisposable
         var combined = def.Filters.Count > 0
             ? [.. baseFilters, .. def.Filters]
             : baseFilters;
-        return new ViewKey(def.CollectionId, def.SegmentId, def.SortColumn, def.SortAscending, combined);
+        return new ViewKey(def.CollectionId, def.FilterPresetId, def.SortColumn, def.SortAscending, combined);
     }
 
     private void EagerlyInitializeIndexes()

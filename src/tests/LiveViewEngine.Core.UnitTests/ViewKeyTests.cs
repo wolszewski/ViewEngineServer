@@ -90,7 +90,7 @@ public class ViewKeyTests
     }
 
     [Fact]
-    public void Equals_DifferentSegmentId_ReturnsFalse()
+    public void Equals_DifferentFilterPresetId_ReturnsFalse()
     {
         var a = new ViewKey("orders", "preset-a", null, true, null);
         var b = new ViewKey("orders", "preset-b", null, true, null);
@@ -98,7 +98,7 @@ public class ViewKeyTests
     }
 
     [Fact]
-    public void Equals_NullVsNonNullSegmentId_ReturnsFalse()
+    public void Equals_NullVsNonNullFilterPresetId_ReturnsFalse()
     {
         var a = new ViewKey("orders", null, null, true, null);
         var b = new ViewKey("orders", "preset-a", null, true, null);

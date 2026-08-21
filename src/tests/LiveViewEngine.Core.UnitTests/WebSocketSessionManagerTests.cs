@@ -55,10 +55,10 @@ public class WebSocketSessionManagerTests
             Schema = new CollectionSchema("trades", ["instrument", "status", "amount", "valueDate"],
                 [ScalarFieldType.String, ScalarFieldType.String, ScalarFieldType.Decimal, ScalarFieldType.DateOnly])
         });
-        await engine.IngestAsync(new CreateSegmentCommand
+        await engine.IngestAsync(new CreateFilterPresetCommand
         {
             CollectionId = "trades",
-            SegmentId = "today",
+            FilterPresetId = "today",
             Filters = [new FilterSpec("valueDate", FilterOperator.Eq, "2024-01-15")]
         });
         await engine.IngestAsync(new UpsertRowCommand
