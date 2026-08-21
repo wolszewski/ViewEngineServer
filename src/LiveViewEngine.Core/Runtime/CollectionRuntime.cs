@@ -145,6 +145,11 @@ public sealed class CollectionRuntime : IDisposable
     {
         var subscriptionKey = command.EffectiveSubscriptionKey;
 
+        if (command.View.FilterPresetId is not null && !_filterPresets.ContainsKey(command.View.FilterPresetId))
+        {
+            return [];
+        }
+
         if (_viewports.TryGetValue(subscriptionKey, out var existingViewport))
         {
             DetachSubscription(existingViewport);
@@ -154,11 +159,6 @@ public sealed class CollectionRuntime : IDisposable
             }
 
             RemoveConnectionSubscription(existingViewport);
-        }
-
-        if (command.View.FilterPresetId is not null && !_filterPresets.ContainsKey(command.View.FilterPresetId))
-        {
-            return [];
         }
 
         var selectedFieldIndexes = ResolveVisibleFieldIndexes(command.View);
