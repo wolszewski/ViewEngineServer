@@ -33,3 +33,9 @@ public sealed class DeleteRowCommand : IngestCommand
 {
     public required string Key { get; init; }
 }
+
+public sealed class CreateSegmentCommand : IngestCommand
+{
+    public required string SegmentId { get; init; }
+    public IReadOnlyList<FilterSpec> Filters { get; init; } = [];
+}

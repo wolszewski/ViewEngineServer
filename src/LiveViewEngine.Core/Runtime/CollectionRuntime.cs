@@ -13,6 +13,7 @@ public sealed class CollectionRuntime : IDisposable
     private readonly Lock _subscriptionsByConnectionLock = new();
     private readonly Dictionary<int, HashSet<int>> _subscriptionsByConnection = [];
     private readonly SortIndexRegistry _sortIndexRegistry = new();
+    private readonly ConcurrentDictionary<string, IReadOnlyList<FilterSpec>> _segments = new();
     private readonly IViewEngineMetrics? _metrics;
     private readonly LiveViewEngineOptions _options;
 
@@ -158,7 +159,7 @@ public sealed class CollectionRuntime : IDisposable
             RemoveConnectionSubscription(existingViewport);
         }
 
-        var viewKey = ViewKey.From(command.View);
+        var viewKey = ResolveViewKey(command.View);
         var sortIndexKey = CreateSortIndexKey(Collection, viewKey);
         var sortIndex = _sortIndexRegistry.GetOrCreate(sortIndexKey, Collection);
         _sortIndexRegistry.UnflagForRemoval(sortIndexKey);
@@ -409,6 +410,26 @@ public sealed class CollectionRuntime : IDisposable
         Collection.ReleaseTypedFieldRef(key.FieldIndex);
         Collection.TryDeactivatePendingTypedColumn(key.FieldIndex);
         return true;
+    }
+
+    public IngestResult RegisterSegment(string segmentId, IReadOnlyList<FilterSpec> filters)
+    {
+        _segments[segmentId] = filters;
+        return IngestResult.Ok();
+    }
+
+    private ViewKey ResolveViewKey(ViewDefinition def)
+    {
+        if (def.SegmentId is null || !_segments.TryGetValue(def.SegmentId, out var baseFilters) ||
+            baseFilters.Count == 0)
+        {
+            return ViewKey.From(def);
+        }
+
+        var combined = def.Filters.Count > 0
+            ? [.. baseFilters, .. def.Filters]
+            : baseFilters;
+        return new ViewKey(def.CollectionId, def.SegmentId, def.SortColumn, def.SortAscending, combined);
     }
 
     private void EagerlyInitializeIndexes()

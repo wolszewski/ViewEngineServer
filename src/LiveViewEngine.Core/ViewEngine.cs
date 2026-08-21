@@ -64,6 +64,11 @@ public sealed class ViewEngine : IViewEngine, IDisposable
             {
                 return IngestResult.Fail($"Collection '{command.CollectionId}' not found.");
             }
+
+            if (command is CreateSegmentCommand createSegment)
+            {
+                return runtime.RegisterSegment(createSegment.SegmentId, createSegment.Filters);
+            }
             
             RuntimeWorkItem<MutationResult> work = command switch
             {
