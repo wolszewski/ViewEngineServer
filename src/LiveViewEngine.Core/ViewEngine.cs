@@ -122,6 +122,7 @@ public sealed class ViewEngine : IViewEngine, IDisposable
                 var subscriptionKey = subscribe.EffectiveSubscriptionKey;
                 var subscriptionRouteLock = GetSubscriptionRouteLock(subscriptionKey);
                 await subscriptionRouteLock.WaitAsync(ct);
+                bool subscriptionRemoved = false;
                 try
                 {
                     if (_subscriptionRoutes.TryGetValue(subscriptionKey, out var previousCollectionId) &&
@@ -147,6 +148,7 @@ public sealed class ViewEngine : IViewEngine, IDisposable
                     else
                     {
                         _subscriptionRoutes.TryRemove(subscriptionKey, out _);
+                        subscriptionRemoved = true;
                     }
 
                     return deltas;
@@ -154,6 +156,10 @@ public sealed class ViewEngine : IViewEngine, IDisposable
                 finally
                 {
                     subscriptionRouteLock.Release();
+                    if (subscriptionRemoved)
+                    {
+                        TryReclaimSubscriptionRouteLock(subscriptionKey, subscriptionRouteLock);
+                    }
                 }
             }
 
@@ -168,7 +174,12 @@ public sealed class ViewEngine : IViewEngine, IDisposable
             {
                 if (command is UnsubscribeCommand unmatchedUnsubscribe)
                 {
-                    _subscriptionRoutes.TryRemove(unmatchedUnsubscribe.EffectiveSubscriptionKey, out _);
+                    var key = unmatchedUnsubscribe.EffectiveSubscriptionKey;
+                    _subscriptionRoutes.TryRemove(key, out _);
+                    if (_subscriptionRouteLocks.TryRemove(key, out var orphanedLock))
+                    {
+                        orphanedLock.Dispose();
+                    }
                 }
 
                 return [];
@@ -184,7 +195,12 @@ public sealed class ViewEngine : IViewEngine, IDisposable
             var result = await runtime.EnqueueAsync(work, ct);
             if (command is UnsubscribeCommand unsubscribeCommand)
             {
-                _subscriptionRoutes.TryRemove(unsubscribeCommand.EffectiveSubscriptionKey, out _);
+                var key = unsubscribeCommand.EffectiveSubscriptionKey;
+                _subscriptionRoutes.TryRemove(key, out _);
+                if (_subscriptionRouteLocks.TryRemove(key, out var removedLock))
+                {
+                    removedLock.Dispose();
+                }
             }
 
             return result;
@@ -215,6 +231,14 @@ public sealed class ViewEngine : IViewEngine, IDisposable
     private SemaphoreSlim GetSubscriptionRouteLock(SubscriptionKey subscriptionKey)
     {
         return _subscriptionRouteLocks.GetOrAdd(subscriptionKey, static _ => new SemaphoreSlim(1, 1));
+    }
+
+    private void TryReclaimSubscriptionRouteLock(SubscriptionKey subscriptionKey, SemaphoreSlim semaphore)
+    {
+        if (_subscriptionRouteLocks.TryRemove(subscriptionKey, out _))
+        {
+            semaphore.Dispose();
+        }
     }
 
     private string? GetCollectionIdForSubscription(SubscriptionCommand command)
@@ -248,6 +272,10 @@ public sealed class ViewEngine : IViewEngine, IDisposable
             if (subscriptionKey.ConnectionId == connectionId)
             {
                 _subscriptionRoutes.TryRemove(subscriptionKey, out _);
+                if (_subscriptionRouteLocks.TryRemove(subscriptionKey, out var removedLock))
+                {
+                    removedLock.Dispose();
+                }
             }
         }
     }
