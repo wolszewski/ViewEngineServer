@@ -12,7 +12,7 @@ public sealed class CollectionRuntime : IDisposable
     private readonly Lock _subscriptionsByConnectionLock = new();
     private readonly Dictionary<int, HashSet<int>> _subscriptionsByConnection = [];
     private readonly SortIndexRegistry _sortIndexRegistry = new();
-    private readonly Dictionary<string, IReadOnlyList<FilterSpec>> _segments = new();
+    private readonly Dictionary<string, IReadOnlyList<FilterSpec>> _filterPresets = new();
     private readonly IViewEngineMetrics? _metrics;
     private readonly LiveViewEngineOptions _options;
     private int _activeSubscriptionCount;
@@ -156,7 +156,7 @@ public sealed class CollectionRuntime : IDisposable
             RemoveConnectionSubscription(existingViewport);
         }
 
-        if (command.View.FilterPresetId is not null && !_segments.ContainsKey(command.View.FilterPresetId))
+        if (command.View.FilterPresetId is not null && !_filterPresets.ContainsKey(command.View.FilterPresetId))
         {
             return [];
         }
@@ -445,14 +445,15 @@ public sealed class CollectionRuntime : IDisposable
         return false;
     }
 
-    public IngestResult RegisterSegment(string segmentId, IReadOnlyList<FilterSpec> filters)
+    public IngestResult RegisterFilterPreset(string filterPresetId, IReadOnlyList<FilterSpec> filters)
     {
-        if (_segments.ContainsKey(segmentId))
+        if (_filterPresets.ContainsKey(filterPresetId))
         {
-            return IngestResult.Fail($"Segment '{segmentId}' is already registered and cannot be overwritten.");
+            return IngestResult.Fail(
+                $"Filter preset '{filterPresetId}' is already registered and cannot be overwritten.");
         }
 
-        _segments[segmentId] = filters;
+        _filterPresets[filterPresetId] = filters;
         return IngestResult.Ok();
     }
 
@@ -463,7 +464,7 @@ public sealed class CollectionRuntime : IDisposable
             return ViewKey.From(def);
         }
 
-        var baseFilters = _segments[def.FilterPresetId];
+        var baseFilters = _filterPresets[def.FilterPresetId];
         if (baseFilters.Count == 0)
         {
             return ViewKey.From(def);

@@ -37,7 +37,7 @@ public class WebSocketSessionManagerTests
     }
 
     [Fact]
-    public async Task HandleConnectionAsync_SubscribeWithFieldPresetId_AppliesSegmentFilter()
+    public async Task HandleConnectionAsync_SubscribeWithFieldPresetId_AppliesFilterPresetFilter()
     {
         var metrics = new ViewEngineMetrics();
         var store = new CollectionStore(metrics, new LiveViewEngineOptions { EagerIndexing = false });

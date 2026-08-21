@@ -64,10 +64,14 @@ public sealed class ViewEngine : IViewEngine, IDisposable
                 return IngestResult.Fail($"Collection '{command.CollectionId}' not found.");
             }
 
-            if (command is CreateFilterPresetCommand createSegment)
+            if (command is CreateFilterPresetCommand createFilterPreset)
             {
                 return await runtime.EnqueueAsync(
-                    new RegisterSegmentRuntimeWork(runtime, createSegment.FilterPresetId, createSegment.Filters), ct);
+                    new RegisterFilterPresetRuntimeWork(
+                        runtime,
+                        createFilterPreset.FilterPresetId,
+                        createFilterPreset.Filters),
+                    ct);
             }
 
             RuntimeWorkItem<MutationResult> work = command switch

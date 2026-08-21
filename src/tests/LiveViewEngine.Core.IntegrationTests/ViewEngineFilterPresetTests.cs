@@ -5,7 +5,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace LiveViewEngine.Core.IntegrationTests;
 
-public class ViewEngineSegmentTests
+public class ViewEngineFilterPresetTests
 {
     private static (ViewEngine engine, CapturingPublisher publisher) CreateEngine(LiveViewEngineOptions? options = null)
     {
@@ -58,7 +58,7 @@ public class ViewEngineSegmentTests
     }
 
     [Fact]
-    public async Task SubscribeToUnknownSegment_ReturnsEmpty()
+    public async Task SubscribeToUnknownFilterPreset_ReturnsEmpty()
     {
         var (engine, _) = CreateEngine();
         await SetupTradesAsync(engine);
@@ -76,7 +76,7 @@ public class ViewEngineSegmentTests
     }
 
     [Fact]
-    public async Task CreateSegment_DuplicateId_Fails()
+    public async Task CreateFilterPreset_DuplicateId_Fails()
     {
         var (engine, _) = CreateEngine();
         await SetupTradesAsync(engine);
@@ -99,7 +99,7 @@ public class ViewEngineSegmentTests
     }
 
     [Fact]
-    public async Task CreateSegment_UnknownCollection_Fails()
+    public async Task CreateFilterPreset_UnknownCollection_Fails()
     {
         var (engine, _) = CreateEngine();
 
@@ -114,7 +114,7 @@ public class ViewEngineSegmentTests
     }
 
     [Fact]
-    public async Task SubscribeToSegment_ReturnsOnlyMatchingRows()
+    public async Task SubscribeToFilterPreset_ReturnsOnlyMatchingRows()
     {
         var (engine, _) = CreateEngine();
         await SetupTradesAsync(engine);
@@ -141,7 +141,7 @@ public class ViewEngineSegmentTests
     }
 
     [Fact]
-    public async Task SubscribeToSegment_WithAdditionalUserFilter_AppliesBothFilters()
+    public async Task SubscribeToFilterPreset_WithAdditionalUserFilter_AppliesBothFilters()
     {
         var (engine, _) = CreateEngine();
         await SetupTradesAsync(engine);
@@ -173,7 +173,7 @@ public class ViewEngineSegmentTests
     }
 
     [Fact]
-    public async Task SubscribeToSegment_WithSorting_RowsAreSorted()
+    public async Task SubscribeToFilterPreset_WithSorting_RowsAreSorted()
     {
         var (engine, _) = CreateEngine();
         await SetupTradesAsync(engine);
@@ -204,7 +204,7 @@ public class ViewEngineSegmentTests
     }
 
     [Fact]
-    public async Task SubscribeToSegment_ReceivesMutationDeltas_WhenRowEntersSegment()
+    public async Task SubscribeToFilterPreset_ReceivesMutationDeltas_WhenRowEntersFilterPreset()
     {
         var (engine, publisher) = CreateEngine();
         await SetupTradesAsync(engine);
@@ -226,14 +226,14 @@ public class ViewEngineSegmentTests
 
         var countBefore = publisher.Published.Count;
 
-        // Insert a row that belongs to the segment.
+        // Insert a row that belongs to the filter preset.
         await UpsertTrade(engine, "t1", "AAPL", "open", "1000", "2024-01-15");
 
         Assert.True(publisher.Published.Count > countBefore);
     }
 
     [Fact]
-    public async Task SubscribeToSegment_DoesNotReceiveMutationDeltas_WhenRowOutsideSegment()
+    public async Task SubscribeToFilterPreset_DoesNotReceiveMutationDeltas_WhenRowOutsideFilterPreset()
     {
         var (engine, publisher) = CreateEngine();
         await SetupTradesAsync(engine);
@@ -255,14 +255,14 @@ public class ViewEngineSegmentTests
 
         var countBefore = publisher.Published.Count;
 
-        // Insert a row that does NOT belong to the segment.
+        // Insert a row that does NOT belong to the filter preset.
         await UpsertTrade(engine, "t2", "MSFT", "open", "2000", "2024-01-16");
 
         Assert.Equal(countBefore, publisher.Published.Count);
     }
 
     [Fact]
-    public async Task TwoSegments_SameCollection_IndependentViews()
+    public async Task TwoFilterPresets_SameCollection_IndependentViews()
     {
         var (engine, _) = CreateEngine();
         await SetupTradesAsync(engine);
@@ -319,7 +319,7 @@ public class ViewEngineSegmentTests
     }
 
     [Fact]
-    public async Task SubscribeToSegment_AfterPrePopulation_ReturnsOnlyMatchingRows()
+    public async Task SubscribeToFilterPreset_AfterPrePopulation_ReturnsOnlyMatchingRows()
     {
         var (engine, _) = CreateEngine(new LiveViewEngineOptions
         {
