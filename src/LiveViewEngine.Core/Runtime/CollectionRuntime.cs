@@ -540,7 +540,11 @@ public sealed class CollectionRuntime : IDisposable
         var filters = _segments.TryGetValue(segmentId, out var existingFilters) ? existingFilters : [];
         return _segmentRuntimes.GetOrAdd(
             segmentId,
-            id => new SegmentRuntime(Collection.Schema.CollectionName, id, filters));
+            id => new SegmentRuntime(
+                Collection.Schema.CollectionName,
+                id,
+                filters,
+                Volatile.Read(ref _segmentMutationVersion)));
     }
 
     private List<(IReadOnlyList<ViewDelta>, List<SubscriberTarget>)>? ExecuteSegmentPropagation(
@@ -604,13 +608,13 @@ public sealed class CollectionRuntime : IDisposable
         _segments[segmentId] = filters;
         if (_options.EnableSegmentWorkers)
         {
-            if (_segmentRuntimes.TryRemove(segmentId, out var existingRuntime))
-            {
-                existingRuntime.Dispose();
-            }
-
-            _segmentRuntimes[segmentId] =
-                new SegmentRuntime(Collection.Schema.CollectionName, segmentId, filters);
+            _segmentRuntimes.GetOrAdd(
+                segmentId,
+                id => new SegmentRuntime(
+                    Collection.Schema.CollectionName,
+                    id,
+                    filters,
+                    Volatile.Read(ref _segmentMutationVersion)));
         }
 
         return IngestResult.Ok();

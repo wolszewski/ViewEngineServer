@@ -10,12 +10,17 @@ internal sealed class SegmentRuntime : IDisposable
     private readonly MutationPropagator _propagator = new();
     private long _lastAppliedVersion;
 
-    internal SegmentRuntime(string collectionId, string segmentId, IReadOnlyList<FilterSpec> baseFilters)
+    internal SegmentRuntime(
+        string collectionId,
+        string segmentId,
+        IReadOnlyList<FilterSpec> baseFilters,
+        long initialVersion)
     {
         CollectionId = collectionId;
         SegmentId = segmentId;
         BaseFilters = baseFilters;
         SortCollectionId = $"{collectionId}#segment:{segmentId}";
+        _lastAppliedVersion = initialVersion;
         _worker.Start();
     }
 
@@ -40,12 +45,6 @@ internal sealed class SegmentRuntime : IDisposable
         if (version <= _lastAppliedVersion)
         {
             return null;
-        }
-
-        if (version != _lastAppliedVersion + 1)
-        {
-            throw new InvalidOperationException(
-                $"Segment '{SegmentId}' expected version {_lastAppliedVersion + 1} but received {version}.");
         }
 
         _lastAppliedVersion = version;
