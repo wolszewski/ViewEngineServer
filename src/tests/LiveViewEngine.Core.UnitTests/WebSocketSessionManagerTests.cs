@@ -90,6 +90,50 @@ public class WebSocketSessionManagerTests
     }
 
     [Fact]
+    public async Task HandleConnectionAsync_NewSubscribeIgnoresClientAssignedIdAndAllocatesUniqueId()
+    {
+        var metrics = new ViewEngineMetrics();
+        var store = new CollectionStore(metrics, new LiveViewEngineOptions { EagerIndexing = false });
+        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance);
+        var engine = new ViewEngine(store, publisher, NullLogger<ViewEngine>.Instance, metrics);
+        var manager = new WebSocketSessionManager(
+            engine,
+            store,
+            publisher,
+            NullLogger<WebSocketSessionManager>.Instance);
+
+        await engine.IngestAsync(new CreateCollectionCommand
+        {
+            CollectionId = "trades",
+            Schema = new CollectionSchema("trades", ["instrument"], [ScalarFieldType.String])
+        });
+        await engine.IngestAsync(new UpsertRowCommand
+        {
+            CollectionId = "trades",
+            Key = "t1",
+            Fields = new Dictionary<string, string?> { ["instrument"] = "AAPL" }
+        });
+
+        var socket = new ScriptedWebSocket([
+            "{\"type\":\"subscribe\",\"subscriptionId\":1,\"collectionId\":\"trades\",\"startIndex\":0,\"pageSize\":50,\"sendSnapshot\":true,\"messageFormat\":\"json\"}",
+            "{\"type\":\"subscribe\",\"collectionId\":\"trades\",\"startIndex\":0,\"pageSize\":50,\"sendSnapshot\":true,\"messageFormat\":\"json\"}"
+        ], closeAfterSentCount: 5);
+
+        var handleTask = manager.HandleConnectionAsync(socket, CancellationToken.None);
+        await socket.WaitForMessagesAsync(5);
+        socket.Close();
+        await handleTask;
+
+        var acceptedSubscriptionIds = socket.SentMessages
+            .Select(static message => JsonDocument.Parse(message).RootElement)
+            .Where(static root => root.GetProperty("type").GetString() == "subscriptionAccepted")
+            .Select(static root => root.GetProperty("subscriptionId").GetInt32())
+            .ToArray();
+
+        Assert.Equal([1, 2], acceptedSubscriptionIds);
+    }
+
+    [Fact]
     public async Task HandleConnectionAsync_SetViewportNoNewArea_LiveDeltasNotBlocked()
     {
         var metrics = new ViewEngineMetrics();
