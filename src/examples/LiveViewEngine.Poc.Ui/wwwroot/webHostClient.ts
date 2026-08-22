@@ -252,7 +252,7 @@ export class WebHostClient {
             case 'rowUpdate':
             case 'rowRemove':
             case 'rowReplace':
-                if (this.activeSubscriptionId !== null && frame.event.subscriptionId !== this.activeSubscriptionId) {
+                if (!this.isActiveSubscription(frame.event.subscriptionId)) {
                     return;
                 }
 
@@ -262,7 +262,7 @@ export class WebHostClient {
     }
 
     private isActiveSubscription(subscriptionId: number): boolean {
-        return this.activeSubscriptionId === null || this.activeSubscriptionId === subscriptionId;
+        return this.activeSubscriptionId !== null && this.activeSubscriptionId === subscriptionId;
     }
 
     private sendSubscribe(request: SubscribeRequest): void {
@@ -270,6 +270,7 @@ export class WebHostClient {
             return;
         }
 
+        this.activeSubscriptionId = null;
         this.lastSubscribe = request;
         this.currentMessageFormat = request.messageFormat ?? 'compact';
         const message: Record<string, unknown> = {
@@ -288,7 +289,7 @@ export class WebHostClient {
             }))
         };
 
-        if (request.fields && request.fields.length > 0) {
+        if (request.fields !== undefined && request.fields.length > 0) {
             message.fields = request.fields;
         }
 

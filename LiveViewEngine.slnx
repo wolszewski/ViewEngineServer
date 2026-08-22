@@ -3,6 +3,7 @@
     <Project Path="src/LiveViewEngine.Core.Benchmarks/LiveViewEngine.Core.Benchmarks.csproj" />
   </Folder>
   <Folder Name="/docs/">
+    <File Path="docs\subscription-design.md" />
     <File Path="docs\system-design.md" />
     <File Path="README.md" />
   </Folder>
