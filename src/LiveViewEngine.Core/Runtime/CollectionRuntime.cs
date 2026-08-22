@@ -384,6 +384,15 @@ public sealed class CollectionRuntime : IDisposable
                 $"Filter preset '{filterPresetId}' is already registered and cannot be overwritten.");
         }
 
+        foreach (var filter in filters)
+        {
+            if (Collection.Schema.GetFieldIndex(filter.FieldName) < 0)
+            {
+                return IngestResult.Fail(
+                    $"Unknown field '{filter.FieldName}' for collection '{Collection.Schema.CollectionName}'.");
+            }
+        }
+
         _filterPresets[filterPresetId] = filters;
         return IngestResult.Ok();
     }

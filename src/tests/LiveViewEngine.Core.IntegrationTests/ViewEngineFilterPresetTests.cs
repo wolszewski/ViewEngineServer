@@ -114,6 +114,23 @@ public class ViewEngineFilterPresetTests
     }
 
     [Fact]
+    public async Task CreateFilterPreset_UnknownField_Fails()
+    {
+        var (engine, _) = CreateEngine();
+        await SetupTradesAsync(engine);
+
+        var result = await engine.IngestAsync(new CreateFilterPresetCommand
+        {
+            CollectionId = "trades",
+            FilterPresetId = "today",
+            Filters = [new FilterSpec("unknownField", FilterOperator.Eq, "value")]
+        });
+
+        Assert.False(result.Success);
+        Assert.Contains("Unknown field 'unknownField'", result.Error);
+    }
+
+    [Fact]
     public async Task SubscribeToFilterPreset_ReturnsOnlyMatchingRows()
     {
         var (engine, _) = CreateEngine();
