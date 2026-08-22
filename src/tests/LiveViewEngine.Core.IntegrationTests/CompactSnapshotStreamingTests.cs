@@ -1,4 +1,5 @@
 using LiveViewEngine.Core.Data;
+using LiveViewEngine.Core.DataIngest;
 using LiveViewEngine.Core.Views;
 using Microsoft.Extensions.Logging.Abstractions;
 

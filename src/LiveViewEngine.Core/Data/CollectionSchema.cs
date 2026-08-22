@@ -2,30 +2,12 @@ using System.Collections.Frozen;
 
 namespace LiveViewEngine.Core.Data;
 
-public enum ScalarFieldType
-{
-    String,
-    Int32,
-    Int64,
-    Double,
-    Decimal,
-    DateOnly,
-    DateTime,
-    DateTimeOffset
-}
-
-public sealed record FieldDefinition(
-    string Name,
-    int FieldIndex,
-    ScalarFieldType Type = ScalarFieldType.String,
-    int TypedColumnIndex = -1);
-
 public sealed class CollectionSchema
 {
     private readonly FrozenDictionary<string, int> _fieldNameToIndex;
 
     public string CollectionName { get; }
-    public IReadOnlyList<FieldDefinition> Fields { get; private set; }
+    public IReadOnlyList<FieldDefinition> Fields { get; }
     public FieldDefinition PrimaryKey { get; }
     public const int PrimaryKeyIndex = 0;
 
@@ -103,18 +85,6 @@ public sealed class CollectionSchema
         }
 
         return Fields[fieldIndex];
-    }
-
-    public bool TryGetFieldDefinition(string name, out FieldDefinition fieldDefinition)
-    {
-        if (_fieldNameToIndex.TryGetValue(name, out var fieldIndex))
-        {
-            fieldDefinition = Fields[fieldIndex];
-            return true;
-        }
-
-        fieldDefinition = default!;
-        return false;
     }
 
     public int GetFieldIndex(string name)

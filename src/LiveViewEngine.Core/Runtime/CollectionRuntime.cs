@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using LiveViewEngine.Core.Data;
+using LiveViewEngine.Core.DataIngest;
+using LiveViewEngine.Core.Runtime.WorkEvents;
 using LiveViewEngine.Core.Views;
 
 namespace LiveViewEngine.Core.Runtime;
@@ -211,11 +213,26 @@ public sealed class CollectionRuntime : IDisposable
                 return [];
             }
 
+            var newStartIndex = command.StartIndex ?? viewport.StartIndex;
+            var newPageSize = command.PageSize ?? viewport.PageSize;
+
+            if (command.SendSnapshot)
+            {
+                viewport.StartIndex = newStartIndex;
+                viewport.PageSize = newPageSize;
+                return BuildStreamingSnapshotDeltas(
+                    viewport.SubscriptionKey.ToString(),
+                    view,
+                    newStartIndex,
+                    newPageSize,
+                    viewport.SelectedFieldIndexes);
+            }
+
             return HandleViewportChange(
                 viewport,
                 view,
-                command.StartIndex ?? viewport.StartIndex,
-                command.PageSize ?? viewport.PageSize);
+                newStartIndex,
+                newPageSize);
         }
 
         return HandleSubscribe(new SubscribeCommand

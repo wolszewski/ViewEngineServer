@@ -6,7 +6,7 @@ namespace LiveViewEngine.Core.Data;
 
 public interface ICollectionStore
 {
-    bool TryCreate(CollectionSchema schema);
+    bool TryCreateCollection(CollectionSchema schema);
     bool TryGet(string collectionId, out RowCollection? collection);
     bool TryGetRuntime(string collectionId, out CollectionRuntime? runtime);
     bool TryGetSchema(string collectionId, out CollectionSchema? schema);
@@ -17,7 +17,7 @@ public sealed class CollectionStore(IViewEngineMetrics? metrics, LiveViewEngineO
 {
     private readonly ConcurrentDictionary<string, CollectionRuntime> _collections = new();
 
-    public bool TryCreate(CollectionSchema schema)
+    public bool TryCreateCollection(CollectionSchema schema)
     {
         var collection = new RowCollection(schema);
         var runtime = new CollectionRuntime(collection, metrics, options);
