@@ -27,8 +27,7 @@
 
 - `setviewport`
   - requires an existing `subscriptionId`.
-  - updates `startIndex`/`pageSize` only and does not force a snapshot (`sendSnapshot = false`).
-
+  - updates `startIndex`/`pageSize` only; `sendSnapshot` defaults to `false` (no snapshot), but can be set to `true` to force one.
 - `unsubscribe`
   - requires an existing `subscriptionId`.
   - removes route/viewport state for that subscription.
