@@ -431,7 +431,7 @@ public sealed class CollectionRuntime : IDisposable
             hasChange = true;
         }
 
-        if (!SequenceEqual(normalizedFields, current.Fields))
+        if (command.Fields is not null && !SequenceEqual(normalizedFields, current.Fields))
         {
             hasChange = true;
         }
@@ -449,7 +449,7 @@ public sealed class CollectionRuntime : IDisposable
             SortColumn = command.SortColumn ?? current.SortColumn,
             SortAscending = command.SortAscending ?? current.SortAscending,
             Filters = command.Filters ?? current.Filters,
-            Fields = normalizedFields
+            Fields = command.Fields is null ? current.Fields : normalizedFields
         };
         return true;
     }

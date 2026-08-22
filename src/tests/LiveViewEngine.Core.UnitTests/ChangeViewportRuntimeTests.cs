@@ -154,4 +154,33 @@ public class UpdateViewRuntimeTests
         var rows = Assert.IsType<SnapshotRowsDelta>(deltas[1]);
         Assert.Equal(3, rows.Rows[0].Length);
     }
+
+    [Fact]
+    public void UpdateView_ViewportOnlyChange_KeepsExistingProjection()
+    {
+        var runtime = MakeRuntime(10);
+        runtime.HandleSubscribe(new SubscribeCommand
+        {
+            ConnectionId = 1,
+            SubscriptionId = 1,
+            StartIndex = 0,
+            PageSize = 5,
+            View = new ViewDefinition
+            {
+                CollectionId = "trades",
+                Fields = ["value"]
+            }
+        });
+
+        var deltas = runtime.HandleUpdateView(new UpdateViewCommand
+        {
+            ConnectionId = 1,
+            SubscriptionId = 1,
+            StartIndex = 5,
+            PageSize = null
+        });
+
+        var rows = Assert.IsType<SnapshotRowsDelta>(deltas[1]);
+        Assert.Equal(2, rows.Rows[0].Length);
+    }
 }

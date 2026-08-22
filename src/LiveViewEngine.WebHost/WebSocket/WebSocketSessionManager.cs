@@ -304,7 +304,7 @@ public sealed class WebSocketSessionManager
     {
         if (events.FirstOrDefault() is SnapshotStartDelta start)
         {
-            IReadOnlyList<int>? visibleFieldIndexes = start.VisibleFieldIndexes;
+            var visibleFieldIndexes = start.VisibleFieldIndexes;
             return start.Schema.Fields
                 .Where((_, index) => visibleFieldIndexes?.Contains(index) == true && index != CollectionSchema.PrimaryKeyIndex)
                 .Select(static field => field.Name)
@@ -349,17 +349,5 @@ public sealed class WebSocketSessionManager
             ? OutboundMessageFormat.Json
             : OutboundMessageFormat.Compact;
     }
-
-    private sealed class ClientConnectionContext
-    {
-        public ClientConnectionContext(int connectionId)
-        {
-            ConnectionId = connectionId;
-        }
-
-        public int ConnectionId { get; }
-        public HashSet<int> ActiveSubscriptionIds { get; } = new();
-        public UniqueIdProvider SubscriptionIdProvider { get; } = new();
-        public byte[] Buffer { get; } = new byte[16_384];
-    }
+    
 }
