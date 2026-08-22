@@ -150,6 +150,8 @@ public sealed class CollectionRuntime : IDisposable
             return [];
         }
 
+        var selectedFieldIndexes = ResolveVisibleFieldIndexes(command.View);
+
         if (_viewports.TryGetValue(subscriptionKey, out var existingViewport))
         {
             DetachSubscription(existingViewport);
@@ -161,7 +163,6 @@ public sealed class CollectionRuntime : IDisposable
             RemoveConnectionSubscription(existingViewport);
         }
 
-        var selectedFieldIndexes = ResolveVisibleFieldIndexes(command.View);
         var viewKey = ResolveViewKey(command.View);
         var (view, sortIndexKey, sortIndexRegistry) = GetOrCreateSharedView(viewKey);
         sortIndexRegistry.UnflagForRemoval(sortIndexKey);

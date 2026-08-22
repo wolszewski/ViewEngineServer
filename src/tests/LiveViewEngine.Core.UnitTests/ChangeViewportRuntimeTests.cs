@@ -183,4 +183,22 @@ public class UpdateViewRuntimeTests
         var rows = Assert.IsType<SnapshotRowsDelta>(deltas[1]);
         Assert.Equal(2, rows.Rows[0].Length);
     }
+
+    [Fact]
+    public void UpdateView_WhenProjectionContainsUnknownField_DoesNotDetachExistingSubscription()
+    {
+        var runtime = MakeRuntime(10);
+        Subscribe(runtime, 0, 5);
+
+        var ex = Assert.Throws<ArgumentException>(() => runtime.HandleUpdateView(new UpdateViewCommand
+        {
+            ConnectionId = 1,
+            SubscriptionId = 1,
+            Fields = ["value", "missing-field"]
+        }));
+
+        Assert.Contains("Unknown field 'missing-field'", ex.Message);
+        Assert.True(runtime.ContainsSubscription(new SubscriptionKey(1, 1)));
+        Assert.Equal(1, runtime.ActiveSubscriptionCount);
+    }
 }
