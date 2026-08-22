@@ -26,7 +26,7 @@ public sealed class SortIndex : IRowIndex
         _fieldIndex = fieldIndex;
         _ascending = ascending;
         var fieldType = collection.Schema.GetFieldDefinition(fieldIndex).Type;
-        if (fieldType != ScalarFieldType.String)
+        if (fieldType is not (ScalarFieldType.String or ScalarFieldType.Boolean))
         {
             collection.AddTypedFieldRef(fieldIndex);
         }

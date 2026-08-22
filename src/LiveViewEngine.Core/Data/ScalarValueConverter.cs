@@ -4,6 +4,43 @@ namespace LiveViewEngine.Core.Data;
 
 public static class ScalarValueConverter
 {
+    public const string TrueString = "true";
+    public const string FalseString = "false";
+
+    public static bool TryConvertBoolean(string? raw, out bool value)
+    {
+        if (raw is null)
+        {
+            value = default;
+            return false;
+        }
+
+        if (raw.Length == 1)
+        {
+            if (raw[0] == '1')
+            {
+                value = true;
+                return true;
+            }
+
+            if (raw[0] == '0')
+            {
+                value = false;
+                return true;
+            }
+        }
+
+        if (bool.TryParse(raw, out value))
+        {
+            return true;
+        }
+
+        value = default;
+        return false;
+    }
+
+    public static string FormatBoolean(bool value) => value ? TrueString : FalseString;
+
     public static bool TryConvertInt32(string? raw, out int value)
     {
         return int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
@@ -38,5 +75,4 @@ public static class ScalarValueConverter
     {
         return DateTimeOffset.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind | DateTimeStyles.AllowWhiteSpaces, out value);
     }
-
 }

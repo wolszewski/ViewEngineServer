@@ -302,6 +302,8 @@ public class TradeGeneratorService(
         definitions.Add(new TradeFieldDefinition("price", "decimal", trade => ((trade.Id % 1000) / 100m + 100).ToString("0.00", CultureInfo.InvariantCulture), trade => (decimal.Parse(trade.Fields["price"] ?? "100.00", CultureInfo.InvariantCulture) + 0.01m).ToString("0.00", CultureInfo.InvariantCulture)));
         definitions.Add(new TradeFieldDefinition("side", "enum", trade => (trade.Id % 3) switch { 0 => "Buy", 1 => "Sell", _ => "Hold" }, trade => (trade.Id % 3) switch { 0 => "Sell", 1 => "Hold", _ => "Buy" }));
         definitions.Add(new TradeFieldDefinition("status", "enum", trade => (trade.Id % 4) switch { 0 => "New", 1 => "Working", 2 => "Filled", _ => "Cancelled" }, trade => (trade.Id % 4) switch { 0 => "Working", 1 => "Filled", 2 => "Cancelled", _ => "New" }));
+        definitions.Add(new TradeFieldDefinition("isAlgo", "boolean", trade => trade.Id % 2 == 0 ? "true" : "false", trade => ToggleBooleanValue(trade, "isAlgo")));
+        definitions.Add(new TradeFieldDefinition("isManualReview", "boolean", trade => trade.Id % 5 == 0 ? "true" : "false", trade => ToggleBooleanValue(trade, "isManualReview")));
         definitions.Add(new TradeFieldDefinition("notional", "decimal", trade => (trade.Id * 15m).ToString("0.00", CultureInfo.InvariantCulture), trade => (decimal.Parse(trade.Fields["notional"] ?? "0.00", CultureInfo.InvariantCulture) + 50m).ToString("0.00", CultureInfo.InvariantCulture)));
         definitions.Add(new TradeFieldDefinition("variedNumber", "decimal", _ => (Random.Shared.NextDouble() * 10_000).ToString("0.00", CultureInfo.InvariantCulture), _ => (Random.Shared.NextDouble() * 10_000).ToString("0.00", CultureInfo.InvariantCulture)));
 
@@ -360,6 +362,17 @@ public class TradeGeneratorService(
                 }));
         }
 
+        for (int index = 0; index < 20; index++)
+        {
+            var fieldIndex = index;
+            var fieldName = $"boolField{fieldIndex:D2}";
+            definitions.Add(new TradeFieldDefinition(
+                fieldName,
+                "boolean",
+                trade => (trade.Id + fieldIndex) % 2 == 0 ? "true" : "false",
+                trade => ToggleBooleanValue(trade, fieldName)));
+        }
+
         return definitions;
     }
 
@@ -376,6 +389,7 @@ public class TradeGeneratorService(
     private static string MapFieldType(string typeName) => typeName switch
     {
         "string" => "string",
+        "boolean" => "boolean",
         "enum" => "string",
         "int" => "int",
         "long" => "long",
@@ -386,6 +400,12 @@ public class TradeGeneratorService(
         "datetimeoffset" => "datetimeoffset",
         _ => "string"
     };
+
+    private static string ToggleBooleanValue(TradeEntity trade, string fieldName)
+    {
+        var current = GetFieldOrDefault(trade.Fields, fieldName, "false");
+        return string.Equals(current, "true", StringComparison.OrdinalIgnoreCase) ? "false" : "true";
+    }
 
     private static string CreateTimestamp() => DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
 

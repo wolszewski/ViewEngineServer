@@ -117,4 +117,17 @@ public class RowCollectionTests
         col.AddOrUpdate("r1", new Dictionary<string, string?> { ["score"] = "43" });
         Assert.Equal(43, col.GetInt32(row.RowIndex, scoreFieldIndex));
     }
+
+    [Fact]
+    public void AddOrUpdate_BooleanField_StoresCanonicalString()
+    {
+        var schema = new CollectionSchema("test", ["active"], [ScalarFieldType.Boolean]);
+        var col = new RowCollection(schema);
+        var activeFieldIndex = schema.GetFieldIndex("active");
+
+        var row = col.AddOrUpdate("r1", new Dictionary<string, string?> { ["active"] = "1" });
+
+        Assert.Equal("true", col.GetValue(row.RowIndex, activeFieldIndex));
+        Assert.Equal("true", col.GetRowValues(row.RowIndex)[activeFieldIndex]);
+    }
 }
