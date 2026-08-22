@@ -222,7 +222,7 @@ public sealed class WebSocketSessionManager
                     SubscriptionId = subscriptionId,
                     StartIndex = inbound.StartIndex,
                     PageSize = inbound.PageSize,
-                    SendSnapshot = false
+                    SendSnapshot = inbound.SendSnapshot ?? false
                 }),
             "unsubscribe" => TryCreateExistingCommand(
                 context,
