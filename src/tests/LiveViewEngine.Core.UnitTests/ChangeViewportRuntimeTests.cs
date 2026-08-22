@@ -9,7 +9,7 @@ public class UpdateViewRuntimeTests
 {
     private static CollectionRuntime MakeRuntime(int rowCount)
     {
-        var schema = new CollectionSchema("trades", ["value"]);
+        var schema = new CollectionSchema("trades", ["value", "other"]);
         var collection = new RowCollection(schema);
         var runtime = new CollectionRuntime(collection, null, new LiveViewEngineOptions { EagerIndexing = false });
 
@@ -22,7 +22,8 @@ public class UpdateViewRuntimeTests
                 Key = key,
                 Fields = new Dictionary<string, string?>
                 {
-                    ["value"] = key
+                    ["value"] = key,
+                    ["other"] = $"other-{key}"
                 }
             });
         }
@@ -112,5 +113,45 @@ public class UpdateViewRuntimeTests
         var rows = Assert.IsType<SnapshotRowsDelta>(deltas[1]);
         Assert.Equal(50, rows.Rows.Count);
         Assert.IsType<EndOfSnapshotDelta>(deltas[^1]);
+    }
+
+    [Fact]
+    public void UpdateView_WhenSubscriptionDoesNotExist_Throws()
+    {
+        var runtime = MakeRuntime(200);
+
+        var ex = Assert.Throws<InvalidOperationException>(() => runtime.HandleUpdateView(new UpdateViewCommand
+        {
+            ConnectionId = 1,
+            SubscriptionId = 1,
+            StartIndex = 0,
+            PageSize = 50
+        }));
+
+        Assert.Contains("was not found", ex.Message);
+    }
+
+    [Fact]
+    public void UpdateView_WhenFieldsCleared_ReturnsAllFields()
+    {
+        var runtime = MakeRuntime(10);
+        Subscribe(runtime, 0, 5);
+
+        runtime.HandleUpdateView(new UpdateViewCommand
+        {
+            ConnectionId = 1,
+            SubscriptionId = 1,
+            Fields = ["value"]
+        });
+
+        var deltas = runtime.HandleUpdateView(new UpdateViewCommand
+        {
+            ConnectionId = 1,
+            SubscriptionId = 1,
+            Fields = []
+        });
+
+        var rows = Assert.IsType<SnapshotRowsDelta>(deltas[1]);
+        Assert.Equal(3, rows.Rows[0].Length);
     }
 }

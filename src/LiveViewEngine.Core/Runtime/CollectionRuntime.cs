@@ -199,14 +199,17 @@ public sealed class CollectionRuntime : IDisposable
     {
         if (!_viewports.TryGetValue(command.EffectiveSubscriptionKey, out var viewport))
         {
-            return [];
+            throw new InvalidOperationException(
+                $"Subscription '{command.EffectiveSubscriptionKey}' was not found.");
         }
 
-        var nextView = BuildUpdatedView(viewport.View, command);
-        var viewChanged = !ViewEquals(viewport.View, nextView);
-
-        if (!viewChanged && TryGetSharedView(viewport.ViewKey, out var view))
+        if (!TryBuildUpdatedView(viewport.View, command, out var nextView))
         {
+            if (!TryGetSharedView(viewport.ViewKey, out var view))
+            {
+                return [];
+            }
+
             return HandleViewportChange(
                 viewport,
                 view,
@@ -238,7 +241,6 @@ public sealed class CollectionRuntime : IDisposable
     {
         var oldStart = viewport.StartIndex;
         var oldPageSize = viewport.PageSize ?? 0;
-        var oldEnd = oldStart + oldPageSize;
 
         viewport.StartIndex = startIndex;
         if (pageSize.HasValue)
@@ -258,89 +260,6 @@ public sealed class CollectionRuntime : IDisposable
             newStart,
             newPageSize,
             newEnd);
-    }
-
-    private IReadOnlyList<ViewDelta> BuildIncrementalSnapshot(
-        ViewportState viewport,
-        SharedView view,
-        int oldStart, int oldEnd,
-        int newStart, int newPageSize, int newEnd)
-    {
-        var overlapStart = Math.Max(oldStart, newStart);
-        var overlapEnd = Math.Min(oldEnd, newEnd);
-        var hasOverlap = overlapStart < overlapEnd;
-
-        if (!hasOverlap)
-        {
-            var indexes = view.GetPageIndexes(newStart, newPageSize);
-            return
-            [
-                new SnapshotDelta
-                {
-                    ViewId = viewport.SubscriptionKey.ToString(),
-                    Schema = Collection.Schema,
-                    TotalCount = view.GetTotalCount(),
-                    StartIndex = newStart,
-                    Rows = BuildRows(Collection, indexes, viewport.SelectedFieldIndexes),
-                    VisibleFieldIndexes = viewport.SelectedFieldIndexes
-                }
-            ];
-        }
-
-        var hasBeforeRange = newStart < overlapStart;
-        var hasAfterRange = overlapEnd < newEnd;
-
-        if (!hasBeforeRange && !hasAfterRange)
-        {
-            return [];
-        }
-
-        var viewId = viewport.SubscriptionKey.ToString();
-        var totalCount = view.GetTotalCount();
-
-        if (hasBeforeRange && !hasAfterRange)
-        {
-            var indexes = view.GetPageIndexes(newStart, overlapStart - newStart);
-            return [new SnapshotDelta
-            {
-                ViewId = viewId, Schema = Collection.Schema, TotalCount = totalCount,
-                StartIndex = newStart, IsPartial = true,
-                Rows = BuildRows(Collection, indexes, viewport.SelectedFieldIndexes),
-                VisibleFieldIndexes = viewport.SelectedFieldIndexes
-            }];
-        }
-
-        if (!hasBeforeRange)
-        {
-            var indexes = view.GetPageIndexes(overlapEnd, newEnd - overlapEnd);
-            return [new SnapshotDelta
-            {
-                ViewId = viewId, Schema = Collection.Schema, TotalCount = totalCount,
-                StartIndex = overlapEnd, IsPartial = true,
-                Rows = BuildRows(Collection, indexes, viewport.SelectedFieldIndexes),
-                VisibleFieldIndexes = viewport.SelectedFieldIndexes
-            }];
-        }
-
-        var beforeIndexes = view.GetPageIndexes(newStart, overlapStart - newStart);
-        var afterIndexes = view.GetPageIndexes(overlapEnd, newEnd - overlapEnd);
-        return
-        [
-            new SnapshotDelta
-            {
-                ViewId = viewId, Schema = Collection.Schema, TotalCount = totalCount,
-                StartIndex = newStart, IsPartial = true,
-                Rows = BuildRows(Collection, beforeIndexes, viewport.SelectedFieldIndexes),
-                VisibleFieldIndexes = viewport.SelectedFieldIndexes
-            },
-            new SnapshotDelta
-            {
-                ViewId = viewId, Schema = Collection.Schema, TotalCount = totalCount,
-                StartIndex = overlapEnd, IsPartial = true,
-                Rows = BuildRows(Collection, afterIndexes, viewport.SelectedFieldIndexes),
-                VisibleFieldIndexes = viewport.SelectedFieldIndexes
-            }
-        ];
     }
 
     public IReadOnlyList<ViewDelta> HandleUnsubscribe(UnsubscribeCommand command)
@@ -488,31 +407,51 @@ public sealed class CollectionRuntime : IDisposable
         return new ViewKey(def.CollectionId, def.FilterPresetId, def.SortColumn, def.SortAscending, combined);
     }
 
-    private static ViewDefinition BuildUpdatedView(ViewDefinition current, UpdateViewCommand command)
+    private static bool TryBuildUpdatedView(
+        ViewDefinition current,
+        UpdateViewCommand command,
+        out ViewDefinition nextView)
     {
-        return new ViewDefinition
+        bool hasChange = false;
+        var normalizedFields = command.Fields is { Count: > 0 } ? command.Fields : null;
+
+        if (command.SortColumn is not null &&
+            !string.Equals(command.SortColumn, current.SortColumn, StringComparison.Ordinal))
+        {
+            hasChange = true;
+        }
+
+        if (command.SortAscending.HasValue && command.SortAscending.Value != current.SortAscending)
+        {
+            hasChange = true;
+        }
+
+        if (command.Filters is not null && !SequenceEqual(command.Filters, current.Filters))
+        {
+            hasChange = true;
+        }
+
+        if (!SequenceEqual(normalizedFields, current.Fields))
+        {
+            hasChange = true;
+        }
+
+        if (!hasChange)
+        {
+            nextView = current;
+            return false;
+        }
+
+        nextView = new ViewDefinition
         {
             CollectionId = current.CollectionId,
             FilterPresetId = current.FilterPresetId,
             SortColumn = command.SortColumn ?? current.SortColumn,
             SortAscending = command.SortAscending ?? current.SortAscending,
             Filters = command.Filters ?? current.Filters,
-            Fields = command.Fields is null
-                ? current.Fields
-                : command.Fields.Count == 0
-                    ? null
-                    : command.Fields
+            Fields = normalizedFields
         };
-    }
-
-    private static bool ViewEquals(ViewDefinition left, ViewDefinition right)
-    {
-        return string.Equals(left.CollectionId, right.CollectionId, StringComparison.Ordinal)
-            && string.Equals(left.FilterPresetId, right.FilterPresetId, StringComparison.Ordinal)
-            && string.Equals(left.SortColumn, right.SortColumn, StringComparison.Ordinal)
-            && left.SortAscending == right.SortAscending
-            && left.Filters.SequenceEqual(right.Filters)
-            && SequenceEqual(left.Fields, right.Fields);
+        return true;
     }
 
     private static bool SequenceEqual<T>(IReadOnlyList<T>? left, IReadOnlyList<T>? right)
@@ -821,18 +760,6 @@ public sealed class CollectionRuntime : IDisposable
         };
     }
 
-    private static IReadOnlyList<string?[]> BuildRows(RowCollection collection, int[] indexes,
-        int[] selectedFieldIndexes)
-    {
-        var rows = new string?[indexes.Length][];
-        for (int i = 0; i < indexes.Length; i++)
-        {
-            rows[i] = ProjectRow(collection.GetRowValues(indexes[i]), selectedFieldIndexes);
-        }
-
-        return rows;
-    }
-
     private static string?[] ProjectRow(string?[] source, int[] selectedFieldIndexes)
     {
         var copy = new string?[selectedFieldIndexes.Length];
@@ -841,13 +768,6 @@ public sealed class CollectionRuntime : IDisposable
             copy[i] = source[selectedFieldIndexes[i]];
         }
 
-        return copy;
-    }
-
-    private static string?[] CopyRow(string?[] source)
-    {
-        var copy = new string?[source.Length];
-        Array.Copy(source, copy, source.Length);
         return copy;
     }
 }

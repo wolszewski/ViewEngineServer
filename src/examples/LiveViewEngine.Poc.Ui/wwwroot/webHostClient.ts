@@ -314,9 +314,10 @@ export class WebHostClient {
                 field: filter.field,
                 operator: filter.operator,
                 value: filter.value
-            })),
-            fields: request.fields ?? []
-        };
+            }))
+        }
+
+        message.fields = request.fields ?? [];
 
         this.socket.send(JSON.stringify(message));
         this.hasReceivedSnapshot = false;

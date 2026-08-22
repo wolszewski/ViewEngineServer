@@ -217,19 +217,13 @@ function syncUrlState(state: AppUrlState): void {
         params.append('filterValue', filter.value);
     }
 
-    for (const column of state.selectedFields) {
-        params.append('column', column);
+    if (state.selectedFields.length !== knownTradeColumns.length) {
+        for (const column of state.selectedFields) {
+            params.append('column', column);
+        }
     }
 
-    const nextSearch = params.toString();
-    const nextUrl = nextSearch.length > 0
-        ? `${window.location.pathname}?${nextSearch}${window.location.hash}`
-        : `${window.location.pathname}${window.location.hash}`;
-    const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-
-    if (nextUrl !== currentUrl) {
-        window.history.replaceState(null, '', nextUrl);
-    }
+    window.history.replaceState(null, '', `${window.location.pathname}${params.toString().length > 0 ? `?${params}` : ''}`);
 }
 
 function isGridFilterConditionModel(value: unknown): value is GridFilterConditionModel {
@@ -1043,7 +1037,7 @@ function App(): React.ReactElement {
             pageSize: initialWindow.end - initialWindow.start + 1,
             startIndex: initialWindow.start,
             filters: normalisedFilters,
-            fields: selectedFields.length > 0 ? selectedFields : undefined,
+            fields: selectedFields,
             messageFormat
         });
     }, [appendLog, clearState, collectionId, messageFormat, normalisedFilters, resetViewportToFirstPage, pageSize, selectedFields, sortAscending, sortColumn]);
@@ -1222,7 +1216,7 @@ function App(): React.ReactElement {
             pageSize: initialWindow.end - initialWindow.start + 1,
             startIndex: initialWindow.start,
             filters: normalisedFilters,
-            fields: selectedFields.length > 0 ? selectedFields : undefined,
+            fields: selectedFields,
             messageFormat
         });
     }, [clearState, collectionId, messageFormat, normalisedFilters, resetViewportToFirstPage, pageSize, selectedFields, sortAscending, sortColumn]);

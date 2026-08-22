@@ -21,7 +21,7 @@ public sealed class ViewEngine : IViewEngine, IDisposable
     private readonly ILogger<ViewEngine> _logger;
     private readonly IViewEngineMetrics? _metrics;
     private readonly ConcurrentDictionary<string, CollectionRuntime> _collectionRuntimes = new();
-    private readonly ConcurrentDictionary<SubscriptionKey, string> _subscriptionRoutes = new();
+    private readonly Dictionary<SubscriptionKey, string> _subscriptionRoutes = new();
     private readonly Channel<IQueuedViewEngineCommand> _commands;
     private readonly CancellationTokenSource _disposeCts = new();
     private readonly Task _commandProcessorTask;
@@ -229,7 +229,7 @@ public sealed class ViewEngine : IViewEngine, IDisposable
                 }
                 else
                 {
-                    _subscriptionRoutes.TryRemove(subscriptionKey, out _);
+                    _subscriptionRoutes.Remove(subscriptionKey);
                 }
 
                 return deltas;
@@ -247,15 +247,29 @@ public sealed class ViewEngine : IViewEngine, IDisposable
                 var collectionId = GetCollectionIdForSubscription(command);
                 if (collectionId is null || !_collectionRuntimes.TryGetValue(collectionId, out var unsubRuntime))
                 {
-                    _subscriptionRoutes.TryRemove(key, out _);
+                    _subscriptionRoutes.Remove(key);
                 }
                 else
                 {
                     await unsubRuntime.EnqueueAsync(new UnsubscribeRuntimeWork(unsubRuntime, unsubscribeCommand), ct);
-                    _subscriptionRoutes.TryRemove(key, out _);
+                    _subscriptionRoutes.Remove(key);
                 }
 
                 return [];
+            }
+
+            if (command is UpdateViewCommand updateCommand)
+            {
+                var collectionId = GetCollectionIdForSubscription(updateCommand);
+                if (collectionId is null || !_collectionRuntimes.TryGetValue(collectionId, out var updateRuntime))
+                {
+                    throw new InvalidOperationException(
+                        $"Subscription '{updateCommand.EffectiveSubscriptionKey}' was not found.");
+                }
+
+                return await updateRuntime.EnqueueAsync(
+                    new UpdateViewRuntimeWork(updateRuntime, updateCommand),
+                    ct);
             }
 
             var nonUnsubCollectionId = GetCollectionIdForSubscription(command);
@@ -264,12 +278,7 @@ public sealed class ViewEngine : IViewEngine, IDisposable
                 return [];
             }
 
-            RuntimeWorkItem<IReadOnlyList<ViewDelta>> work = command switch
-            {
-                UpdateViewCommand update => new UpdateViewRuntimeWork(runtime, update),
-                _ => new UnknownSubscriptionRuntimeWork(command),
-            };
-
+            RuntimeWorkItem<IReadOnlyList<ViewDelta>> work = new UnknownSubscriptionRuntimeWork(command);
             return await runtime.EnqueueAsync(work, ct);
         }
         finally
@@ -308,11 +317,11 @@ public sealed class ViewEngine : IViewEngine, IDisposable
                 ct);
         }
 
-        foreach (var subscriptionKey in _subscriptionRoutes.Keys)
+        foreach (var subscriptionKey in _subscriptionRoutes.Keys.ToArray())
         {
             if (subscriptionKey.ConnectionId == connectionId)
             {
-                _subscriptionRoutes.TryRemove(subscriptionKey, out _);
+                _subscriptionRoutes.Remove(subscriptionKey);
             }
         }
     }
