@@ -15,23 +15,15 @@ public static class ScalarValueConverter
             return false;
         }
 
-        if (raw.Length == 1)
+        if (string.Equals(raw, TrueString, StringComparison.Ordinal))
         {
-            if (raw[0] == '1')
-            {
-                value = true;
-                return true;
-            }
-
-            if (raw[0] == '0')
-            {
-                value = false;
-                return true;
-            }
+            value = true;
+            return true;
         }
 
-        if (bool.TryParse(raw, out value))
+        if (string.Equals(raw, FalseString, StringComparison.Ordinal))
         {
+            value = false;
             return true;
         }
 

@@ -125,7 +125,7 @@ public class RowCollectionTests
         var col = new RowCollection(schema);
         var activeFieldIndex = schema.GetFieldIndex("active");
 
-        var row = col.AddOrUpdate("r1", new Dictionary<string, string?> { ["active"] = "1" });
+        var row = col.AddOrUpdate("r1", new Dictionary<string, string?> { ["active"] = "true" });
 
         Assert.Equal("true", col.GetValue(row.RowIndex, activeFieldIndex));
         Assert.Equal("true", col.GetRowValues(row.RowIndex)[activeFieldIndex]);

@@ -146,8 +146,11 @@ public class FilterEvaluatorTests
 
         Assert.True(ScalarValueConverter.TryConvertBoolean("true", out var booleanTrue));
         Assert.True(booleanTrue);
-        Assert.True(ScalarValueConverter.TryConvertBoolean("0", out var booleanFalse));
+        Assert.True(ScalarValueConverter.TryConvertBoolean("false", out var booleanFalse));
         Assert.False(booleanFalse);
+        Assert.False(ScalarValueConverter.TryConvertBoolean("1", out _));
+        Assert.False(ScalarValueConverter.TryConvertBoolean("0", out _));
+        Assert.False(ScalarValueConverter.TryConvertBoolean("TRUE", out _));
     }
 
     [Theory]

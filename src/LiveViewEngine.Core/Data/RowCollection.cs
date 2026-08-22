@@ -23,37 +23,18 @@ public sealed class RowCollection
 
         var row = GetOrAddRow(key, out var rowIndex, out var isNew);
         var columnChanges = Schema.MapToColumnChanges(fieldChanges);
-        List<KeyValuePair<int, string?>>? normalizedChanges = null;
-        var processedCount = 0;
 
-        foreach (var updatedField in columnChanges)
+        for (var i = 0; i < columnChanges.Length; i++)
         {
+            var updatedField = columnChanges[i];
             var fieldDefinition = Schema.GetFieldDefinition(updatedField.Key);
             var normalizedValue = NormalizeValue(fieldDefinition.Type, updatedField.Value);
             row[updatedField.Key] = normalizedValue;
             UpdateTypedValueForField(rowIndex, updatedField.Key, normalizedValue);
-
-            if (normalizedValue != updatedField.Value && normalizedChanges is null)
-            {
-                normalizedChanges = new List<KeyValuePair<int, string?>>(columnChanges.Count);
-                var remaining = processedCount;
-                foreach (var prev in columnChanges)
-                {
-                    if (remaining-- == 0)
-                    {
-                        break;
-                    }
-
-                    normalizedChanges.Add(prev);
-                }
-            }
-
-            normalizedChanges?.Add(new KeyValuePair<int, string?>(updatedField.Key, normalizedValue));
-            processedCount++;
+            columnChanges[i] = new KeyValuePair<int, string?>(updatedField.Key, normalizedValue);
         }
 
-        var changes = normalizedChanges ?? columnChanges;
-        return new MutationInfo(key, rowIndex, isNew, changes, FieldMask.From(changes));
+        return new MutationInfo(key, rowIndex, isNew, columnChanges, FieldMask.From(columnChanges));
     }
 
     private string?[] GetOrAddRow(string rowKey, out int rowIndex, out bool isNew)
@@ -216,14 +197,21 @@ public sealed class RowCollection
 
     private static string? NormalizeValue(ScalarFieldType type, string? value)
     {
-        if (type == ScalarFieldType.Boolean)
+        if (type != ScalarFieldType.Boolean || value is null)
         {
-            if (ScalarValueConverter.TryConvertBoolean(value, out var parsed))
-            {
-                return ScalarValueConverter.FormatBoolean(parsed);
-            }
+            return value;
         }
 
-        return value;
+        if (string.Equals(value, ScalarValueConverter.TrueString, StringComparison.Ordinal))
+        {
+            return ScalarValueConverter.TrueString;
+        }
+
+        if (string.Equals(value, ScalarValueConverter.FalseString, StringComparison.Ordinal))
+        {
+            return ScalarValueConverter.FalseString;
+        }
+
+        return null;
     }
 }

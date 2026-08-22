@@ -94,7 +94,7 @@ public sealed class CollectionSchema
         return _fieldNameToIndex.GetValueOrDefault(name, -1);
     }
 
-    public IReadOnlyCollection<KeyValuePair<int, string?>> MapToColumnChanges(
+    internal KeyValuePair<int, string?>[] MapToColumnChanges(
         IReadOnlyDictionary<string, string?> fieldValues)
     {
         if (fieldValues.Count == 0)
