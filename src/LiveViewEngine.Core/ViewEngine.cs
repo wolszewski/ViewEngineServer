@@ -185,28 +185,17 @@ public sealed class ViewEngine : IViewEngine, IDisposable
         }
 
         var subscriptionKey = subscribe.EffectiveSubscriptionKey;
-        CollectionRuntime? previousRuntime = null;
-        bool isCrossCollectionReplacement =
-            _subscriptionRoutes.TryGetValue(subscriptionKey, out var previousCollectionId) &&
-            !string.Equals(previousCollectionId, subscribeCollectionId, StringComparison.Ordinal) &&
-            _collectionRuntimes.TryGetValue(previousCollectionId, out previousRuntime);
+        if (_subscriptionRoutes.TryGetValue(subscriptionKey, out var previousCollectionId) &&
+            !string.Equals(previousCollectionId, subscribeCollectionId, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Subscription '{subscriptionKey}' is already bound to collection '{previousCollectionId}'. " +
+                "A subscription cannot switch collections. Create a new subscription id instead.");
+        }
 
-        var deltas = await subscribeRuntime.EnqueueAsync(
-            new SubscribeRuntimeWork(subscribeRuntime, subscribe),
-            ct);
+        var deltas = await subscribeRuntime.EnqueueAsync(new SubscribeRuntimeWork(subscribeRuntime, subscribe), ct);
         if (subscribeRuntime.ContainsSubscription(subscriptionKey))
         {
-            if (isCrossCollectionReplacement)
-            {
-                await previousRuntime!.EnqueueAsync(
-                    new UnsubscribeRuntimeWork(previousRuntime, new UnsubscribeCommand
-                    {
-                        ConnectionId = subscribe.ConnectionId,
-                        SubscriptionId = subscribe.SubscriptionId
-                    }),
-                    ct);
-            }
-
             _subscriptionRoutes[subscriptionKey] = subscribeCollectionId;
         }
         else

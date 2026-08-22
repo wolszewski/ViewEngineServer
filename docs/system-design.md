@@ -16,10 +16,11 @@ The repo currently implements the following runtime flow:
 - `POST /collections/{collectionName}/ingest` upserts or deletes a row.
 - TCP ingest (`127.0.0.1:6000` by default) accepts newline-framed commands (`CREATE`, `GET_SCHEMA`, `UPSERT`, `DELETE`, `PING`).
 - `GET /ws` opens a WebSocket session.
-- The client sends JSON messages with a `type` of `subscribe`, `setviewport`, or `unsubscribe`.
+- The client sends JSON messages with a `type` of `subscribe`, `updateview`, `setviewport`, or `unsubscribe`.
 - `WebSocketSessionManager` maps inbound JSON into `SubscriptionCommand` objects.
 - `ViewEngine.SubscribeAsync` returns `ViewDelta` instances for the requesting connection.
 - `WebSocketOutboundPublisher` serializes them to JSON and sends them on the socket.
+- Subscription lifecycle rules are defined in [subscription-design.md](./subscription-design.md).
 
 For TCP ingest, `UPSERT`/`DELETE` are enqueued into bounded per-collection channels and processed by single consumers to preserve per-collection ordering. Async `ACK`/`ERR` replies for these operations are configurable (`TcpIngest:EnableAsyncAcks`, default `true`).
 
@@ -128,10 +129,10 @@ The viewport is not persisted across reconnects; it is rebuilt on the next subsc
 `ViewEngine` orchestrates the ingest pipeline and subscription lifecycle.
 
 - `IngestAsync` handles `CreateCollectionCommand`, `UpsertRowCommand`, and `DeleteRowCommand`.
-- `SubscribeAsync` handles `SubscribeCommand`, `ChangeViewportCommand`, and `UnsubscribeCommand`.
-- `HandleSubscribe` creates or reuses a `SharedView`, creates a `ViewportState`, and sends a `SnapshotDelta`.
-- `HandleChangeViewport` returns a new snapshot for the same view with a different page window.
-- `HandleUnsubscribe` removes the viewport and cleans up empty shared views if appropriate.
+- `SubscribeAsync` handles `SubscribeCommand`, `UpdateViewCommand`, and `UnsubscribeCommand`.
+- `SubscribeCommand` creates or reuses a `SharedView`, creates a `ViewportState`, and sends snapshot deltas.
+- `UpdateViewCommand` updates viewport/view settings for an existing subscription and keeps collection binding stable.
+- `UnsubscribeCommand` removes viewport state and clears route mapping.
 
 ### TCP ingest components
 
@@ -215,7 +216,7 @@ For delete requests, the server expects:
 GET /ws
  → WebSocketEndpoints.MapWebSocketEndpoints
  → WebSocketSessionManager.HandleConnectionAsync
- → JSON message decoded to SubscribeCommand / ChangeViewportCommand / UnsubscribeCommand
+ → JSON message decoded to SubscribeCommand / UpdateViewCommand / UnsubscribeCommand
  → IViewEngine.SubscribeAsync
  → SnapshotDelta or viewport delta sent back over the socket
 ```
@@ -224,8 +225,9 @@ The current inbound message types are:
 
 ```json
 { "type": "subscribe", "collectionId": "orders", "sortColumn": "amount", "sortAscending": true, "startIndex": 0, "pageSize": 25 }
-{ "type": "setviewport", "startIndex": 50, "pageSize": 25 }
-{ "type": "unsubscribe" }
+{ "type": "updateview", "subscriptionId": 1, "startIndex": 50, "pageSize": 25, "sortAscending": false }
+{ "type": "setviewport", "subscriptionId": 1, "startIndex": 100, "pageSize": 25 }
+{ "type": "unsubscribe", "subscriptionId": 1 }
 ```
 
 ### TCP ingest lifecycle

@@ -103,8 +103,61 @@ public class ViewEngineIngestTests
 
         var snapshot = events.ToSnapshotDelta();
         Assert.Equal(2, snapshot.TotalCount);
+        Assert.Equal(4, snapshot.Rows[0].Length);
         Assert.Equal("o1", snapshot.Rows[0][CollectionSchema.PrimaryKeyIndex]);
         Assert.Equal("o2", snapshot.Rows[1][CollectionSchema.PrimaryKeyIndex]);
+    }
+
+    [Fact]
+    public async Task Subscribe_WithEmptyFields_ReturnsPrimaryKeyOnly()
+    {
+        var (engine, _, _) = CreateEngine();
+        await CreateOrders(engine);
+        await Upsert(engine, "o1", "Alice", "100");
+
+        var events = await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = 1,
+            View = new ViewDefinition
+            {
+                CollectionId = "orders",
+                Fields = []
+            },
+            StartIndex = 0,
+            PageSize = 50
+        });
+
+        var snapshot = events.ToSnapshotDelta();
+        Assert.Single(snapshot.Rows[0]);
+        Assert.Equal("o1", snapshot.Rows[0][CollectionSchema.PrimaryKeyIndex]);
+    }
+
+    [Fact]
+    public async Task Subscribe_WithSameSubscriptionIdForDifferentCollection_Throws()
+    {
+        var (engine, _, _) = CreateEngine();
+        await CreateOrders(engine);
+        await CreateTrades(engine);
+
+        await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = 1,
+            SubscriptionId = 42,
+            View = new ViewDefinition { CollectionId = "orders" },
+            StartIndex = 0,
+            PageSize = 10
+        });
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = 1,
+            SubscriptionId = 42,
+            View = new ViewDefinition { CollectionId = "trades" },
+            StartIndex = 0,
+            PageSize = 10
+        }));
+
+        Assert.Contains("cannot switch collections", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

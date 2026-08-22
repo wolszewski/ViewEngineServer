@@ -152,7 +152,9 @@ public sealed class CollectionRuntime : IDisposable
             return [];
         }
 
-        var selectedFieldIndexes = ResolveVisibleFieldIndexes(command.View);
+        var selectedFieldIndexes = command.View.Fields is { Count: 0 }
+            ? [CollectionSchema.PrimaryKeyIndex]
+            : ResolveVisibleFieldIndexes(command.View);
 
         if (_viewports.TryGetValue(subscriptionKey, out var existingViewport))
         {
@@ -634,7 +636,7 @@ public sealed class CollectionRuntime : IDisposable
 
     private int[] ResolveVisibleFieldIndexes(ViewDefinition view)
     {
-        if (view.Fields is null)
+        if (view.Fields is null || view.Fields.Count == 0)
         {
             var all = new int[Collection.Schema.Fields.Count];
             for (var i = 0; i < all.Length; i++) { all[i] = i; }

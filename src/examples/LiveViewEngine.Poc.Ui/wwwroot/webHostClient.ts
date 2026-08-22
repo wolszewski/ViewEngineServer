@@ -270,6 +270,7 @@ export class WebHostClient {
             return;
         }
 
+        this.activeSubscriptionId = null;
         this.lastSubscribe = request;
         this.currentMessageFormat = request.messageFormat ?? 'compact';
         const message: Record<string, unknown> = {
@@ -288,7 +289,7 @@ export class WebHostClient {
             }))
         };
 
-        if (request.fields && request.fields.length > 0) {
+        if (request.fields !== undefined && request.fields.length > 0) {
             message.fields = request.fields;
         }
 
