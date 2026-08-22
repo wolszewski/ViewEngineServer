@@ -1,4 +1,6 @@
-namespace LiveViewEngine.Core.Runtime;
+using LiveViewEngine.Core.DataIngest;
+
+namespace LiveViewEngine.Core.Runtime.WorkEvents;
 
 internal sealed class UnknownCommandRuntimeWork : RuntimeWorkItem<MutationResult>
 {

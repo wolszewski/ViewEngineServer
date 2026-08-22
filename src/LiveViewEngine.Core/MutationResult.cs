@@ -1,3 +1,5 @@
+using LiveViewEngine.Core.DataIngest;
+
 namespace LiveViewEngine.Core;
 
 public readonly record struct MutationResult

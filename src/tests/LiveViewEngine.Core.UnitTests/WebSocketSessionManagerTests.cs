@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using LiveViewEngine.Core;
 using LiveViewEngine.Core.Data;
+using LiveViewEngine.Core.DataIngest;
 using Microsoft.Extensions.Logging.Abstractions;
 using ViewEngineServer.WebApp.WebSocket;
 

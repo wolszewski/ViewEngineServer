@@ -1,4 +1,4 @@
-namespace LiveViewEngine.Core.Runtime;
+namespace LiveViewEngine.Core.Runtime.WorkEvents;
 
 internal sealed class RemoveStaleIndexRuntimeWork : RuntimeWorkItem<bool>
 {

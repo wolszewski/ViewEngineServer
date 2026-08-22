@@ -1,15 +1,10 @@
-namespace LiveViewEngine.Core.Runtime;
+namespace LiveViewEngine.Core.Runtime.WorkEvents;
 
-internal sealed class UpdateViewRuntimeWork : RuntimeWorkItem<IReadOnlyList<ViewDelta>>
+internal sealed class UpdateViewRuntimeWork(
+    CollectionRuntime runtime,
+    UpdateViewCommand command
+)
+    : RuntimeWorkItem<IReadOnlyList<ViewDelta>>
 {
-    private readonly CollectionRuntime _runtime;
-    private readonly UpdateViewCommand _command;
-
-    public UpdateViewRuntimeWork(CollectionRuntime runtime, UpdateViewCommand command)
-    {
-        _runtime = runtime;
-        _command = command;
-    }
-
-    protected override IReadOnlyList<ViewDelta> ExecuteCore() => _runtime.HandleUpdateView(_command);
+    protected override IReadOnlyList<ViewDelta> ExecuteCore() => runtime.HandleUpdateView(command);
 }

@@ -1,4 +1,4 @@
-namespace LiveViewEngine.Core.Runtime;
+namespace LiveViewEngine.Core.Runtime.WorkEvents;
 
 internal abstract class RuntimeWorkItem<T> : IWorkItem<T>
 {

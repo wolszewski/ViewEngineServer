@@ -14,22 +14,22 @@ public class CollectionStoreTests
     public void TryCreate_NewId_ReturnsTrue()
     {
         var store = MakeStore();
-        Assert.True(store.TryCreate(MakeSchema()));
+        Assert.True(store.TryCreateCollection(MakeSchema()));
     }
 
     [Fact]
     public void TryCreate_DuplicateId_ReturnsFalse()
     {
         var store = MakeStore();
-        store.TryCreate(MakeSchema());
-        Assert.False(store.TryCreate(MakeSchema()));
+        store.TryCreateCollection(MakeSchema());
+        Assert.False(store.TryCreateCollection(MakeSchema()));
     }
 
     [Fact]
     public void TryGet_ExistingCollection_ReturnsTrue_AndNonNull()
     {
         var store = MakeStore();
-        store.TryCreate(MakeSchema());
+        store.TryCreateCollection(MakeSchema());
 
         Assert.True(store.TryGet("col1", out var col));
         Assert.NotNull(col);
@@ -47,8 +47,8 @@ public class CollectionStoreTests
     public void CollectionIds_ReflectsCreatedCollections()
     {
         var store = MakeStore();
-        store.TryCreate(MakeSchema("a"));
-        store.TryCreate(MakeSchema("b"));
+        store.TryCreateCollection(MakeSchema("a"));
+        store.TryCreateCollection(MakeSchema("b"));
         Assert.Contains("a", store.CollectionIds);
         Assert.Contains("b", store.CollectionIds);
         Assert.Equal(2, store.CollectionIds.Count);

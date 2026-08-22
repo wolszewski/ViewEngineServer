@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Threading.Channels;
 using LiveViewEngine.Core;
 using LiveViewEngine.Core.Data;
+using LiveViewEngine.Core.DataIngest;
 using LiveViewEngine.TcpProtocol;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;

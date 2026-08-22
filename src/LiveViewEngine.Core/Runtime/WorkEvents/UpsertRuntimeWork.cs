@@ -1,15 +1,11 @@
-namespace LiveViewEngine.Core.Runtime;
+using LiveViewEngine.Core.DataIngest;
 
-internal sealed class UpsertRuntimeWork : RuntimeWorkItem<MutationResult>
+namespace LiveViewEngine.Core.Runtime.WorkEvents;
+
+internal sealed class UpsertRuntimeWork(
+    CollectionRuntime runtime, 
+    UpsertRowCommand command)
+    : RuntimeWorkItem<MutationResult>
 {
-    private readonly CollectionRuntime _runtime;
-    private readonly UpsertRowCommand _command;
-
-    public UpsertRuntimeWork(CollectionRuntime runtime, UpsertRowCommand command)
-    {
-        _runtime = runtime;
-        _command = command;
-    }
-
-    protected override MutationResult ExecuteCore() => _runtime.HandleUpsert(_command);
+    protected override MutationResult ExecuteCore() => runtime.HandleUpsert(command);
 }

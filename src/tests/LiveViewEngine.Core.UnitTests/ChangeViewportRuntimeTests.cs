@@ -1,5 +1,6 @@
 using LiveViewEngine.Core;
 using LiveViewEngine.Core.Data;
+using LiveViewEngine.Core.DataIngest;
 using LiveViewEngine.Core.Runtime;
 using LiveViewEngine.Core.Views;
 
@@ -57,7 +58,8 @@ public class UpdateViewRuntimeTests
             ConnectionId = 1,
             SubscriptionId = 1,
             StartIndex = 20,
-            PageSize = null
+            PageSize = null,
+            SendSnapshot = false
         });
 
         var start = Assert.IsType<SnapshotStartDelta>(deltas[0]);
@@ -80,7 +82,8 @@ public class UpdateViewRuntimeTests
             ConnectionId = 1,
             SubscriptionId = 1,
             StartIndex = 0,
-            PageSize = 100
+            PageSize = 100,
+            SendSnapshot = false
         });
 
         var start = Assert.IsType<SnapshotStartDelta>(deltas[0]);
@@ -103,7 +106,8 @@ public class UpdateViewRuntimeTests
             ConnectionId = 1,
             SubscriptionId = 1,
             StartIndex = 0,
-            PageSize = 100
+            PageSize = 100,
+            SendSnapshot = false
         });
 
         var start = Assert.IsType<SnapshotStartDelta>(deltas[0]);
@@ -200,5 +204,71 @@ public class UpdateViewRuntimeTests
         Assert.Contains("Unknown field 'missing-field'", ex.Message);
         Assert.True(runtime.ContainsSubscription(new SubscriptionKey(1, 1)));
         Assert.Equal(1, runtime.ActiveSubscriptionCount);
+    }
+
+    [Fact]
+    public void UpdateView_WithSendSnapshotTrue_AndIdenticalViewport_ReturnsFullSnapshot()
+    {
+        var runtime = MakeRuntime(100);
+        Subscribe(runtime, 0, 50);
+
+        var deltas = runtime.HandleUpdateView(new UpdateViewCommand
+        {
+            ConnectionId = 1,
+            SubscriptionId = 1,
+            StartIndex = 0,
+            PageSize = 50,
+            SendSnapshot = true
+        });
+
+        var start = Assert.IsType<SnapshotStartDelta>(deltas[0]);
+        Assert.False(start.IsPartial);
+        Assert.Equal(0, start.StartIndex);
+
+        var rows = Assert.IsType<SnapshotRowsDelta>(deltas[1]);
+        Assert.Equal(50, rows.Rows.Count);
+        Assert.IsType<EndOfSnapshotDelta>(deltas[^1]);
+    }
+
+    [Fact]
+    public void UpdateView_WithSendSnapshotTrue_AndPageSizeIncrease_ReturnsFullSnapshot()
+    {
+        var runtime = MakeRuntime(200);
+        Subscribe(runtime, 0, 50);
+
+        var deltas = runtime.HandleUpdateView(new UpdateViewCommand
+        {
+            ConnectionId = 1,
+            SubscriptionId = 1,
+            StartIndex = 0,
+            PageSize = 100,
+            SendSnapshot = true
+        });
+
+        var start = Assert.IsType<SnapshotStartDelta>(deltas[0]);
+        Assert.False(start.IsPartial);
+        Assert.Equal(0, start.StartIndex);
+
+        var rows = Assert.IsType<SnapshotRowsDelta>(deltas[1]);
+        Assert.Equal(100, rows.Rows.Count);
+        Assert.IsType<EndOfSnapshotDelta>(deltas[^1]);
+    }
+
+    [Fact]
+    public void UpdateView_WithSendSnapshotFalse_AndIdenticalViewport_ReturnsEmpty()
+    {
+        var runtime = MakeRuntime(100);
+        Subscribe(runtime, 0, 50);
+
+        var deltas = runtime.HandleUpdateView(new UpdateViewCommand
+        {
+            ConnectionId = 1,
+            SubscriptionId = 1,
+            StartIndex = 0,
+            PageSize = 50,
+            SendSnapshot = false
+        });
+
+        Assert.Empty(deltas);
     }
 }

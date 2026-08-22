@@ -1,13 +1,9 @@
-namespace LiveViewEngine.Core.Runtime;
+namespace LiveViewEngine.Core.Runtime.WorkEvents;
 
-internal sealed class UnknownSubscriptionRuntimeWork : RuntimeWorkItem<IReadOnlyList<ViewDelta>>
+internal sealed class UnknownSubscriptionRuntimeWork(SubscriptionCommand command)
+    : RuntimeWorkItem<IReadOnlyList<ViewDelta>>
 {
-    private readonly SubscriptionCommand _command;
-
-    public UnknownSubscriptionRuntimeWork(SubscriptionCommand command)
-    {
-        _command = command;
-    }
+    private readonly SubscriptionCommand _command = command;
 
     protected override IReadOnlyList<ViewDelta> ExecuteCore() => [];
 }
