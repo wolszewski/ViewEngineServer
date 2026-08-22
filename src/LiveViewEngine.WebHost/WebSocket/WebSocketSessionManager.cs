@@ -95,12 +95,12 @@ public sealed class WebSocketSessionManager
                         messageFormat,
                         snapshotActive: subscribe.SendSnapshot);
                 }
-                else if (command is UpdateViewCommand { SendSnapshot: true })
+                var events = await _engine.SubscribeAsync(command, ct);
+
+                if (command is UpdateViewCommand { SendSnapshot: true } && events.Count > 0)
                 {
                     _publisher.SetSnapshotActive(context.ConnectionId, command.SubscriptionId, snapshotActive: true);
                 }
-
-                var events = await _engine.SubscribeAsync(command, ct);
                 if (command is SubscribeCommand subscribeCommand && clientSubscriptionId > 0)
                 {
                     var originalEvents = events;
