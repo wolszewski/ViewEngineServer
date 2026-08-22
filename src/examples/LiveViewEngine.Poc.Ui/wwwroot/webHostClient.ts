@@ -309,15 +309,20 @@ export class WebHostClient {
             startIndex: request.startIndex,
             pageSize: request.pageSize,
             sortColumn: request.sortColumn,
-            sortAscending: request.sortAscending,
-            filters: (request.filters ?? []).map((filter) => ({
+            sortAscending: request.sortAscending
+        }
+
+        if (request.filters !== undefined) {
+            message.filters = request.filters.map((filter) => ({
                 field: filter.field,
                 operator: filter.operator,
                 value: filter.value
-            }))
+            }));
         }
 
-        message.fields = request.fields ?? [];
+        if (request.fields !== undefined) {
+            message.fields = request.fields;
+        }
 
         this.socket.send(JSON.stringify(message));
         this.hasReceivedSnapshot = false;
