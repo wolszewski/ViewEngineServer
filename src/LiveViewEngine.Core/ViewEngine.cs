@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
-using System.Threading.Channels;
 using LiveViewEngine.Core.Data;
 using LiveViewEngine.Core.Runtime;
 using Microsoft.Extensions.Logging;
@@ -21,10 +20,8 @@ public sealed class ViewEngine : IViewEngine, IDisposable
     private readonly ILogger<ViewEngine> _logger;
     private readonly IViewEngineMetrics? _metrics;
     private readonly ConcurrentDictionary<string, CollectionRuntime> _collectionRuntimes = new();
-    private readonly Dictionary<SubscriptionKey, string> _subscriptionRoutes = new();
-    private readonly Channel<IQueuedViewEngineCommand> _commands;
-    private readonly CancellationTokenSource _disposeCts = new();
-    private readonly Task _commandProcessorTask;
+    private readonly ConcurrentDictionary<SubscriptionKey, string> _subscriptionRoutes = new();
+    private readonly ConcurrentDictionary<SubscriptionKey, SemaphoreSlim> _subscriptionRouteLocks = new();
     private bool _disposed;
 
     public ViewEngine(
@@ -37,12 +34,6 @@ public sealed class ViewEngine : IViewEngine, IDisposable
         _publisher = publisher;
         _logger = logger;
         _metrics = metrics;
-        _commands = Channel.CreateUnbounded<IQueuedViewEngineCommand>(new UnboundedChannelOptions
-        {
-            SingleReader = true,
-            SingleWriter = false
-        });
-        _commandProcessorTask = ProcessCommandsAsync();
 
         metrics?.RegisterSortIndexGaugeSource(() => _collectionRuntimes.Values.Sum(static r => r.SortIndexCount));
 
@@ -62,12 +53,14 @@ public sealed class ViewEngine : IViewEngine, IDisposable
 
     public Task<IngestResult> IngestAsync(IngestCommand command, CancellationToken ct = default)
     {
-        return EnqueueAsync(new QueuedIngestCommand(command, ct), ct);
+        ThrowIfDisposed();
+        return ProcessIngestAsync(command, ct);
     }
 
     public Task<IReadOnlyList<ViewDelta>> SubscribeAsync(SubscriptionCommand command, CancellationToken ct = default)
     {
-        return EnqueueAsync(new QueuedSubscribeCommand(command, ct), ct);
+        ThrowIfDisposed();
+        return ProcessSubscribeAsync(command, ct);
     }
 
     public void Dispose()
@@ -78,59 +71,10 @@ public sealed class ViewEngine : IViewEngine, IDisposable
         }
 
         _disposed = true;
-        _commands.Writer.TryComplete();
-        _disposeCts.Cancel();
-        try
-        {
-            _commandProcessorTask.GetAwaiter().GetResult();
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        finally
-        {
-            _disposeCts.Dispose();
-        }
 
         foreach (var runtime in _collectionRuntimes.Values)
         {
             runtime.Dispose();
-        }
-    }
-
-    private async Task<T> EnqueueAsync<T>(QueuedViewEngineCommand<T> command, CancellationToken ct)
-    {
-        ThrowIfDisposed();
-        try
-        {
-            await _commands.Writer.WriteAsync(command, ct);
-        }
-        catch (ChannelClosedException)
-        {
-            throw new ObjectDisposedException(nameof(ViewEngine));
-        }
-
-        return await command.ResultTask.WaitAsync(ct);
-    }
-
-    private async Task ProcessCommandsAsync()
-    {
-        try
-        {
-            await foreach (var command in _commands.Reader.ReadAllAsync(_disposeCts.Token))
-            {
-                await command.ExecuteAsync(this);
-            }
-        }
-        catch (OperationCanceledException) when (_disposeCts.IsCancellationRequested)
-        {
-        }
-        finally
-        {
-            while (_commands.Reader.TryRead(out var pendingCommand))
-            {
-                pendingCommand.TrySetException(new ObjectDisposedException(nameof(ViewEngine)));
-            }
         }
     }
 
@@ -193,93 +137,100 @@ public sealed class ViewEngine : IViewEngine, IDisposable
         string? metricsCollectionId = GetCollectionIdForSubscription(command);
         try
         {
-            if (command is SubscribeCommand subscribe)
-            {
-                metricsCollectionId = subscribe.View.CollectionId;
-                string subscribeCollectionId = subscribe.View.CollectionId;
-                if (!_collectionRuntimes.TryGetValue(subscribeCollectionId, out var subscribeRuntime))
-                {
-                    return [];
-                }
-
-                var subscriptionKey = subscribe.EffectiveSubscriptionKey;
-                CollectionRuntime? previousRuntime = null;
-                bool isCrossCollectionReplacement =
-                    _subscriptionRoutes.TryGetValue(subscriptionKey, out var previousCollectionId) &&
-                    !string.Equals(previousCollectionId, subscribeCollectionId, StringComparison.Ordinal) &&
-                    _collectionRuntimes.TryGetValue(previousCollectionId, out previousRuntime);
-
-                var deltas = await subscribeRuntime.EnqueueAsync(
-                    new SubscribeRuntimeWork(subscribeRuntime, subscribe),
-                    ct);
-                if (subscribeRuntime.ContainsSubscription(subscriptionKey))
-                {
-                    if (isCrossCollectionReplacement)
-                    {
-                        await previousRuntime!.EnqueueAsync(
-                            new UnsubscribeRuntimeWork(previousRuntime, new UnsubscribeCommand
-                            {
-                                ConnectionId = subscribe.ConnectionId,
-                                SubscriptionId = subscribe.SubscriptionId
-                            }),
-                            ct);
-                    }
-
-                    _subscriptionRoutes[subscriptionKey] = subscribeCollectionId;
-                }
-                else
-                {
-                    _subscriptionRoutes.Remove(subscriptionKey);
-                }
-
-                return deltas;
-            }
-
             if (command is UnsubscribeCommand unsubscribe && unsubscribe.SubscriptionId == 0)
             {
                 await UnsubscribeAllForConnectionAsync(unsubscribe.ConnectionId, ct);
                 return [];
             }
 
-            if (command is UnsubscribeCommand unsubscribeCommand)
-            {
-                var key = unsubscribeCommand.EffectiveSubscriptionKey;
-                var collectionId = GetCollectionIdForSubscription(command);
-                if (collectionId is null || !_collectionRuntimes.TryGetValue(collectionId, out var unsubRuntime))
+            return await ExecuteWithSubscriptionRouteLockAsync(
+                command.EffectiveSubscriptionKey,
+                ct,
+                async () =>
                 {
-                    _subscriptionRoutes.Remove(key);
-                }
-                else
-                {
-                    await unsubRuntime.EnqueueAsync(new UnsubscribeRuntimeWork(unsubRuntime, unsubscribeCommand), ct);
-                    _subscriptionRoutes.Remove(key);
-                }
+                    if (command is SubscribeCommand subscribe)
+                    {
+                        metricsCollectionId = subscribe.View.CollectionId;
+                        string subscribeCollectionId = subscribe.View.CollectionId;
+                        if (!_collectionRuntimes.TryGetValue(subscribeCollectionId, out var subscribeRuntime))
+                        {
+                            return [];
+                        }
 
-                return [];
-            }
+                        var subscriptionKey = subscribe.EffectiveSubscriptionKey;
+                        CollectionRuntime? previousRuntime = null;
+                        bool isCrossCollectionReplacement =
+                            _subscriptionRoutes.TryGetValue(subscriptionKey, out var previousCollectionId) &&
+                            !string.Equals(previousCollectionId, subscribeCollectionId, StringComparison.Ordinal) &&
+                            _collectionRuntimes.TryGetValue(previousCollectionId, out previousRuntime);
 
-            if (command is UpdateViewCommand updateCommand)
-            {
-                var collectionId = GetCollectionIdForSubscription(updateCommand);
-                if (collectionId is null || !_collectionRuntimes.TryGetValue(collectionId, out var updateRuntime))
-                {
-                    throw new InvalidOperationException(
-                        $"Subscription '{updateCommand.EffectiveSubscriptionKey}' was not found.");
-                }
+                        var deltas = await subscribeRuntime.EnqueueAsync(
+                            new SubscribeRuntimeWork(subscribeRuntime, subscribe),
+                            ct);
+                        if (subscribeRuntime.ContainsSubscription(subscriptionKey))
+                        {
+                            if (isCrossCollectionReplacement)
+                            {
+                                await previousRuntime!.EnqueueAsync(
+                                    new UnsubscribeRuntimeWork(previousRuntime, new UnsubscribeCommand
+                                    {
+                                        ConnectionId = subscribe.ConnectionId,
+                                        SubscriptionId = subscribe.SubscriptionId
+                                    }),
+                                    ct);
+                            }
 
-                return await updateRuntime.EnqueueAsync(
-                    new UpdateViewRuntimeWork(updateRuntime, updateCommand),
-                    ct);
-            }
+                            _subscriptionRoutes[subscriptionKey] = subscribeCollectionId;
+                        }
+                        else
+                        {
+                            _subscriptionRoutes.TryRemove(subscriptionKey, out _);
+                        }
 
-            var nonUnsubCollectionId = GetCollectionIdForSubscription(command);
-            if (nonUnsubCollectionId is null || !_collectionRuntimes.TryGetValue(nonUnsubCollectionId, out var runtime))
-            {
-                return [];
-            }
+                        return deltas;
+                    }
 
-            RuntimeWorkItem<IReadOnlyList<ViewDelta>> work = new UnknownSubscriptionRuntimeWork(command);
-            return await runtime.EnqueueAsync(work, ct);
+                    if (command is UnsubscribeCommand unsubscribeCommand)
+                    {
+                        var key = unsubscribeCommand.EffectiveSubscriptionKey;
+                        var collectionId = GetCollectionIdForSubscription(command);
+                        if (collectionId is null || !_collectionRuntimes.TryGetValue(collectionId, out var unsubRuntime))
+                        {
+                            _subscriptionRoutes.TryRemove(key, out _);
+                        }
+                        else
+                        {
+                            await unsubRuntime.EnqueueAsync(new UnsubscribeRuntimeWork(unsubRuntime, unsubscribeCommand), ct);
+                            _subscriptionRoutes.TryRemove(key, out _);
+                        }
+
+                        return [];
+                    }
+
+                    if (command is UpdateViewCommand updateCommand)
+                    {
+                        var collectionId = GetCollectionIdForSubscription(updateCommand);
+                        if (collectionId is null || !_collectionRuntimes.TryGetValue(collectionId, out var updateRuntime))
+                        {
+                            throw new InvalidOperationException(
+                                $"Subscription '{updateCommand.EffectiveSubscriptionKey}' was not found.");
+                        }
+
+                        return await updateRuntime.EnqueueAsync(
+                            new UpdateViewRuntimeWork(updateRuntime, updateCommand),
+                            ct);
+                    }
+
+                    var nonUnsubCollectionId = GetCollectionIdForSubscription(command);
+                    if (nonUnsubCollectionId is null ||
+                        !_collectionRuntimes.TryGetValue(nonUnsubCollectionId, out var runtime))
+                    {
+                        return [];
+                    }
+
+                    RuntimeWorkItem<IReadOnlyList<ViewDelta>> work = new UnknownSubscriptionRuntimeWork(command);
+                    return await runtime.EnqueueAsync(work, ct);
+                });
         }
         finally
         {
@@ -288,6 +239,23 @@ public sealed class ViewEngine : IViewEngine, IDisposable
             {
                 _metrics?.RecordSubscriptionDuration(durationMs, command.GetType().Name, metricsCollectionId);
             }
+        }
+    }
+
+    private async Task<T> ExecuteWithSubscriptionRouteLockAsync<T>(
+        SubscriptionKey key,
+        CancellationToken ct,
+        Func<Task<T>> work)
+    {
+        var routeLock = _subscriptionRouteLocks.GetOrAdd(key, static _ => new SemaphoreSlim(1, 1));
+        await routeLock.WaitAsync(ct);
+        try
+        {
+            return await work();
+        }
+        finally
+        {
+            routeLock.Release();
         }
     }
 
@@ -321,7 +289,7 @@ public sealed class ViewEngine : IViewEngine, IDisposable
         {
             if (subscriptionKey.ConnectionId == connectionId)
             {
-                _subscriptionRoutes.Remove(subscriptionKey);
+                _subscriptionRoutes.TryRemove(subscriptionKey, out _);
             }
         }
     }
@@ -351,74 +319,6 @@ public sealed class ViewEngine : IViewEngine, IDisposable
         if (_disposed)
         {
             throw new ObjectDisposedException(nameof(ViewEngine));
-        }
-    }
-
-    private interface IQueuedViewEngineCommand
-    {
-        Task ExecuteAsync(ViewEngine engine);
-        void TrySetException(Exception exception);
-    }
-
-    private abstract class QueuedViewEngineCommand<T> : IQueuedViewEngineCommand
-    {
-        private readonly TaskCompletionSource<T> _result =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public Task<T> ResultTask => _result.Task;
-
-        public async Task ExecuteAsync(ViewEngine engine)
-        {
-            try
-            {
-                var result = await ExecuteCoreAsync(engine);
-                _result.TrySetResult(result);
-            }
-            catch (Exception ex)
-            {
-                _result.TrySetException(ex);
-            }
-        }
-
-        public void TrySetException(Exception exception)
-        {
-            _result.TrySetException(exception);
-        }
-
-        protected abstract Task<T> ExecuteCoreAsync(ViewEngine engine);
-    }
-
-    private sealed class QueuedIngestCommand : QueuedViewEngineCommand<IngestResult>
-    {
-        private readonly IngestCommand _command;
-        private readonly CancellationToken _ct;
-
-        public QueuedIngestCommand(IngestCommand command, CancellationToken ct)
-        {
-            _command = command;
-            _ct = ct;
-        }
-
-        protected override Task<IngestResult> ExecuteCoreAsync(ViewEngine engine)
-        {
-            return engine.ProcessIngestAsync(_command, _ct);
-        }
-    }
-
-    private sealed class QueuedSubscribeCommand : QueuedViewEngineCommand<IReadOnlyList<ViewDelta>>
-    {
-        private readonly SubscriptionCommand _command;
-        private readonly CancellationToken _ct;
-
-        public QueuedSubscribeCommand(SubscriptionCommand command, CancellationToken ct)
-        {
-            _command = command;
-            _ct = ct;
-        }
-
-        protected override Task<IReadOnlyList<ViewDelta>> ExecuteCoreAsync(ViewEngine engine)
-        {
-            return engine.ProcessSubscribeAsync(_command, _ct);
         }
     }
 }
