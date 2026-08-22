@@ -23,19 +23,37 @@ public sealed class RowCollection
 
         var row = GetOrAddRow(key, out var rowIndex, out var isNew);
         var columnChanges = Schema.MapToColumnChanges(fieldChanges);
-        var normalizedChanges = new List<KeyValuePair<int, string?>>(columnChanges.Count);
+        List<KeyValuePair<int, string?>>? normalizedChanges = null;
+        var processedCount = 0;
 
         foreach (var updatedField in columnChanges)
         {
             var fieldDefinition = Schema.GetFieldDefinition(updatedField.Key);
             var normalizedValue = NormalizeValue(fieldDefinition.Type, updatedField.Value);
             row[updatedField.Key] = normalizedValue;
-
             UpdateTypedValueForField(rowIndex, updatedField.Key, normalizedValue);
-            normalizedChanges.Add(new KeyValuePair<int, string?>(updatedField.Key, normalizedValue));
+
+            if (normalizedValue != updatedField.Value && normalizedChanges is null)
+            {
+                normalizedChanges = new List<KeyValuePair<int, string?>>(columnChanges.Count);
+                var remaining = processedCount;
+                foreach (var prev in columnChanges)
+                {
+                    if (remaining-- == 0)
+                    {
+                        break;
+                    }
+
+                    normalizedChanges.Add(prev);
+                }
+            }
+
+            normalizedChanges?.Add(new KeyValuePair<int, string?>(updatedField.Key, normalizedValue));
+            processedCount++;
         }
 
-        return new MutationInfo(key, rowIndex, isNew, normalizedChanges, FieldMask.From(normalizedChanges));
+        var changes = normalizedChanges ?? columnChanges;
+        return new MutationInfo(key, rowIndex, isNew, changes, FieldMask.From(changes));
     }
 
     private string?[] GetOrAddRow(string rowKey, out int rowIndex, out bool isNew)

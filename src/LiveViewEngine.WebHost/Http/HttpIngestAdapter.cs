@@ -128,7 +128,7 @@ public static class HttpIngestAdapter
            return ScalarFieldType.String;
         }
 
-        return fieldType.Trim() switch
+        return fieldType.Trim().ToLowerInvariant() switch
         {
            "string" => ScalarFieldType.String,
            "enum" => ScalarFieldType.String,

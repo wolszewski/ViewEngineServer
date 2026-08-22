@@ -112,7 +112,16 @@ internal sealed class FilterSet : IDisposable
             };
         }
 
-        if (fieldDefinition.Type is ScalarFieldType.String or ScalarFieldType.Boolean)
+        if (fieldDefinition.Type is ScalarFieldType.Boolean)
+        {
+            var filterValue = ScalarValueConverter.TryConvertBoolean(spec.Value, out var boolValue)
+                ? ScalarValueConverter.FormatBoolean(boolValue)
+                : spec.Value;
+            return (collection, rowIndex) =>
+                FilterEvaluator.CompareString(collection.GetValue(rowIndex, fieldIndex), filterValue, filterOperator);
+        }
+
+        if (fieldDefinition.Type is ScalarFieldType.String)
         {
             var filterValue = spec.Value;
             return (collection, rowIndex) =>
