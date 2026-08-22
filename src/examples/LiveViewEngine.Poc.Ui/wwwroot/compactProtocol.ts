@@ -29,12 +29,18 @@ export function parseCompactFrame(frame: string, currentFields: string[]): Proto
             return [];
         }
 
+        const isPartial = tokens[4] === '1';
+        const fields = (tokens.slice(isPartial ? 5 : 4)
+            .map(decodeToken)
+            .filter((value): value is string => value !== null));
+
         return [{
             kind: 'snapshotStart',
             subscriptionId,
             startIndex: parseInt(tokens[2] ?? '0', 10) || 0,
             totalCount: parseInt(tokens[3] ?? '0', 10) || 0,
-            isPartial: tokens[4] === '1'
+            isPartial,
+            fields: fields.length > 0 ? fields : undefined
         }];
     }
 

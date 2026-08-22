@@ -189,7 +189,11 @@ export class WebHostClient {
                 if (!this.isActiveSubscription(frame.subscriptionId)) {
                     return;
                 }
-
+ 
+                if (frame.fields && frame.fields.length > 0) {
+                    this.currentFields = frame.fields;
+                }
+ 
                 this.pendingSnapshot = {
                     subscriptionId: frame.subscriptionId,
                     startIndex: frame.startIndex,

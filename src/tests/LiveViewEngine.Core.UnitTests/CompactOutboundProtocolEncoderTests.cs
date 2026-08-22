@@ -159,10 +159,11 @@ public class CompactOutboundProtocolEncoderTests
                 StartIndex = 0,
                 TotalCount = 100,
                 IsPartial = true,
-                Schema = Schema
+                Schema = Schema,
+                VisibleFieldIndexes = [0, 1, 2]
             },
             subscriptionId: 1).Single();
-        Assert.Equal("P|1|0|100|1", ToText(start));
+        Assert.Equal("P|1|0|100|1|customer|amount", ToText(start));
     }
 
     [Fact]
@@ -175,10 +176,11 @@ public class CompactOutboundProtocolEncoderTests
                 StartIndex = 10,
                 TotalCount = 50,
                 IsPartial = false,
-                Schema = Schema
+                Schema = Schema,
+                VisibleFieldIndexes = [0, 1, 2]
             },
             subscriptionId: 2).Single();
-        Assert.Equal("P|2|10|50", ToText(start));
+        Assert.Equal("P|2|10|50|customer|amount", ToText(start));
     }
 
     [Fact]

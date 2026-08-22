@@ -35,7 +35,8 @@ public sealed class JsonOutboundProtocolEncoder : IOutboundProtocolEncoder
                     SubscriptionId = subscriptionId,
                     StartIndex = start.StartIndex,
                     TotalCount = start.TotalCount,
-                    IsPartial = start.IsPartial
+                    IsPartial = start.IsPartial,
+                    Fields = GetVisibleFieldNames(start.Schema, start.VisibleFieldIndexes)
                 });
                 yield break;
             case SnapshotRowsDelta rows:
@@ -57,7 +58,8 @@ public sealed class JsonOutboundProtocolEncoder : IOutboundProtocolEncoder
                     SubscriptionId = subscriptionId,
                     StartIndex = snapshot.StartIndex,
                     TotalCount = snapshot.TotalCount,
-                    IsPartial = snapshot.IsPartial
+                    IsPartial = snapshot.IsPartial,
+                    Fields = GetVisibleFieldNames(snapshot.Schema, snapshot.VisibleFieldIndexes)
                 });
                 foreach (var row in snapshot.Rows)
                 {
@@ -139,6 +141,25 @@ public sealed class JsonOutboundProtocolEncoder : IOutboundProtocolEncoder
         return result;
     }
 
+    private static IReadOnlyList<string> GetVisibleFieldNames(
+        CollectionSchema schema,
+        IReadOnlyList<int>? visibleFieldIndexes)
+    {
+        var indexes = visibleFieldIndexes ?? Enumerable.Range(0, schema.Fields.Count).ToArray();
+        var names = new List<string>(indexes.Count);
+        foreach (var index in indexes)
+        {
+            if (index == CollectionSchema.PrimaryKeyIndex)
+            {
+                continue;
+            }
+
+            names.Add(schema.Fields[index].Name);
+        }
+
+        return names;
+    }
+
     private abstract class JsonMessage
     {
         public string Type { get; init; } = string.Empty;
@@ -160,6 +181,7 @@ public sealed class JsonOutboundProtocolEncoder : IOutboundProtocolEncoder
         public required int StartIndex { get; init; }
         public required int TotalCount { get; init; }
         public bool IsPartial { get; init; }
+        public IReadOnlyList<string> Fields { get; init; } = [];
     }
 
     private sealed class JsonSnapshotRowMessage : JsonMessage

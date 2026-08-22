@@ -78,6 +78,7 @@ export type ProtocolFrame =
         startIndex: number;
         totalCount: number;
         isPartial?: boolean;
+        fields?: string[];
     }
     | {
         kind: 'snapshotRow';

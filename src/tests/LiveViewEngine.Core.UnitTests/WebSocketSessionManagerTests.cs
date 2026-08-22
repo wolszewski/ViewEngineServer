@@ -37,6 +37,59 @@ public class WebSocketSessionManagerTests
     }
 
     [Fact]
+    public async Task HandleConnectionAsync_UpdateViewWithProjectedFields_EmitsSnapshotMetadataForNewProjection()
+    {
+        var metrics = new ViewEngineMetrics();
+        var store = new CollectionStore(metrics, new LiveViewEngineOptions { EagerIndexing = false });
+        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance);
+        var engine = new ViewEngine(store, publisher, NullLogger<ViewEngine>.Instance, metrics);
+        var manager = new WebSocketSessionManager(
+            engine,
+            store,
+            publisher,
+            NullLogger<WebSocketSessionManager>.Instance);
+
+        await engine.IngestAsync(new CreateCollectionCommand
+        {
+            CollectionId = "trades",
+            Schema = new CollectionSchema("trades", ["symbol", "status", "amount"],
+                [ScalarFieldType.String, ScalarFieldType.String, ScalarFieldType.Decimal])
+        });
+        await engine.IngestAsync(new UpsertRowCommand
+        {
+            CollectionId = "trades",
+            Key = "t1",
+            Fields = new Dictionary<string, string?>
+            {
+                ["symbol"] = "AAPL",
+                ["status"] = "open",
+                ["amount"] = "100"
+            }
+        });
+
+        var socket = new ScriptedWebSocket([
+            "{\"type\":\"subscribe\",\"collectionId\":\"trades\",\"fields\":[\"symbol\",\"status\"],\"startIndex\":0,\"pageSize\":50,\"sendSnapshot\":true,\"messageFormat\":\"compact\"}",
+            "{\"type\":\"updateview\",\"subscriptionId\":1,\"startIndex\":0,\"pageSize\":50,\"fields\":[\"status\",\"amount\"],\"messageFormat\":\"compact\"}"
+        ], closeAfterSentCount: 6);
+
+        var handleTask = manager.HandleConnectionAsync(socket, CancellationToken.None);
+        await socket.WaitForMessageTypeAsync("eos");
+        socket.Close();
+        await handleTask;
+
+        var snapshotStarts = socket.SentMessages
+            .Where(message => message.StartsWith("P|", StringComparison.Ordinal))
+            .Select(static message => message.Split('|', StringSplitOptions.None))
+            .ToList();
+
+        Assert.NotEmpty(snapshotStarts);
+        Assert.Contains(snapshotStarts, static fields =>
+            fields.Length >= 6
+            && fields[4] == "status"
+            && fields[5] == "amount");
+    }
+
+    [Fact]
     public async Task HandleConnectionAsync_SetViewportNoNewArea_LiveDeltasNotBlocked()
     {
         var metrics = new ViewEngineMetrics();

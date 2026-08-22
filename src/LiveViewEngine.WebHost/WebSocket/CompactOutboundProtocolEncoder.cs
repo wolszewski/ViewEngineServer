@@ -55,7 +55,13 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
         switch (delta)
         {
             case SnapshotStartDelta start:
-                yield return EncodeSnapshotStart(subscriptionId, start.StartIndex, start.TotalCount, start.IsPartial);
+                yield return EncodeSnapshotStart(
+                    subscriptionId,
+                    start.StartIndex,
+                    start.TotalCount,
+                    start.IsPartial,
+                    start.Schema,
+                    start.VisibleFieldIndexes);
                 yield break;
             case SnapshotRowsDelta rows:
                 foreach (var row in rows.Rows)
@@ -67,7 +73,13 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
                 yield return EncodeEndOfSnapshot(subscriptionId);
                 yield break;
             case SnapshotDelta snapshot:
-                yield return EncodeSnapshotStart(subscriptionId, snapshot.StartIndex, snapshot.TotalCount, snapshot.IsPartial);
+                yield return EncodeSnapshotStart(
+                    subscriptionId,
+                    snapshot.StartIndex,
+                    snapshot.TotalCount,
+                    snapshot.IsPartial,
+                    snapshot.Schema,
+                    snapshot.VisibleFieldIndexes);
                 foreach (var row in snapshot.Rows)
                 {
                     yield return EncodeSnapshotRow(subscriptionId, snapshot.Schema, snapshot.VisibleFieldIndexes, row);
@@ -98,7 +110,13 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
         }
     }
 
-    private static byte[] EncodeSnapshotStart(int subscriptionId, int startIndex, int totalCount, bool isPartial = false)
+    private static byte[] EncodeSnapshotStart(
+        int subscriptionId,
+        int startIndex,
+        int totalCount,
+        bool isPartial = false,
+        CollectionSchema? schema = null,
+        IReadOnlyList<int>? visibleFieldIndexes = null)
     {
         var writer = new ArrayBufferWriter<byte>();
         writer.Write(PSpan);
@@ -112,6 +130,15 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
         {
             writer.Write(SeparatorSpan);
             writer.Write(OneByte);
+        }
+
+        if (schema is not null)
+        {
+            foreach (var fieldName in GetVisibleFieldNames(schema, visibleFieldIndexes))
+            {
+                writer.Write(SeparatorSpan);
+                WriteEscaped(writer, fieldName);
+            }
         }
 
         return writer.WrittenMemory.ToArray();
@@ -245,6 +272,25 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
         WriteKeyField(writer, schema, visibleFieldIndexes, row);
         WriteFullRow(writer, schema, visibleFieldIndexes, row);
         return writer.WrittenMemory.ToArray();
+    }
+
+    private static IReadOnlyList<string> GetVisibleFieldNames(
+        CollectionSchema schema,
+        IReadOnlyList<int>? visibleFieldIndexes)
+    {
+        var indexes = visibleFieldIndexes ?? Enumerable.Range(0, schema.Fields.Count).ToArray();
+        var names = new List<string>(indexes.Count);
+        foreach (var index in indexes)
+        {
+            if (index == CollectionSchema.PrimaryKeyIndex)
+            {
+                continue;
+            }
+
+            names.Add(schema.Fields[index].Name);
+        }
+
+        return names;
     }
 
     private static void WriteKeyField(
