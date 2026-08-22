@@ -189,7 +189,7 @@ public sealed class WebSocketSessionManager
                         f.Field,
                         Enum.TryParse<FilterOperator>(f.Operator, ignoreCase: true, out var op)
                             ? op : FilterOperator.Eq,
-                        f.Value)).ToList() ?? [],
+                        f.Value)).ToList(),
                     Fields = inbound.Fields
                 }),
             "setviewport" => TryCreateExistingCommand(
@@ -252,7 +252,7 @@ public sealed class WebSocketSessionManager
         {
             ConnectionId = connectionId,
             SubscriptionId = subscriptionId,
-            StartIndex = msg.StartIndex,
+            StartIndex = msg.StartIndex ?? 0,
             PageSize = msg.PageSize,
             SendSnapshot = msg.SendSnapshot ?? true,
             View = new ViewDefinition
@@ -260,7 +260,7 @@ public sealed class WebSocketSessionManager
                 CollectionId = msg.CollectionId ?? string.Empty,
                 FilterPresetId = msg.FieldPresetId,
                 SortColumn = msg.SortColumn,
-                SortAscending = msg.SortAscending,
+                SortAscending = msg.SortAscending ?? true,
                 Filters = msg.Filters?.Select(f => new FilterSpec(
                     f.Field,
                     Enum.TryParse<FilterOperator>(f.Operator, ignoreCase: true, out var op)
