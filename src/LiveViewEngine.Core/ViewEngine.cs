@@ -254,14 +254,24 @@ public sealed class ViewEngine : IViewEngine, IDisposable
         Func<Task<T>> work)
     {
         var routeLock = _subscriptionRouteLocks.GetOrAdd(key, static _ => new SubscriptionRouteLock());
+        routeLock.Claim();
+        bool acquired = false;
         try
         {
-            await routeLock.WaitAsync(ct);
+            await routeLock.WaitSemaphoreAsync(ct);
+            acquired = true;
             return await work();
         }
         finally
         {
-            routeLock.Release(key, _subscriptionRouteLocks);
+            if (acquired)
+            {
+                routeLock.Release(key, _subscriptionRouteLocks);
+            }
+            else
+            {
+                routeLock.Unclaim(key, _subscriptionRouteLocks);
+            }
         }
     }
 
@@ -270,23 +280,27 @@ public sealed class ViewEngine : IViewEngine, IDisposable
         private readonly SemaphoreSlim _semaphore = new(1, 1);
         private int _activeUsers;
 
-        public async Task WaitAsync(CancellationToken ct)
+        public void Claim()
         {
             Interlocked.Increment(ref _activeUsers);
-            try
-            {
-                await _semaphore.WaitAsync(ct).ConfigureAwait(false);
-            }
-            catch
-            {
-                Interlocked.Decrement(ref _activeUsers);
-                throw;
-            }
+        }
+
+        public async Task WaitSemaphoreAsync(CancellationToken ct)
+        {
+            await _semaphore.WaitAsync(ct).ConfigureAwait(false);
         }
 
         public void Release(SubscriptionKey key, ConcurrentDictionary<SubscriptionKey, SubscriptionRouteLock> routeLocks)
         {
             _semaphore.Release();
+            if (Interlocked.Decrement(ref _activeUsers) == 0)
+            {
+                routeLocks.TryRemove(new KeyValuePair<SubscriptionKey, SubscriptionRouteLock>(key, this));
+            }
+        }
+
+        public void Unclaim(SubscriptionKey key, ConcurrentDictionary<SubscriptionKey, SubscriptionRouteLock> routeLocks)
+        {
             if (Interlocked.Decrement(ref _activeUsers) == 0)
             {
                 routeLocks.TryRemove(new KeyValuePair<SubscriptionKey, SubscriptionRouteLock>(key, this));
