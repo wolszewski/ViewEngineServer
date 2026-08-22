@@ -41,7 +41,7 @@ internal sealed class FilterSet : IDisposable
             var fieldDef = schema.GetFieldDefinition(fieldIndex);
             var activateNow = keepAlive == TypedColumnKeepAlive.WhenReferencedByIndexesAndFilters
                 && collection is not null
-                && fieldDef.Type != ScalarFieldType.String;
+                && fieldDef.Type is not (ScalarFieldType.String or ScalarFieldType.Boolean);
 
             if (activateNow)
             {
@@ -112,7 +112,7 @@ internal sealed class FilterSet : IDisposable
             };
         }
 
-        if (fieldDefinition.Type == ScalarFieldType.String)
+        if (fieldDefinition.Type is ScalarFieldType.String or ScalarFieldType.Boolean)
         {
             var filterValue = spec.Value;
             return (collection, rowIndex) =>

@@ -1,12 +1,18 @@
 namespace LiveViewEngine.Core.Data;
 
-public sealed class RowCollection(CollectionSchema schema)
+public sealed class RowCollection
 {
     private readonly Dictionary<string, int> _rowKeyToIndex = new();
     private readonly SlotList<string?[]> _rows = new();
-    private readonly TypedColumnsCollection _typedColumns = new(schema);
+    private readonly TypedColumnsCollection _typedColumns;
 
-    public CollectionSchema Schema { get; } = schema;
+    public RowCollection(CollectionSchema schema)
+    {
+        Schema = schema;
+        _typedColumns = new TypedColumnsCollection(schema);
+    }
+
+    public CollectionSchema Schema { get; }
 
     public MutationInfo AddOrUpdate(string key, IReadOnlyDictionary<string, string?> fieldChanges)
     {
@@ -17,14 +23,19 @@ public sealed class RowCollection(CollectionSchema schema)
 
         var row = GetOrAddRow(key, out var rowIndex, out var isNew);
         var columnChanges = Schema.MapToColumnChanges(fieldChanges);
+        var normalizedChanges = new List<KeyValuePair<int, string?>>(columnChanges.Count);
 
         foreach (var updatedField in columnChanges)
         {
-            row[updatedField.Key] = updatedField.Value;
-            UpdateTypedValueForField(rowIndex, updatedField.Key, updatedField.Value);
+            var fieldDefinition = Schema.GetFieldDefinition(updatedField.Key);
+            var normalizedValue = NormalizeValue(fieldDefinition.Type, updatedField.Value);
+            row[updatedField.Key] = normalizedValue;
+
+            UpdateTypedValueForField(rowIndex, updatedField.Key, normalizedValue);
+            normalizedChanges.Add(new KeyValuePair<int, string?>(updatedField.Key, normalizedValue));
         }
 
-        return new MutationInfo(key, rowIndex, isNew, columnChanges, FieldMask.From(columnChanges));
+        return new MutationInfo(key, rowIndex, isNew, normalizedChanges, FieldMask.From(normalizedChanges));
     }
 
     private string?[] GetOrAddRow(string rowKey, out int rowIndex, out bool isNew)
@@ -107,7 +118,7 @@ public sealed class RowCollection(CollectionSchema schema)
         }
 
         var fieldDefinition = Schema.GetFieldDefinition(fieldIndex);
-        if (fieldDefinition.Type == ScalarFieldType.String)
+        if (fieldDefinition.Type is ScalarFieldType.String or ScalarFieldType.Boolean)
         {
             return;
         }
@@ -115,11 +126,7 @@ public sealed class RowCollection(CollectionSchema schema)
         var rowValues = new Dictionary<int, string?>();
         foreach (var pair in _rowKeyToIndex)
         {
-            var row = _rows[pair.Value];
-            if (row is not null)
-            {
-                rowValues[pair.Value] = row[fieldIndex];
-            }
+            rowValues[pair.Value] = GetValue(pair.Value, fieldIndex);
         }
 
         _typedColumns.ActivateField(fieldIndex, fieldDefinition.Type, _rows.Capacity, rowValues);
@@ -128,7 +135,7 @@ public sealed class RowCollection(CollectionSchema schema)
     public void AddTypedFieldRef(int fieldIndex)
     {
         var fieldDefinition = Schema.GetFieldDefinition(fieldIndex);
-        if (fieldDefinition.Type == ScalarFieldType.String)
+        if (fieldDefinition.Type is ScalarFieldType.String or ScalarFieldType.Boolean)
         {
             return;
         }
@@ -136,11 +143,7 @@ public sealed class RowCollection(CollectionSchema schema)
         var rowValues = new Dictionary<int, string?>();
         foreach (var pair in _rowKeyToIndex)
         {
-            var row = _rows[pair.Value];
-            if (row is not null)
-            {
-                rowValues[pair.Value] = row[fieldIndex];
-            }
+            rowValues[pair.Value] = GetValue(pair.Value, fieldIndex);
         }
 
         _typedColumns.AddRef(fieldIndex, fieldDefinition.Type, _rows.Capacity, rowValues);
@@ -165,15 +168,9 @@ public sealed class RowCollection(CollectionSchema schema)
         }
     }
 
-    public string? GetRowId(int index)
-    {
-        return _rows[index]?[CollectionSchema.PrimaryKeyIndex];
-    }
+    public string? GetRowId(int index) => _rows[index]?[CollectionSchema.PrimaryKeyIndex];
 
-    public ICollection<KeyValuePair<string, int>> GetAllLiveIndexes()
-    {
-        return _rowKeyToIndex;
-    }
+    public ICollection<KeyValuePair<string, int>> GetAllLiveIndexes() => _rowKeyToIndex;
 
     public bool TryGetRowIndex(string key, out int rowIndex) =>
         _rowKeyToIndex.TryGetValue(key, out rowIndex);
@@ -181,7 +178,12 @@ public sealed class RowCollection(CollectionSchema schema)
     public string?[] GetRowValues(int index)
     {
         var source = _rows[index];
-        return source ?? throw new InvalidOperationException($"Row at index {index} is deleted.");
+        if (source is null)
+        {
+            throw new InvalidOperationException($"Row at index {index} is deleted.");
+        }
+
+        return source;
     }
 
     private void UpdateTypedValueForField(int rowIndex, int fieldIndex, string? value)
@@ -192,5 +194,18 @@ public sealed class RowCollection(CollectionSchema schema)
         }
 
         _typedColumns.UpdateFieldValue(fieldIndex, Schema.GetFieldDefinition(fieldIndex).Type, rowIndex, value);
+    }
+
+    private static string? NormalizeValue(ScalarFieldType type, string? value)
+    {
+        if (type == ScalarFieldType.Boolean)
+        {
+            if (ScalarValueConverter.TryConvertBoolean(value, out var parsed))
+            {
+                return ScalarValueConverter.FormatBoolean(parsed);
+            }
+        }
+
+        return value;
     }
 }

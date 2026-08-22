@@ -164,6 +164,8 @@ public sealed class TcpIngestRequestDispatcher(
         {
             "string" => ScalarFieldType.String,
             "enum" => ScalarFieldType.String,
+            "bool" => ScalarFieldType.Boolean,
+            "boolean" => ScalarFieldType.Boolean,
             "int" => ScalarFieldType.Int32,
             "int32" => ScalarFieldType.Int32,
             "long" => ScalarFieldType.Int64,
@@ -185,6 +187,7 @@ public sealed class TcpIngestRequestDispatcher(
         return fieldType switch
         {
             ScalarFieldType.String => "string",
+            ScalarFieldType.Boolean => "boolean",
             ScalarFieldType.Int32 => "int",
             ScalarFieldType.Int64 => "long",
             ScalarFieldType.Double => "double",

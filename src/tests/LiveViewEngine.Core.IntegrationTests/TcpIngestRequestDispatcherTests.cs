@@ -39,6 +39,27 @@ public class TcpIngestRequestDispatcherTests
     }
 
     [Fact]
+    public async Task CreateCollection_WithBooleanField_ReturnsBooleanSchemaType()
+    {
+        var (dispatcher, _, _) = CreateDispatcher();
+
+        var response = await dispatcher.DispatchAsync(
+            new CreateCollectionRequestMessage(
+                1,
+                "flags",
+                [
+                    new TcpSchemaField(1, "active", "boolean")
+                ]),
+            CancellationToken.None);
+
+        var schema = Assert.IsType<SchemaResponseMessage>(response);
+        Assert.Collection(
+            schema.Fields,
+            field => Assert.Equal("string", field.Type),
+            field => Assert.Equal("boolean", field.Type));
+    }
+
+    [Fact]
     public async Task Upsert_MapsIndexedFieldsToSchemaNames()
     {
         var (dispatcher, _, store) = CreateDispatcher(enableAsyncAcks: true);
