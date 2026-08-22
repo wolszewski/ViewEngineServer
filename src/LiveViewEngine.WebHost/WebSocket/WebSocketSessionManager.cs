@@ -221,7 +221,9 @@ public sealed class WebSocketSessionManager
         WsInboundMessage msg,
         out int clientSubscriptionId)
     {
-        clientSubscriptionId = context.SubscriptionIdProvider.Next();
+        clientSubscriptionId = msg.SubscriptionId is > 0
+            ? msg.SubscriptionId.Value
+            : context.SubscriptionIdProvider.Next();
         context.ActiveSubscriptionIds.Add(clientSubscriptionId);
         return BuildSubscribeCommand(context.ConnectionId, clientSubscriptionId, msg);
     }
