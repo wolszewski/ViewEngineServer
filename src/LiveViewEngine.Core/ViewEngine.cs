@@ -21,7 +21,7 @@ public sealed class ViewEngine : IViewEngine, IDisposable
     private readonly IViewEngineMetrics? _metrics;
     private readonly ConcurrentDictionary<string, CollectionRuntime> _collectionRuntimes = new();
     private readonly ConcurrentDictionary<SubscriptionKey, string> _subscriptionRoutes = new();
-    private readonly ConcurrentDictionary<SubscriptionKey, SemaphoreSlim> _subscriptionRouteLocks = new();
+    private readonly ConcurrentDictionary<SubscriptionKey, SubscriptionRouteLock> _subscriptionRouteLocks = new();
     private bool _disposed;
 
     public ViewEngine(
@@ -71,6 +71,12 @@ public sealed class ViewEngine : IViewEngine, IDisposable
         }
 
         _disposed = true;
+
+        foreach (var routeLock in _subscriptionRouteLocks.Values)
+        {
+            routeLock.Dispose();
+        }
+        _subscriptionRouteLocks.Clear();
 
         foreach (var runtime in _collectionRuntimes.Values)
         {
@@ -247,15 +253,49 @@ public sealed class ViewEngine : IViewEngine, IDisposable
         CancellationToken ct,
         Func<Task<T>> work)
     {
-        var routeLock = _subscriptionRouteLocks.GetOrAdd(key, static _ => new SemaphoreSlim(1, 1));
-        await routeLock.WaitAsync(ct);
+        var routeLock = _subscriptionRouteLocks.GetOrAdd(key, static _ => new SubscriptionRouteLock());
         try
         {
+            await routeLock.WaitAsync(ct);
             return await work();
         }
         finally
         {
-            routeLock.Release();
+            routeLock.Release(key, _subscriptionRouteLocks);
+        }
+    }
+
+    private sealed class SubscriptionRouteLock : IDisposable
+    {
+        private readonly SemaphoreSlim _semaphore = new(1, 1);
+        private int _activeUsers;
+
+        public async Task WaitAsync(CancellationToken ct)
+        {
+            Interlocked.Increment(ref _activeUsers);
+            try
+            {
+                await _semaphore.WaitAsync(ct).ConfigureAwait(false);
+            }
+            catch
+            {
+                Interlocked.Decrement(ref _activeUsers);
+                throw;
+            }
+        }
+
+        public void Release(SubscriptionKey key, ConcurrentDictionary<SubscriptionKey, SubscriptionRouteLock> routeLocks)
+        {
+            _semaphore.Release();
+            if (Interlocked.Decrement(ref _activeUsers) == 0)
+            {
+                routeLocks.TryRemove(new KeyValuePair<SubscriptionKey, SubscriptionRouteLock>(key, this));
+            }
+        }
+
+        public void Dispose()
+        {
+            _semaphore.Dispose();
         }
     }
 

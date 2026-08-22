@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Reflection;
 using LiveViewEngine.Core;
 using LiveViewEngine.Core.Data;
 using LiveViewEngine.Core.Output;
@@ -204,6 +205,42 @@ public class ViewEngineConcurrencyTests
 
         // No exception expected.
         await Task.WhenAll(ingestTask, subscribeTask);
+    }
+
+    [Fact]
+    public async Task SubscriptionRouteLocks_AreReclaimedAfterDisconnectChurn()
+    {
+        var (engine, _) = CreateEngine();
+        await CreateTrades(engine);
+
+        var locksField = typeof(ViewEngine).GetField("_subscriptionRouteLocks", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(locksField);
+
+        var routeLocks = locksField!.GetValue(engine) as System.Collections.IDictionary;
+        Assert.NotNull(routeLocks);
+
+        for (int i = 0; i < 25; i++)
+        {
+            var connectionId = i + 1000;
+            var subscriptionId = i + 1;
+
+            await engine.SubscribeAsync(new SubscribeCommand
+            {
+                ConnectionId = connectionId,
+                SubscriptionId = subscriptionId,
+                View = new ViewDefinition { CollectionId = "trades" },
+                StartIndex = 0,
+                PageSize = 1
+            });
+
+            await engine.SubscribeAsync(new UnsubscribeCommand
+            {
+                ConnectionId = connectionId,
+                SubscriptionId = subscriptionId
+            });
+
+            Assert.Empty(routeLocks!);
+        }
     }
 
     // Thread-safe publisher for concurrency tests.
