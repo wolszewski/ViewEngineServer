@@ -252,7 +252,7 @@ export class WebHostClient {
             case 'rowUpdate':
             case 'rowRemove':
             case 'rowReplace':
-                if (this.activeSubscriptionId !== null && frame.event.subscriptionId !== this.activeSubscriptionId) {
+                if (!this.isActiveSubscription(frame.event.subscriptionId)) {
                     return;
                 }
 
@@ -262,7 +262,7 @@ export class WebHostClient {
     }
 
     private isActiveSubscription(subscriptionId: number): boolean {
-        return this.activeSubscriptionId === null || this.activeSubscriptionId === subscriptionId;
+        return this.activeSubscriptionId !== null && this.activeSubscriptionId === subscriptionId;
     }
 
     private sendSubscribe(request: SubscribeRequest): void {
