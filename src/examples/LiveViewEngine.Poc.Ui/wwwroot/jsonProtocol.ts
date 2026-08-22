@@ -46,7 +46,8 @@ export function parseJsonFrame(frame: string): ProtocolFrame[] {
                     subscriptionId,
                     startIndex: Number(message.startIndex) || 0,
                     totalCount: Number(message.totalCount) || 0,
-                    isPartial: message.isPartial === true
+                    isPartial: message.isPartial === true,
+                    fields: Array.isArray(message.fields) ? message.fields : undefined
                 });
                 break;
             case 'snapshotRow':
@@ -67,7 +68,8 @@ export function parseJsonFrame(frame: string): ProtocolFrame[] {
                         kind: 'snapshotStart',
                         subscriptionId,
                         startIndex: Number(message.startIndex) || 0,
-                        totalCount: Number(message.totalCount) || 0
+                        totalCount: Number(message.totalCount) || 0,
+                        fields: Array.isArray(message.fields) ? message.fields : undefined
                     });
                     for (const row of message.rows) {
                         frames.push({

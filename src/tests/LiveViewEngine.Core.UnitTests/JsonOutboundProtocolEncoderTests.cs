@@ -55,7 +55,7 @@ public class JsonOutboundProtocolEncoderTests
             },
             9).Select(frame => Encoding.UTF8.GetString(frame)).ToArray();
 
-        AssertMessage(frames[0], "snapshotStart", 9, ("startIndex", "0"), ("totalCount", "2"));
+        AssertMessage(frames[0], "snapshotStart", 9, ("startIndex", "0"), ("totalCount", "2"), ("fields", "[\"customer\",\"amount\"]"));
         AssertMessage(frames[1], "snapshotRow", 9, ("row", "{\"key\":\"o1\",\"customer\":\"Alice\",\"amount\":\"100\"}"));
         AssertMessage(frames[2], "snapshotRow", 9, ("row", "{\"key\":\"o2\",\"customer\":\"Bob\",\"amount\":\"200\"}"));
         AssertMessage(frames[3], "eos", 9);

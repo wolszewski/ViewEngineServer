@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using LiveViewEngine.Core.Data;
 using LiveViewEngine.Core.Views;
@@ -8,13 +7,16 @@ namespace LiveViewEngine.Core.Runtime;
 public sealed class CollectionRuntime : IDisposable
 {
     private readonly CollectionWorker _worker = new();
-    private readonly ConcurrentDictionary<ViewKey, SharedView> _sharedViews = new();
-    private readonly ConcurrentDictionary<SubscriptionKey, ViewportState> _viewports = new();
+    private readonly Dictionary<ViewKey, SharedView> _sharedViews = new();
+    private readonly Dictionary<SubscriptionKey, ViewportState> _viewports = new();
     private readonly Lock _subscriptionsByConnectionLock = new();
     private readonly Dictionary<int, HashSet<int>> _subscriptionsByConnection = [];
     private readonly SortIndexRegistry _sortIndexRegistry = new();
+    private readonly Dictionary<string, IReadOnlyList<FilterSpec>> _filterPresets = new();
     private readonly IViewEngineMetrics? _metrics;
     private readonly LiveViewEngineOptions _options;
+    private int _activeSubscriptionCount;
+    private int _activeSharedViewCount;
 
     public CollectionRuntime(RowCollection collection, IViewEngineMetrics? metrics, LiveViewEngineOptions? options = null)
     {
@@ -31,8 +33,8 @@ public sealed class CollectionRuntime : IDisposable
     public RowCollection Collection { get; }
     private readonly MutationPropagator _propagator = new();
 
-    public int ActiveSubscriptionCount => _viewports.Count;
-    public int ActiveSharedViewCount => _sharedViews.Count;
+    public int ActiveSubscriptionCount => Volatile.Read(ref _activeSubscriptionCount);
+    public int ActiveSharedViewCount => Volatile.Read(ref _activeSharedViewCount);
     public int SortIndexCount => _sortIndexRegistry.Count;
     public int WorkerQueueLength => _worker.QueuedCount;
 
@@ -62,13 +64,6 @@ public sealed class CollectionRuntime : IDisposable
         collectionId = null;
         return false;
     }
-
-    public bool TryGetCollectionIdForSubscription(SubscriptionKey subscriptionKey, out string? collectionId)
-    {
-        collectionId = _viewports.TryGetValue(subscriptionKey, out var viewport) ? viewport.ViewKey.CollectionId : null;
-        return collectionId is not null;
-    }
-
 
     public MutationResult HandleUpsert(UpsertRowCommand command)
     {
@@ -149,26 +144,35 @@ public sealed class CollectionRuntime : IDisposable
     public IReadOnlyList<ViewDelta> HandleSubscribe(SubscribeCommand command)
     {
         var subscriptionKey = command.EffectiveSubscriptionKey;
+
+        if (command.View.FilterPresetId is not null && !_filterPresets.ContainsKey(command.View.FilterPresetId))
+        {
+            return [];
+        }
+
         var selectedFieldIndexes = ResolveVisibleFieldIndexes(command.View);
 
         if (_viewports.TryGetValue(subscriptionKey, out var existingViewport))
         {
             DetachSubscription(existingViewport);
-            _viewports.TryRemove(subscriptionKey, out _);
+            if (_viewports.Remove(subscriptionKey))
+            {
+                DecrementActiveSubscriptionCount();
+            }
+
             RemoveConnectionSubscription(existingViewport);
         }
 
-        var viewKey = ViewKey.From(command.View);
-        var sortIndexKey = CreateSortIndexKey(Collection, viewKey);
-        var sortIndex = _sortIndexRegistry.GetOrCreate(sortIndexKey, Collection);
-        _sortIndexRegistry.UnflagForRemoval(sortIndexKey);
-        var view = _sharedViews.GetOrAdd(viewKey, key => new SharedView(key, Collection, sortIndex, _options));
+        var viewKey = ResolveViewKey(command.View);
+        var (view, sortIndexKey, sortIndexRegistry) = GetOrCreateSharedView(viewKey);
+        sortIndexRegistry.UnflagForRemoval(sortIndexKey);
         view.AddSubscriber(subscriptionKey);
-        sortIndex.IncrementSubscribers();
+        view.SortIndex.IncrementSubscribers();
 
         var viewport = new ViewportState
         {
             SubscriptionKey = subscriptionKey,
+            View = command.View,
             ViewKey = viewKey,
             StartIndex = command.StartIndex,
             PageSize = command.PageSize,
@@ -176,28 +180,12 @@ public sealed class CollectionRuntime : IDisposable
             SelectedFieldIndexes = selectedFieldIndexes
         };
         _viewports[subscriptionKey] = viewport;
+        IncrementActiveSubscriptionCount();
         AddConnectionSubscription(viewport);
 
         if (!command.SendSnapshot)
         {
             return [];
-        }
-
-        if (!command.StreamSnapshot)
-        {
-            var indexes = view.GetPageIndexes(command.StartIndex, command.PageSize);
-            return
-            [
-                new SnapshotDelta
-                {
-                    ViewId = subscriptionKey.ToString(),
-                    Schema = Collection.Schema,
-                    TotalCount = view.GetTotalCount(),
-                    StartIndex = command.StartIndex,
-                    Rows = BuildRows(Collection, indexes, selectedFieldIndexes),
-                    VisibleFieldIndexes = selectedFieldIndexes
-                }
-            ];
         }
 
         return BuildStreamingSnapshotDeltas(
@@ -208,124 +196,71 @@ public sealed class CollectionRuntime : IDisposable
             selectedFieldIndexes);
     }
 
-    public IReadOnlyList<ViewDelta> HandleChangeViewport(ChangeViewportCommand command)
+    public IReadOnlyList<ViewDelta> HandleUpdateView(UpdateViewCommand command)
     {
-        if (!_viewports.TryGetValue(command.EffectiveSubscriptionKey, out var viewport) ||
-            !_sharedViews.TryGetValue(viewport.ViewKey, out var view))
+        if (!_viewports.TryGetValue(command.EffectiveSubscriptionKey, out var viewport))
         {
-            return [];
+            throw new InvalidOperationException(
+                $"Subscription '{command.EffectiveSubscriptionKey}' was not found.");
         }
 
-        var oldStart = viewport.StartIndex;
-        var oldPageSize = viewport.PageSize ?? 0;
-        var oldEnd = oldStart + oldPageSize;
-
-        viewport.StartIndex = command.StartIndex;
-        if (command.PageSize.HasValue)
+        if (!TryBuildUpdatedView(viewport.View, command, out var nextView))
         {
-            viewport.PageSize = command.PageSize;
-        }
+            if (!TryGetSharedView(viewport.ViewKey, out var view))
+            {
+                return [];
+            }
 
-        var newStart = command.StartIndex;
-        var newPageSize = command.PageSize ?? oldPageSize;
-        var newEnd = newStart + newPageSize;
-
-        if (command.StreamSnapshot)
-        {
-            return BuildStreamingViewportDeltas(
+            return HandleViewportChange(
                 viewport,
                 view,
-                oldStart,
-                oldPageSize,
-                newStart,
-                newPageSize,
-                newEnd);
+                command.StartIndex ?? viewport.StartIndex,
+                command.PageSize ?? viewport.PageSize);
         }
 
-        return BuildIncrementalSnapshot(viewport, view, oldStart, oldEnd, newStart, newPageSize, newEnd);
+        return HandleSubscribe(new SubscribeCommand
+        {
+            ConnectionId = command.ConnectionId,
+            SubscriptionId = command.SubscriptionId,
+            StartIndex = command.StartIndex ?? viewport.StartIndex,
+            PageSize = command.PageSize ?? viewport.PageSize,
+            SendSnapshot = command.SendSnapshot,
+            View = nextView
+        });
     }
 
-    private IReadOnlyList<ViewDelta> BuildIncrementalSnapshot(
+    public IReadOnlyList<ViewDelta> HandleChangeViewport(ChangeViewportCommand command)
+    {
+        return HandleUpdateView(command);
+    }
+
+    private IReadOnlyList<ViewDelta> HandleViewportChange(
         ViewportState viewport,
         SharedView view,
-        int oldStart, int oldEnd,
-        int newStart, int newPageSize, int newEnd)
+        int startIndex,
+        int? pageSize)
     {
-        var overlapStart = Math.Max(oldStart, newStart);
-        var overlapEnd = Math.Min(oldEnd, newEnd);
-        var hasOverlap = overlapStart < overlapEnd;
+        var oldStart = viewport.StartIndex;
+        var oldPageSize = viewport.PageSize ?? 0;
 
-        if (!hasOverlap)
+        viewport.StartIndex = startIndex;
+        if (pageSize.HasValue)
         {
-            var indexes = view.GetPageIndexes(newStart, newPageSize);
-            return
-            [
-                new SnapshotDelta
-                {
-                    ViewId = viewport.SubscriptionKey.ToString(),
-                    Schema = Collection.Schema,
-                    TotalCount = view.GetTotalCount(),
-                    StartIndex = newStart,
-                    Rows = BuildRows(Collection, indexes, viewport.SelectedFieldIndexes),
-                    VisibleFieldIndexes = viewport.SelectedFieldIndexes
-                }
-            ];
+            viewport.PageSize = pageSize;
         }
 
-        var hasBeforeRange = newStart < overlapStart;
-        var hasAfterRange = overlapEnd < newEnd;
+        var newStart = startIndex;
+        var newPageSize = pageSize ?? oldPageSize;
+        var newEnd = newStart + newPageSize;
 
-        if (!hasBeforeRange && !hasAfterRange)
-        {
-            return [];
-        }
-
-        var viewId = viewport.SubscriptionKey.ToString();
-        var totalCount = view.GetTotalCount();
-
-        if (hasBeforeRange && !hasAfterRange)
-        {
-            var indexes = view.GetPageIndexes(newStart, overlapStart - newStart);
-            return [new SnapshotDelta
-            {
-                ViewId = viewId, Schema = Collection.Schema, TotalCount = totalCount,
-                StartIndex = newStart, IsPartial = true,
-                Rows = BuildRows(Collection, indexes, viewport.SelectedFieldIndexes),
-                VisibleFieldIndexes = viewport.SelectedFieldIndexes
-            }];
-        }
-
-        if (!hasBeforeRange)
-        {
-            var indexes = view.GetPageIndexes(overlapEnd, newEnd - overlapEnd);
-            return [new SnapshotDelta
-            {
-                ViewId = viewId, Schema = Collection.Schema, TotalCount = totalCount,
-                StartIndex = overlapEnd, IsPartial = true,
-                Rows = BuildRows(Collection, indexes, viewport.SelectedFieldIndexes),
-                VisibleFieldIndexes = viewport.SelectedFieldIndexes
-            }];
-        }
-
-        var beforeIndexes = view.GetPageIndexes(newStart, overlapStart - newStart);
-        var afterIndexes = view.GetPageIndexes(overlapEnd, newEnd - overlapEnd);
-        return
-        [
-            new SnapshotDelta
-            {
-                ViewId = viewId, Schema = Collection.Schema, TotalCount = totalCount,
-                StartIndex = newStart, IsPartial = true,
-                Rows = BuildRows(Collection, beforeIndexes, viewport.SelectedFieldIndexes),
-                VisibleFieldIndexes = viewport.SelectedFieldIndexes
-            },
-            new SnapshotDelta
-            {
-                ViewId = viewId, Schema = Collection.Schema, TotalCount = totalCount,
-                StartIndex = overlapEnd, IsPartial = true,
-                Rows = BuildRows(Collection, afterIndexes, viewport.SelectedFieldIndexes),
-                VisibleFieldIndexes = viewport.SelectedFieldIndexes
-            }
-        ];
+        return BuildStreamingViewportDeltas(
+            viewport,
+            view,
+            oldStart,
+            oldPageSize,
+            newStart,
+            newPageSize,
+            newEnd);
     }
 
     public IReadOnlyList<ViewDelta> HandleUnsubscribe(UnsubscribeCommand command)
@@ -341,11 +276,12 @@ public sealed class CollectionRuntime : IDisposable
             foreach (var subscriptionId in subscriptionIds)
             {
                 var subscriptionKey = new SubscriptionKey(command.ConnectionId, subscriptionId);
-                if (!_viewports.TryRemove(subscriptionKey, out var viewportState))
+                if (!_viewports.Remove(subscriptionKey, out var viewportState))
                 {
                     continue;
                 }
 
+                DecrementActiveSubscriptionCount();
                 DetachSubscription(viewportState);
                 RemoveConnectionSubscription(viewportState);
             }
@@ -353,17 +289,21 @@ public sealed class CollectionRuntime : IDisposable
             return [];
         }
 
-        if (!_viewports.TryRemove(command.EffectiveSubscriptionKey, out var viewport))
+        if (!_viewports.Remove(command.EffectiveSubscriptionKey, out var viewport))
         {
             return [];
         }
 
+        DecrementActiveSubscriptionCount();
         DetachSubscription(viewport);
         RemoveConnectionSubscription(viewport);
         return [];
     }
 
-    public void Dispose() => _worker.Dispose();
+    public void Dispose()
+    {
+        _worker.Dispose();
+    }
 
     internal async Task ReapOnceAsync(CancellationToken ct)
     {
@@ -411,6 +351,142 @@ public sealed class CollectionRuntime : IDisposable
         return true;
     }
 
+    private (SharedView View, SortIndexKey SortIndexKey, SortIndexRegistry Registry) GetOrCreateSharedView(ViewKey viewKey)
+    {
+        var sortIndexKey = CreateSortIndexKey(Collection, viewKey, viewKey.CollectionId);
+        var sortIndex = _sortIndexRegistry.GetOrCreate(sortIndexKey, Collection);
+        if (!_sharedViews.TryGetValue(viewKey, out var view))
+        {
+            view = new SharedView(viewKey, Collection, sortIndex, _options);
+            _sharedViews[viewKey] = view;
+            IncrementActiveSharedViewCount();
+        }
+
+        return (view, sortIndexKey, _sortIndexRegistry);
+    }
+
+    private bool TryGetSharedView(ViewKey key, out SharedView view)
+    {
+        if (_sharedViews.TryGetValue(key, out var sharedView))
+        {
+            view = sharedView;
+            return true;
+        }
+
+        view = null!;
+        return false;
+    }
+
+    public IngestResult RegisterFilterPreset(string filterPresetId, IReadOnlyList<FilterSpec> filters)
+    {
+        if (_filterPresets.ContainsKey(filterPresetId))
+        {
+            return IngestResult.Fail(
+                $"Filter preset '{filterPresetId}' is already registered and cannot be overwritten.");
+        }
+
+        foreach (var filter in filters)
+        {
+            if (Collection.Schema.GetFieldIndex(filter.FieldName) < 0)
+            {
+                return IngestResult.Fail(
+                    $"Unknown field '{filter.FieldName}' for collection '{Collection.Schema.CollectionName}'.");
+            }
+        }
+
+        _filterPresets[filterPresetId] = filters;
+        return IngestResult.Ok();
+    }
+
+    private ViewKey ResolveViewKey(ViewDefinition def)
+    {
+        if (def.FilterPresetId is null)
+        {
+            return ViewKey.From(def);
+        }
+
+        var baseFilters = _filterPresets[def.FilterPresetId];
+        if (baseFilters.Count == 0)
+        {
+            return ViewKey.From(def);
+        }
+
+        var combined = def.Filters.Count > 0
+            ? [.. baseFilters, .. def.Filters]
+            : baseFilters;
+        return new ViewKey(def.CollectionId, def.FilterPresetId, def.SortColumn, def.SortAscending, combined);
+    }
+
+    private static bool TryBuildUpdatedView(
+        ViewDefinition current,
+        UpdateViewCommand command,
+        out ViewDefinition nextView)
+    {
+        bool hasChange = false;
+        var normalizedFields = command.Fields is { Count: > 0 } ? command.Fields : null;
+
+        if (command.SortColumn is not null &&
+            !string.Equals(command.SortColumn, current.SortColumn, StringComparison.Ordinal))
+        {
+            hasChange = true;
+        }
+
+        if (command.SortAscending.HasValue && command.SortAscending.Value != current.SortAscending)
+        {
+            hasChange = true;
+        }
+
+        if (command.Filters is not null && !SequenceEqual(command.Filters, current.Filters))
+        {
+            hasChange = true;
+        }
+
+        if (command.Fields is not null && !SequenceEqual(normalizedFields, current.Fields))
+        {
+            hasChange = true;
+        }
+
+        if (!hasChange)
+        {
+            nextView = current;
+            return false;
+        }
+
+        nextView = new ViewDefinition
+        {
+            CollectionId = current.CollectionId,
+            FilterPresetId = current.FilterPresetId,
+            SortColumn = command.SortColumn ?? current.SortColumn,
+            SortAscending = command.SortAscending ?? current.SortAscending,
+            Filters = command.Filters ?? current.Filters,
+            Fields = command.Fields is null ? current.Fields : normalizedFields
+        };
+        return true;
+    }
+
+    private static bool SequenceEqual<T>(IReadOnlyList<T>? left, IReadOnlyList<T>? right)
+    {
+        if (ReferenceEquals(left, right))
+        {
+            return true;
+        }
+
+        if (left is null || right is null || left.Count != right.Count)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < left.Count; i++)
+        {
+            if (!EqualityComparer<T>.Default.Equals(left[i], right[i]))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private void EagerlyInitializeIndexes()
     {
         var collectionId = Collection.Schema.CollectionName;
@@ -421,7 +497,7 @@ public sealed class CollectionRuntime : IDisposable
         }
     }
 
-    private static SortIndexKey CreateSortIndexKey(RowCollection collection, ViewKey key)
+    private static SortIndexKey CreateSortIndexKey(RowCollection collection, ViewKey key, string sortCollectionId)
     {
         int sortFieldIndex = key.SortColumn is not null
             ? collection.Schema.GetFieldIndex(key.SortColumn)
@@ -431,7 +507,7 @@ public sealed class CollectionRuntime : IDisposable
             sortFieldIndex = collection.Schema.PrimaryKey.FieldIndex;
         }
 
-        return new SortIndexKey(key.CollectionId, sortFieldIndex);
+        return new SortIndexKey(sortCollectionId, sortFieldIndex);
     }
 
     private void AddConnectionSubscription(ViewportState viewport)
@@ -480,9 +556,18 @@ public sealed class CollectionRuntime : IDisposable
         }
     }
 
+    public bool ContainsSubscription(SubscriptionKey subscriptionKey)
+    {
+        lock (_subscriptionsByConnectionLock)
+        {
+            return _subscriptionsByConnection.TryGetValue(subscriptionKey.ConnectionId, out var subscriptions) &&
+                   subscriptions.Contains(subscriptionKey.SubscriptionId);
+        }
+    }
+
     private void DetachSubscription(ViewportState viewport)
     {
-        if (!_sharedViews.TryGetValue(viewport.ViewKey, out var view))
+        if (!TryGetSharedView(viewport.ViewKey, out var view))
         {
             return;
         }
@@ -493,8 +578,9 @@ public sealed class CollectionRuntime : IDisposable
 
         if (view.IsEmpty)
         {
-            if (_sharedViews.TryRemove(viewport.ViewKey, out _))
+            if (_sharedViews.Remove(viewport.ViewKey))
             {
+                DecrementActiveSharedViewCount();
                 view.Dispose();
             }
         }
@@ -503,6 +589,30 @@ public sealed class CollectionRuntime : IDisposable
         {
             _sortIndexRegistry.FlagForRemoval(new SortIndexKey(viewport.ViewKey.CollectionId, sortIndex.FieldIndex));
         }
+    }
+
+    private void IncrementActiveSubscriptionCount()
+    {
+        Interlocked.Increment(ref _activeSubscriptionCount);
+        _metrics?.RecordActiveSubscriptionDelta(1, Collection.Schema.CollectionName);
+    }
+
+    private void DecrementActiveSubscriptionCount()
+    {
+        Interlocked.Decrement(ref _activeSubscriptionCount);
+        _metrics?.RecordActiveSubscriptionDelta(-1, Collection.Schema.CollectionName);
+    }
+
+    private void IncrementActiveSharedViewCount()
+    {
+        Interlocked.Increment(ref _activeSharedViewCount);
+        _metrics?.RecordActiveSharedViewDelta(1, Collection.Schema.CollectionName);
+    }
+
+    private void DecrementActiveSharedViewCount()
+    {
+        Interlocked.Decrement(ref _activeSharedViewCount);
+        _metrics?.RecordActiveSharedViewDelta(-1, Collection.Schema.CollectionName);
     }
 
     private int[] ResolveVisibleFieldIndexes(ViewDefinition view)
@@ -660,18 +770,6 @@ public sealed class CollectionRuntime : IDisposable
         };
     }
 
-    private static IReadOnlyList<string?[]> BuildRows(RowCollection collection, int[] indexes,
-        int[] selectedFieldIndexes)
-    {
-        var rows = new string?[indexes.Length][];
-        for (int i = 0; i < indexes.Length; i++)
-        {
-            rows[i] = ProjectRow(collection.GetRowValues(indexes[i]), selectedFieldIndexes);
-        }
-
-        return rows;
-    }
-
     private static string?[] ProjectRow(string?[] source, int[] selectedFieldIndexes)
     {
         var copy = new string?[selectedFieldIndexes.Length];
@@ -680,13 +778,6 @@ public sealed class CollectionRuntime : IDisposable
             copy[i] = source[selectedFieldIndexes[i]];
         }
 
-        return copy;
-    }
-
-    private static string?[] CopyRow(string?[] source)
-    {
-        var copy = new string?[source.Length];
-        Array.Copy(source, copy, source.Length);
         return copy;
     }
 }

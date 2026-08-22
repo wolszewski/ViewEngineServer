@@ -42,7 +42,14 @@ internal sealed class CollectionWorker : IDisposable
     {
         await _queue.Writer.WriteAsync(work, ct).ConfigureAwait(false);
         Interlocked.Increment(ref _queuedCount);
-        return await work.Completion.Task.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            return await work.Completion.Task.WaitAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return await work.Completion.Task.ConfigureAwait(false);
+        }
     }
 
     public void Dispose()

@@ -217,19 +217,15 @@ function syncUrlState(state: AppUrlState): void {
         params.append('filterValue', filter.value);
     }
 
-    for (const column of state.selectedFields) {
-        params.append('column', column);
+    if (state.selectedFields.length !== knownTradeColumns.length) {
+        for (const column of state.selectedFields) {
+            params.append('column', column);
+        }
     }
 
     const nextSearch = params.toString();
-    const nextUrl = nextSearch.length > 0
-        ? `${window.location.pathname}?${nextSearch}${window.location.hash}`
-        : `${window.location.pathname}${window.location.hash}`;
-    const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-
-    if (nextUrl !== currentUrl) {
-        window.history.replaceState(null, '', nextUrl);
-    }
+    window.history.replaceState(
+        null, '', `${window.location.pathname}${nextSearch.length > 0 ? `?${nextSearch}` : ''}${window.location.hash}`);
 }
 
 function isGridFilterConditionModel(value: unknown): value is GridFilterConditionModel {
@@ -1034,7 +1030,7 @@ function App(): React.ReactElement {
         setIsLoadingSnapshot(true);
         const initialWindow = resetViewportToFirstPage();
         appendLog(
-            `subscribe: ${collectionId} | order by ${sortColumn} ${sortAscending ? 'asc' : 'desc'} | viewport ${initialWindow.start.toLocaleString()} - ${initialWindow.end.toLocaleString()}`
+            `sync view: ${collectionId} | order by ${sortColumn} ${sortAscending ? 'asc' : 'desc'} | viewport ${initialWindow.start.toLocaleString()} - ${initialWindow.end.toLocaleString()}`
         );
         clientRef.current?.connect({
             collectionId,
@@ -1043,7 +1039,7 @@ function App(): React.ReactElement {
             pageSize: initialWindow.end - initialWindow.start + 1,
             startIndex: initialWindow.start,
             filters: normalisedFilters,
-            fields: selectedFields.length > 0 ? selectedFields : undefined,
+            fields: selectedFields,
             messageFormat
         });
     }, [appendLog, clearState, collectionId, messageFormat, normalisedFilters, resetViewportToFirstPage, pageSize, selectedFields, sortAscending, sortColumn]);
@@ -1222,7 +1218,7 @@ function App(): React.ReactElement {
             pageSize: initialWindow.end - initialWindow.start + 1,
             startIndex: initialWindow.start,
             filters: normalisedFilters,
-            fields: selectedFields.length > 0 ? selectedFields : undefined,
+            fields: selectedFields,
             messageFormat
         });
     }, [clearState, collectionId, messageFormat, normalisedFilters, resetViewportToFirstPage, pageSize, selectedFields, sortAscending, sortColumn]);

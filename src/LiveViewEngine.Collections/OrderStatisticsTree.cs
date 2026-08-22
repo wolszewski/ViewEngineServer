@@ -1,7 +1,6 @@
-using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 
-namespace LiveViewEngine.Core;
+namespace LiveViewEngine.Collections;
 
 // Left-Leaning Red-Black tree augmented with subtree sizes (order-statistics tree).
 // Guarantees O(log n) for Insert, Delete, GetByIndex, and IndexOf.

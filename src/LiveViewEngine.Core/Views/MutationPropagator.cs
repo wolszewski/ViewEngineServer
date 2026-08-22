@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using LiveViewEngine.Core.Data;
 
@@ -15,8 +14,8 @@ public sealed class MutationPropagator
     // same viewport and therefore receive the same delta payload — serialize once, fan out.
     public List<(IReadOnlyList<ViewDelta> Deltas, List<SubscriberTarget> Targets)>? Propagate(
         RowCollection collection,
-        ConcurrentDictionary<ViewKey, SharedView> collectionViews,
-        ConcurrentDictionary<SubscriptionKey, ViewportState> viewports,
+        Dictionary<ViewKey, SharedView> collectionViews,
+        Dictionary<SubscriptionKey, ViewportState> viewports,
         IEnumerable<SortIndex> sortIndexes,
         MutationInfo mutation,
         bool isDelete)
@@ -45,7 +44,7 @@ public sealed class MutationPropagator
         }
     }
 
-    private void GroupViewsBySortIndex(ConcurrentDictionary<ViewKey, SharedView> collectionViews)
+    private void GroupViewsBySortIndex(Dictionary<ViewKey, SharedView> collectionViews)
     {
         foreach (var entry in collectionViews)
         {
@@ -115,7 +114,7 @@ public sealed class MutationPropagator
     private void CollectViewDeltaGroups(
         RowCollection collection,
         List<SharedView> views,
-        ConcurrentDictionary<SubscriptionKey, ViewportState> viewports,
+        Dictionary<SubscriptionKey, ViewportState> viewports,
         MutationInfo mutation,
         bool isDelete,
         ref List<(IReadOnlyList<ViewDelta> Deltas, List<SubscriberTarget> Targets)>? pending)
@@ -160,7 +159,7 @@ public sealed class MutationPropagator
     private static void CollectFastPathGroups(
         RowCollection collection,
         SharedView view,
-        ConcurrentDictionary<SubscriptionKey, ViewportState> viewports,
+        Dictionary<SubscriptionKey, ViewportState> viewports,
         MutationInfo mutation,
         ref List<(IReadOnlyList<ViewDelta>, List<SubscriberTarget>)>? pending)
     {
@@ -234,7 +233,7 @@ public sealed class MutationPropagator
     private static void CollectPositionGroups(
         RowCollection collection,
         SharedView view,
-        ConcurrentDictionary<SubscriptionKey, ViewportState> viewports,
+        Dictionary<SubscriptionKey, ViewportState> viewports,
         MutationInfo mutation,
         int oldFilteredPos,
         int newFilteredPos,

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Reflection;
 using LiveViewEngine.Core;
 using LiveViewEngine.Core.Data;
 using LiveViewEngine.Core.Output;
@@ -64,7 +65,7 @@ public class ViewEngineConcurrencyTests
             PageSize = tasks * rowsPerTask
         });
 
-        var delta = Assert.IsType<SnapshotDelta>(snapshot.Single());
+        var delta = snapshot.ToSnapshotDelta();
         Assert.Equal(tasks * rowsPerTask, delta.TotalCount);
     }
 
@@ -106,7 +107,7 @@ public class ViewEngineConcurrencyTests
         await Task.WhenAll(insertTask, subscribeTask);
 
         var deltas = await subscribeTask;
-        var snapshot = Assert.IsType<SnapshotDelta>(deltas.Single());
+        var snapshot = deltas.ToSnapshotDelta();
 
         // Snapshot must be internally consistent: every row index it claimed must be valid.
         Assert.True(snapshot.TotalCount >= totalRows / 2,
@@ -197,14 +198,49 @@ public class ViewEngineConcurrencyTests
                     StartIndex = 0,
                     PageSize = 10
                 });
-                // Must return exactly one snapshot delta without throwing.
-                Assert.Single(result);
-                Assert.IsType<SnapshotDelta>(result[0]);
+                Assert.IsType<SnapshotStartDelta>(result[0]);
+                Assert.IsType<EndOfSnapshotDelta>(result[^1]);
             }
         });
 
         // No exception expected.
         await Task.WhenAll(ingestTask, subscribeTask);
+    }
+
+    [Fact]
+    public async Task SubscriptionRouteLocks_AreReclaimedAfterDisconnectChurn()
+    {
+        var (engine, _) = CreateEngine();
+        await CreateTrades(engine);
+
+        var locksField = typeof(ViewEngine).GetField("_subscriptionRouteLocks", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(locksField);
+
+        var routeLocks = locksField!.GetValue(engine) as System.Collections.IDictionary;
+        Assert.NotNull(routeLocks);
+
+        for (int i = 0; i < 25; i++)
+        {
+            var connectionId = i + 1000;
+            var subscriptionId = i + 1;
+
+            await engine.SubscribeAsync(new SubscribeCommand
+            {
+                ConnectionId = connectionId,
+                SubscriptionId = subscriptionId,
+                View = new ViewDefinition { CollectionId = "trades" },
+                StartIndex = 0,
+                PageSize = 1
+            });
+
+            await engine.SubscribeAsync(new UnsubscribeCommand
+            {
+                ConnectionId = connectionId,
+                SubscriptionId = subscriptionId
+            });
+
+            Assert.Empty(routeLocks!);
+        }
     }
 
     // Thread-safe publisher for concurrency tests.

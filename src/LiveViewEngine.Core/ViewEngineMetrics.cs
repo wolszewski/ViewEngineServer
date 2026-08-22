@@ -4,14 +4,13 @@ namespace LiveViewEngine.Core;
 
 public interface IViewEngineMetrics
 {
-    void RegisterGaugeSources(
-        Func<int> activeSubscriptions,
-        Func<int> activeSharedViews,
-        Func<int> activeSortIndexes);
+    void RegisterSortIndexGaugeSource(Func<int> activeSortIndexes);
 
     void RegisterTypedColumnGaugeSource(Func<IEnumerable<Measurement<int>>> source);
     void RegisterCollectionQueueDepthGaugeSource(Func<IEnumerable<Measurement<int>>> source);
 
+    void RecordActiveSubscriptionDelta(int delta, string collectionId);
+    void RecordActiveSharedViewDelta(int delta, string collectionId);
     void RecordInsert(double durationMs, string collectionId);
     void RecordUpdate(double durationMs, string collectionId);
     void RecordSubscriptionDuration(double durationMs, string commandType, string collectionId);
@@ -25,6 +24,8 @@ public sealed class ViewEngineMetrics : IDisposable, IViewEngineMetrics
     private readonly Histogram<double> _subscriptionDuration;
     private readonly Counter<long> _insertCount;
     private readonly Counter<long> _updateCount;
+    private readonly UpDownCounter<long> _activeSubscriptionCount;
+    private readonly UpDownCounter<long> _activeSharedViewCount;
 
     public ViewEngineMetrics()
     {
@@ -50,23 +51,18 @@ public sealed class ViewEngineMetrics : IDisposable, IViewEngineMetrics
         _updateCount = _meter.CreateCounter<long>(
             "viewengine.update.count",
             description: "Total number of update operations processed.");
+
+        _activeSubscriptionCount = _meter.CreateUpDownCounter<long>(
+            "viewengine.active_subscriptions",
+            description: "Current number of active viewport subscriptions.");
+
+        _activeSharedViewCount = _meter.CreateUpDownCounter<long>(
+            "viewengine.active_shared_views",
+            description: "Current number of active shared views (sort+filter combinations).");
     }
 
-    public void RegisterGaugeSources(
-        Func<int> activeSubscriptions,
-        Func<int> activeSharedViews,
-        Func<int> activeSortIndexes)
+    public void RegisterSortIndexGaugeSource(Func<int> activeSortIndexes)
     {
-        _meter.CreateObservableGauge(
-            "viewengine.active_subscriptions",
-            activeSubscriptions,
-            description: "Number of active viewport subscriptions across all collections.");
-
-        _meter.CreateObservableGauge(
-            "viewengine.active_shared_views",
-            activeSharedViews,
-            description: "Number of active shared views (sort+filter combinations) across all collections.");
-
         _meter.CreateObservableGauge(
             "viewengine.active_sort_indexes",
             activeSortIndexes,
@@ -93,6 +89,16 @@ public sealed class ViewEngineMetrics : IDisposable, IViewEngineMetrics
     {
         _insertDuration.Record(durationMs, new KeyValuePair<string, object?>("collectionId", collectionId));
         _insertCount.Add(1, new KeyValuePair<string, object?>("collectionId", collectionId));
+    }
+
+    public void RecordActiveSubscriptionDelta(int delta, string collectionId)
+    {
+        _activeSubscriptionCount.Add(delta, new KeyValuePair<string, object?>("collectionId", collectionId));
+    }
+
+    public void RecordActiveSharedViewDelta(int delta, string collectionId)
+    {
+        _activeSharedViewCount.Add(delta, new KeyValuePair<string, object?>("collectionId", collectionId));
     }
 
     public void RecordUpdate(double durationMs, string collectionId)

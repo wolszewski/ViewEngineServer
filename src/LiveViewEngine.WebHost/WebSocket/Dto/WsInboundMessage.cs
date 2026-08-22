@@ -6,11 +6,12 @@ public sealed class WsInboundMessage
     public int? SubscriptionId { get; set; }
 
     public string? CollectionId { get; set; }
+    public string? FieldPresetId { get; set; }
     public string? SortColumn { get; set; }
-    public bool SortAscending { get; set; } = true;
+    public bool? SortAscending { get; set; }
     public List<WsFilterDto>? Filters { get; set; }
     public List<string>? Fields { get; set; }
-    public int StartIndex { get; set; }
+    public int? StartIndex { get; set; }
     public int? PageSize { get; set; }
     public bool? SendSnapshot { get; set; }
     public string? MessageFormat { get; set; }

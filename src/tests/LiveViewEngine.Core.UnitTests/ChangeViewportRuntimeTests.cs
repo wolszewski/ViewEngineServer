@@ -5,11 +5,11 @@ using LiveViewEngine.Core.Views;
 
 namespace LiveViewEngine.Core.UnitTests;
 
-public class ChangeViewportRuntimeTests
+public class UpdateViewRuntimeTests
 {
     private static CollectionRuntime MakeRuntime(int rowCount)
     {
-        var schema = new CollectionSchema("trades", ["value"]);
+        var schema = new CollectionSchema("trades", ["value", "other"]);
         var collection = new RowCollection(schema);
         var runtime = new CollectionRuntime(collection, null, new LiveViewEngineOptions { EagerIndexing = false });
 
@@ -22,7 +22,8 @@ public class ChangeViewportRuntimeTests
                 Key = key,
                 Fields = new Dictionary<string, string?>
                 {
-                    ["value"] = key
+                    ["value"] = key,
+                    ["other"] = $"other-{key}"
                 }
             });
         }
@@ -46,12 +47,12 @@ public class ChangeViewportRuntimeTests
     }
 
     [Fact]
-    public void ChangeViewport_NullPageSize_InheritsPreviousWindow()
+    public void UpdateView_NullPageSize_InheritsPreviousWindow()
     {
         var runtime = MakeRuntime(200);
         Subscribe(runtime, 0, 50);
 
-        var deltas = runtime.HandleChangeViewport(new ChangeViewportCommand
+        var deltas = runtime.HandleUpdateView(new UpdateViewCommand
         {
             ConnectionId = 1,
             SubscriptionId = 1,
@@ -59,45 +60,27 @@ public class ChangeViewportRuntimeTests
             PageSize = null
         });
 
-        var snapshot = Assert.IsType<SnapshotDelta>(Assert.Single(deltas));
-        Assert.True(snapshot.IsPartial);
-        Assert.Equal(50, snapshot.StartIndex);
-        Assert.Equal(20, snapshot.Rows.Count);
+        var start = Assert.IsType<SnapshotStartDelta>(deltas[0]);
+        Assert.True(start.IsPartial);
+        Assert.Equal(50, start.StartIndex);
+
+        var rows = Assert.IsType<SnapshotRowsDelta>(deltas[1]);
+        Assert.Equal(20, rows.Rows.Count);
+        Assert.IsType<EndOfSnapshotDelta>(deltas[^1]);
     }
 
     [Fact]
-    public void ChangeViewport_WhenViewportExpandsRight_ReturnsPartialSnapshotForNewRightRows()
+    public void UpdateView_WhenViewportExpandsRight_ReturnsPartialSnapshotForNewRightRows()
     {
         var runtime = MakeRuntime(200);
         Subscribe(runtime, 0, 50);
 
-        var deltas = runtime.HandleChangeViewport(new ChangeViewportCommand
+        var deltas = runtime.HandleUpdateView(new UpdateViewCommand
         {
             ConnectionId = 1,
             SubscriptionId = 1,
             StartIndex = 0,
             PageSize = 100
-        });
-
-        var snapshot = Assert.IsType<SnapshotDelta>(Assert.Single(deltas));
-        Assert.True(snapshot.IsPartial);
-        Assert.Equal(50, snapshot.StartIndex);
-        Assert.Equal(50, snapshot.Rows.Count);
-    }
-
-    [Fact]
-    public void ChangeViewport_StreamSnapshot_WhenViewportExpandsRight_EmitsPartialStreamStart()
-    {
-        var runtime = MakeRuntime(200);
-        Subscribe(runtime, 0, 50);
-
-        var deltas = runtime.HandleChangeViewport(new ChangeViewportCommand
-        {
-            ConnectionId = 1,
-            SubscriptionId = 1,
-            StartIndex = 0,
-            PageSize = 100,
-            StreamSnapshot = true
         });
 
         var start = Assert.IsType<SnapshotStartDelta>(deltas[0]);
@@ -107,5 +90,115 @@ public class ChangeViewportRuntimeTests
         var rows = Assert.IsType<SnapshotRowsDelta>(deltas[1]);
         Assert.Equal(50, rows.Rows.Count);
         Assert.IsType<EndOfSnapshotDelta>(deltas[^1]);
+    }
+
+    [Fact]
+    public void UpdateView_WhenViewportExpandsRight_EmitsPartialStreamStart()
+    {
+        var runtime = MakeRuntime(200);
+        Subscribe(runtime, 0, 50);
+
+        var deltas = runtime.HandleUpdateView(new UpdateViewCommand
+        {
+            ConnectionId = 1,
+            SubscriptionId = 1,
+            StartIndex = 0,
+            PageSize = 100
+        });
+
+        var start = Assert.IsType<SnapshotStartDelta>(deltas[0]);
+        Assert.True(start.IsPartial);
+        Assert.Equal(50, start.StartIndex);
+
+        var rows = Assert.IsType<SnapshotRowsDelta>(deltas[1]);
+        Assert.Equal(50, rows.Rows.Count);
+        Assert.IsType<EndOfSnapshotDelta>(deltas[^1]);
+    }
+
+    [Fact]
+    public void UpdateView_WhenSubscriptionDoesNotExist_Throws()
+    {
+        var runtime = MakeRuntime(200);
+
+        var ex = Assert.Throws<InvalidOperationException>(() => runtime.HandleUpdateView(new UpdateViewCommand
+        {
+            ConnectionId = 1,
+            SubscriptionId = 1,
+            StartIndex = 0,
+            PageSize = 50
+        }));
+
+        Assert.Contains("was not found", ex.Message);
+    }
+
+    [Fact]
+    public void UpdateView_WhenFieldsCleared_ReturnsAllFields()
+    {
+        var runtime = MakeRuntime(10);
+        Subscribe(runtime, 0, 5);
+
+        runtime.HandleUpdateView(new UpdateViewCommand
+        {
+            ConnectionId = 1,
+            SubscriptionId = 1,
+            Fields = ["value"]
+        });
+
+        var deltas = runtime.HandleUpdateView(new UpdateViewCommand
+        {
+            ConnectionId = 1,
+            SubscriptionId = 1,
+            Fields = []
+        });
+
+        var rows = Assert.IsType<SnapshotRowsDelta>(deltas[1]);
+        Assert.Equal(3, rows.Rows[0].Length);
+    }
+
+    [Fact]
+    public void UpdateView_ViewportOnlyChange_KeepsExistingProjection()
+    {
+        var runtime = MakeRuntime(10);
+        runtime.HandleSubscribe(new SubscribeCommand
+        {
+            ConnectionId = 1,
+            SubscriptionId = 1,
+            StartIndex = 0,
+            PageSize = 5,
+            View = new ViewDefinition
+            {
+                CollectionId = "trades",
+                Fields = ["value"]
+            }
+        });
+
+        var deltas = runtime.HandleUpdateView(new UpdateViewCommand
+        {
+            ConnectionId = 1,
+            SubscriptionId = 1,
+            StartIndex = 5,
+            PageSize = null
+        });
+
+        var rows = Assert.IsType<SnapshotRowsDelta>(deltas[1]);
+        Assert.Equal(2, rows.Rows[0].Length);
+    }
+
+    [Fact]
+    public void UpdateView_WhenProjectionContainsUnknownField_DoesNotDetachExistingSubscription()
+    {
+        var runtime = MakeRuntime(10);
+        Subscribe(runtime, 0, 5);
+
+        var ex = Assert.Throws<ArgumentException>(() => runtime.HandleUpdateView(new UpdateViewCommand
+        {
+            ConnectionId = 1,
+            SubscriptionId = 1,
+            Fields = ["value", "missing-field"]
+        }));
+
+        Assert.Contains("Unknown field 'missing-field'", ex.Message);
+        Assert.True(runtime.ContainsSubscription(new SubscriptionKey(1, 1)));
+        Assert.Equal(1, runtime.ActiveSubscriptionCount);
     }
 }
