@@ -223,7 +223,9 @@ function syncUrlState(state: AppUrlState): void {
         }
     }
 
-    window.history.replaceState(null, '', `${window.location.pathname}${params.toString().length > 0 ? `?${params}` : ''}`);
+    const nextSearch = params.toString();
+    window.history.replaceState(
+        null, '', `${window.location.pathname}${nextSearch.length > 0 ? `?${nextSearch}` : ''}${window.location.hash}`);
 }
 
 function isGridFilterConditionModel(value: unknown): value is GridFilterConditionModel {
