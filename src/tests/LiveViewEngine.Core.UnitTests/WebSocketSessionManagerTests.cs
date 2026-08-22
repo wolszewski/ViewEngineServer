@@ -96,6 +96,70 @@ public class WebSocketSessionManagerTests
     }
 
     [Fact]
+    public async Task HandleConnectionAsync_SetViewportActivatesBufferBeforeDispatch()
+    {
+        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance);
+        var engine = new BlockingViewEngine();
+        var manager = new WebSocketSessionManager(
+            engine,
+            new CollectionStore(new ViewEngineMetrics(), new LiveViewEngineOptions { EagerIndexing = false }),
+            publisher,
+            NullLogger<WebSocketSessionManager>.Instance);
+
+        var socket = new ScriptedWebSocket([
+            "{\"type\":\"subscribe\",\"collectionId\":\"trades\",\"startIndex\":0,\"pageSize\":50,\"sendSnapshot\":true,\"messageFormat\":\"json\"}",
+            "{\"type\":\"setViewport\",\"subscriptionId\":1,\"startIndex\":0,\"pageSize\":50,\"messageFormat\":\"json\"}"
+        ]);
+
+        var handleTask = manager.HandleConnectionAsync(socket, CancellationToken.None);
+        await engine.WaitForSetViewportAsync();
+
+        Assert.True(ReadSnapshotActive(publisher, 1, 1));
+
+        engine.ReleaseSetViewport();
+        socket.Close();
+        await handleTask;
+    }
+
+    private static bool ReadSnapshotActive(WebSocketOutboundPublisher publisher, int connectionId, int subscriptionId)
+    {
+        var connectionsField = typeof(WebSocketOutboundPublisher)
+            .GetField("_connections", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        var connections = (System.Collections.IDictionary?)connectionsField?.GetValue(publisher);
+        var connection = connections?[connectionId];
+        var subscriptionsProperty = connection?.GetType().GetProperty("Subscriptions");
+        var subscriptions = (System.Collections.IDictionary?)subscriptionsProperty?.GetValue(connection);
+        var subscription = subscriptions?[subscriptionId];
+        var isSnapshotActiveProperty = subscription?.GetType().GetProperty("IsSnapshotActive");
+        return isSnapshotActiveProperty is not null && (bool)isSnapshotActiveProperty.GetValue(subscription)!;
+    }
+
+    private sealed class BlockingViewEngine : IViewEngine
+    {
+        private readonly TaskCompletionSource _setViewportStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _setViewportRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<IReadOnlyList<ViewDelta>> SubscribeAsync(SubscriptionCommand command, CancellationToken ct = default)
+        {
+            if (command is UpdateViewCommand)
+            {
+                _setViewportStarted.TrySetResult();
+                await _setViewportRelease.Task.WaitAsync(ct);
+                return [];
+            }
+
+            return [];
+        }
+
+        public Task<IngestResult> IngestAsync(IngestCommand command, CancellationToken ct = default) =>
+            Task.FromResult(IngestResult.Ok());
+
+        public Task WaitForSetViewportAsync() => _setViewportStarted.Task;
+
+        public void ReleaseSetViewport() => _setViewportRelease.TrySetResult();
+    }
+
+    [Fact]
     public async Task HandleConnectionAsync_SubscribeWithFieldPresetId_AppliesFilterPresetFilter()
     {
         var metrics = new ViewEngineMetrics();

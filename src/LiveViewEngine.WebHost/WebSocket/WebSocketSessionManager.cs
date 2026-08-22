@@ -95,12 +95,32 @@ public sealed class WebSocketSessionManager
                         messageFormat,
                         snapshotActive: subscribe.SendSnapshot);
                 }
-                var events = await _engine.SubscribeAsync(command, ct);
-
-                if (command is UpdateViewCommand { SendSnapshot: true } && events.Count > 0)
+                var shouldBufferSnapshot = command is UpdateViewCommand { SendSnapshot: true } && clientSubscriptionId > 0;
+                if (shouldBufferSnapshot)
                 {
                     _publisher.SetSnapshotActive(context.ConnectionId, command.SubscriptionId, snapshotActive: true);
                 }
+
+                IReadOnlyList<ViewDelta> events;
+                try
+                {
+                    events = await _engine.SubscribeAsync(command, ct);
+                }
+                catch
+                {
+                    if (shouldBufferSnapshot)
+                    {
+                        _publisher.SetSnapshotActive(context.ConnectionId, command.SubscriptionId, snapshotActive: false);
+                    }
+
+                    throw;
+                }
+
+                if (command is UpdateViewCommand { SendSnapshot: true } && events.Count == 0)
+                {
+                    _publisher.SetSnapshotActive(context.ConnectionId, command.SubscriptionId, snapshotActive: false);
+                }
+
                 if (command is SubscribeCommand subscribeCommand && clientSubscriptionId > 0)
                 {
                     var originalEvents = events;
