@@ -1,18 +1,12 @@
 namespace LiveViewEngine.Core.Data;
 
-public sealed class RowCollection
+public sealed class RowCollection(CollectionSchema schema)
 {
     private readonly Dictionary<string, int> _rowKeyToIndex = new();
     private readonly SlotList<string?[]> _rows = new();
-    private readonly TypedColumnsCollection _typedColumns;
+    private readonly TypedColumnsCollection _typedColumns = new(schema);
 
-    public RowCollection(CollectionSchema schema)
-    {
-        Schema = schema;
-        _typedColumns = new TypedColumnsCollection(schema);
-    }
-
-    public CollectionSchema Schema { get; }
+    public CollectionSchema Schema { get; } = schema;
 
     public MutationInfo AddOrUpdate(string key, IReadOnlyDictionary<string, string?> fieldChanges)
     {
@@ -24,14 +18,10 @@ public sealed class RowCollection
         var row = GetOrAddRow(key, out var rowIndex, out var isNew);
         var columnChanges = Schema.MapToColumnChanges(fieldChanges);
 
-        for (var i = 0; i < columnChanges.Length; i++)
+        foreach (var updatedField in columnChanges)
         {
-            var updatedField = columnChanges[i];
-            var fieldDefinition = Schema.GetFieldDefinition(updatedField.Key);
-            var normalizedValue = NormalizeValue(fieldDefinition.Type, updatedField.Value);
-            row[updatedField.Key] = normalizedValue;
-            UpdateTypedValueForField(rowIndex, updatedField.Key, normalizedValue);
-            columnChanges[i] = new KeyValuePair<int, string?>(updatedField.Key, normalizedValue);
+            row[updatedField.Key] = updatedField.Value;
+            UpdateTypedValueForField(rowIndex, updatedField.Key, updatedField.Value);
         }
 
         return new MutationInfo(key, rowIndex, isNew, columnChanges, FieldMask.From(columnChanges));
@@ -179,12 +169,7 @@ public sealed class RowCollection
     public string?[] GetRowValues(int index)
     {
         var source = _rows[index];
-        if (source is null)
-        {
-            throw new InvalidOperationException($"Row at index {index} is deleted.");
-        }
-
-        return source;
+        return source ?? throw new InvalidOperationException($"Row at index {index} is deleted.");
     }
 
     private void UpdateTypedValueForField(int rowIndex, int fieldIndex, string? value)
@@ -195,25 +180,5 @@ public sealed class RowCollection
         }
 
         _typedColumns.UpdateFieldValue(fieldIndex, Schema.GetFieldDefinition(fieldIndex).Type, rowIndex, value);
-    }
-
-    private static string? NormalizeValue(ScalarFieldType type, string? value)
-    {
-        if (type != ScalarFieldType.Boolean || value is null)
-        {
-            return value;
-        }
-
-        if (string.Equals(value, ScalarValueConverter.TrueString, StringComparison.Ordinal))
-        {
-            return ScalarValueConverter.TrueString;
-        }
-
-        if (string.Equals(value, ScalarValueConverter.FalseString, StringComparison.Ordinal))
-        {
-            return ScalarValueConverter.FalseString;
-        }
-
-        return null;
     }
 }
