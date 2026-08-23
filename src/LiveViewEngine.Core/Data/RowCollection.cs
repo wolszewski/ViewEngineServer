@@ -90,6 +90,8 @@ public sealed class RowCollection
         return row?[fieldIndex];
     }
 
+    public bool? GetBoolean(int rowIndex, int fieldIndex) => _typedColumns.GetBoolean(fieldIndex, rowIndex);
+
     public int? GetInt32(int rowIndex, int fieldIndex) => _typedColumns.GetInt32(fieldIndex, rowIndex);
 
     public long? GetInt64(int rowIndex, int fieldIndex) => _typedColumns.GetInt64(fieldIndex, rowIndex);
@@ -117,7 +119,7 @@ public sealed class RowCollection
         }
 
         var fieldDefinition = Schema.GetFieldDefinition(fieldIndex);
-        if (fieldDefinition.Type is ScalarFieldType.String or ScalarFieldType.Boolean)
+        if (fieldDefinition.Type is ScalarFieldType.String)
         {
             return;
         }
@@ -134,7 +136,7 @@ public sealed class RowCollection
     public void AddTypedFieldRef(int fieldIndex)
     {
         var fieldDefinition = Schema.GetFieldDefinition(fieldIndex);
-        if (fieldDefinition.Type is ScalarFieldType.String or ScalarFieldType.Boolean)
+        if (fieldDefinition.Type is ScalarFieldType.String)
         {
             return;
         }

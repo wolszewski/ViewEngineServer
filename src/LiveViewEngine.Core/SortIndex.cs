@@ -26,13 +26,14 @@ public sealed class SortIndex : IRowIndex
         _fieldIndex = fieldIndex;
         _ascending = ascending;
         var fieldType = collection.Schema.GetFieldDefinition(fieldIndex).Type;
-        if (fieldType is not (ScalarFieldType.String or ScalarFieldType.Boolean))
+        if (fieldType is not ScalarFieldType.String)
         {
             collection.AddTypedFieldRef(fieldIndex);
         }
 
         _comparison = fieldType switch
         {
+            ScalarFieldType.Boolean => CompareBoolean,
             ScalarFieldType.Int32 => CompareInt32,
             ScalarFieldType.Int64 => CompareInt64,
             ScalarFieldType.Double => CompareDouble,
@@ -178,6 +179,11 @@ public sealed class SortIndex : IRowIndex
 
     public int GetByIndex(int index) => _tree.GetByIndex(index);
 
+    private bool? GetBooleanWithOverride(int rowIndex) =>
+        rowIndex == _overrideRowIndex
+            ? (ScalarValueConverter.TryConvertBoolean(_overrideValue, out var v) ? v : null)
+            : _collection.GetBoolean(rowIndex, _fieldIndex);
+
     private int? GetInt32WithOverride(int rowIndex) =>
         rowIndex == _overrideRowIndex
             ? (ScalarValueConverter.TryConvertInt32(_overrideValue, out var v) ? v : null)
@@ -212,6 +218,18 @@ public sealed class SortIndex : IRowIndex
         rowIndex == _overrideRowIndex
             ? (ScalarValueConverter.TryConvertDateTimeOffset(_overrideValue, out var v) ? v : null)
             : _collection.GetDateTimeOffset(rowIndex, _fieldIndex);
+
+    private int CompareBoolean(int leftRowIndex, int rightRowIndex)
+    {
+        var left = GetBooleanWithOverride(leftRowIndex);
+        var right = GetBooleanWithOverride(rightRowIndex);
+        if (left.HasValue && right.HasValue)
+        {
+            return left.Value.CompareTo(right.Value);
+        }
+
+        return CompareStringFallback(GetRawWithOverride(leftRowIndex), GetRawWithOverride(rightRowIndex));
+    }
 
     private int CompareInt32(int leftRowIndex, int rightRowIndex)
     {

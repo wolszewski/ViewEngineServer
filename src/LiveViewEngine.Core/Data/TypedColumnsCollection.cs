@@ -34,12 +34,6 @@ public sealed class TypedColumnsCollection(CollectionSchema schema)
 
     public void AddRef(int fieldIndex, ScalarFieldType type, int rowCount, IReadOnlyDictionary<int, string?> rowValues)
     {
-        if (type == ScalarFieldType.Boolean)
-        {
-            ActivateField(fieldIndex, type, rowCount, rowValues);
-            return;
-        }
-
         _pendingDeactivation.Remove(fieldIndex);
         _refCounts[fieldIndex]++;
         ActivateField(fieldIndex, type, rowCount, rowValues);
@@ -47,11 +41,6 @@ public sealed class TypedColumnsCollection(CollectionSchema schema)
 
     public void ReleaseRef(int fieldIndex)
     {
-        if (schema.GetFieldDefinition(fieldIndex).Type == ScalarFieldType.Boolean)
-        {
-            return;
-        }
-
         if (_refCounts[fieldIndex] <= 0 || !IsActivated(fieldIndex))
         {
             return;
