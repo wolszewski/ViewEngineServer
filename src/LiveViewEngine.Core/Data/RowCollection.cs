@@ -5,6 +5,7 @@ public sealed class RowCollection(CollectionSchema schema)
     private readonly Dictionary<string, int> _rowKeyToIndex = new();
     private readonly SlotList<string?[]> _rows = new();
     private readonly TypedColumnsCollection _typedColumns = new(schema);
+    private readonly UpdateBuffer _updateBuffer = new(schema.Fields.Count);
 
     public CollectionSchema Schema { get; } = schema;
 
@@ -16,15 +17,17 @@ public sealed class RowCollection(CollectionSchema schema)
         }
 
         var row = GetOrAddRow(key, out var rowIndex, out var isNew);
-        var columnChanges = Schema.MapToColumnChanges(fieldChanges);
-
-        foreach (var updatedField in columnChanges)
+        Schema.MapToColumnChanges(fieldChanges, _updateBuffer);
+        for (var i = 0; i < _updateBuffer.Count; i++)
         {
-            row[updatedField.Key] = updatedField.Value;
-            UpdateTypedValueForField(rowIndex, updatedField.Key, updatedField.Value);
+            var fieldIndex = _updateBuffer.GetFieldIndex(i);
+            var value = _updateBuffer.GetValue(i);
+            row[fieldIndex] = value;
+            UpdateTypedValueForField(rowIndex, fieldIndex, value);
         }
 
-        return new MutationInfo(key, rowIndex, isNew, columnChanges, FieldMask.From(columnChanges));
+        var changedColumns = _updateBuffer.ToChangedColumnsSnapshot();
+        return new MutationInfo(key, rowIndex, isNew, changedColumns, FieldMask.From(_updateBuffer.FieldIndexes));
     }
 
     private string?[] GetOrAddRow(string rowKey, out int rowIndex, out bool isNew)

@@ -94,16 +94,9 @@ public sealed class CollectionSchema
         return _fieldNameToIndex.GetValueOrDefault(name, -1);
     }
 
-    internal KeyValuePair<int, string?>[] MapToColumnChanges(
-        IReadOnlyDictionary<string, string?> fieldValues)
+    internal void MapToColumnChanges(IReadOnlyDictionary<string, string?> fieldValues, UpdateBuffer buffer)
     {
-        if (fieldValues.Count == 0)
-        {
-            return Array.Empty<KeyValuePair<int, string?>>();
-        }
-
-        var mapped = new KeyValuePair<int, string?>[fieldValues.Count];
-        var index = 0;
+        buffer.Reset();
         foreach (var (fieldName, value) in fieldValues)
         {
             if (!_fieldNameToIndex.TryGetValue(fieldName, out var fieldIndex))
@@ -113,9 +106,7 @@ public sealed class CollectionSchema
                     nameof(fieldValues));
             }
 
-            mapped[index++] = new KeyValuePair<int, string?>(fieldIndex, value);
+            buffer.Add(fieldIndex, value);
         }
-
-        return mapped;
     }
 }
