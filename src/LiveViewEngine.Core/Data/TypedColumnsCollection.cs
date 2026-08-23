@@ -197,7 +197,7 @@ public sealed class TypedColumnsCollection(CollectionSchema schema)
                 var booleanValues = new List<bool?>(rowCount);
                 for (var i = 0; i < rowCount; i++)
                 {
-                    booleanValues.Add(rowValues.TryGetValue(i, out var raw) && ScalarValueConverter.TryConvertBoolean(raw, out var v) ? v : null);
+                    booleanValues.Add(rowValues.TryGetValue(i, out var raw) ? ScalarValueConverter.ParseBoolean(raw) : null);
                 }
                 _booleanColumns[fieldDefinition.TypedColumnIndex] = booleanValues;
                 break;
@@ -206,7 +206,7 @@ public sealed class TypedColumnsCollection(CollectionSchema schema)
                 var int32Values = new List<int?>(rowCount);
                 for (var i = 0; i < rowCount; i++)
                 {
-                    int32Values.Add(rowValues.TryGetValue(i, out var raw) && ScalarValueConverter.TryConvertInt32(raw, out var v) ? v : null);
+                    int32Values.Add(rowValues.TryGetValue(i, out var raw) ? ScalarValueConverter.ParseInt32(raw) : null);
                 }
                 _int32Columns[fieldDefinition.TypedColumnIndex] = int32Values;
                 break;
@@ -215,7 +215,7 @@ public sealed class TypedColumnsCollection(CollectionSchema schema)
                 var int64Values = new List<long?>(rowCount);
                 for (var i = 0; i < rowCount; i++)
                 {
-                    int64Values.Add(rowValues.TryGetValue(i, out var raw) && ScalarValueConverter.TryConvertInt64(raw, out var v) ? v : null);
+                    int64Values.Add(rowValues.TryGetValue(i, out var raw) ? ScalarValueConverter.ParseInt64(raw) : null);
                 }
                 _int64Columns[fieldDefinition.TypedColumnIndex] = int64Values;
                 break;
@@ -224,7 +224,7 @@ public sealed class TypedColumnsCollection(CollectionSchema schema)
                 var doubleValues = new List<double?>(rowCount);
                 for (var i = 0; i < rowCount; i++)
                 {
-                    doubleValues.Add(rowValues.TryGetValue(i, out var raw) && ScalarValueConverter.TryConvertDouble(raw, out var v) ? v : null);
+                    doubleValues.Add(rowValues.TryGetValue(i, out var raw) ? ScalarValueConverter.ParseDouble(raw) : null);
                 }
                 _doubleColumns[fieldDefinition.TypedColumnIndex] = doubleValues;
                 break;
@@ -233,7 +233,7 @@ public sealed class TypedColumnsCollection(CollectionSchema schema)
                 var decimalValues = new List<decimal?>(rowCount);
                 for (var i = 0; i < rowCount; i++)
                 {
-                    decimalValues.Add(rowValues.TryGetValue(i, out var raw) && ScalarValueConverter.TryConvertDecimal(raw, out var v) ? v : null);
+                    decimalValues.Add(rowValues.TryGetValue(i, out var raw) ? ScalarValueConverter.ParseDecimal(raw) : null);
                 }
                 _decimalColumns[fieldDefinition.TypedColumnIndex] = decimalValues;
                 break;
@@ -242,7 +242,7 @@ public sealed class TypedColumnsCollection(CollectionSchema schema)
                 var dateOnlyValues = new List<DateOnly?>(rowCount);
                 for (var i = 0; i < rowCount; i++)
                 {
-                    dateOnlyValues.Add(rowValues.TryGetValue(i, out var raw) && ScalarValueConverter.TryConvertDateOnly(raw, out var v) ? v : null);
+                    dateOnlyValues.Add(rowValues.TryGetValue(i, out var raw) ? ScalarValueConverter.ParseDateOnly(raw) : null);
                 }
                 _dateOnlyColumns[fieldDefinition.TypedColumnIndex] = dateOnlyValues;
                 break;
@@ -251,7 +251,7 @@ public sealed class TypedColumnsCollection(CollectionSchema schema)
                 var dateTimeValues = new List<DateTime?>(rowCount);
                 for (var i = 0; i < rowCount; i++)
                 {
-                    dateTimeValues.Add(rowValues.TryGetValue(i, out var raw) && ScalarValueConverter.TryConvertDateTime(raw, out var v) ? v : null);
+                    dateTimeValues.Add(rowValues.TryGetValue(i, out var raw) ? ScalarValueConverter.ParseDateTime(raw) : null);
                 }
                 _dateTimeColumns[fieldDefinition.TypedColumnIndex] = dateTimeValues;
                 break;
@@ -260,7 +260,7 @@ public sealed class TypedColumnsCollection(CollectionSchema schema)
                 var dateTimeOffsetValues = new List<DateTimeOffset?>(rowCount);
                 for (var i = 0; i < rowCount; i++)
                 {
-                    dateTimeOffsetValues.Add(rowValues.TryGetValue(i, out var raw) && ScalarValueConverter.TryConvertDateTimeOffset(raw, out var v) ? v : null);
+                    dateTimeOffsetValues.Add(rowValues.TryGetValue(i, out var raw) ? ScalarValueConverter.ParseDateTimeOffset(raw) : null);
                 }
                 _dateTimeOffsetColumns[fieldDefinition.TypedColumnIndex] = dateTimeOffsetValues;
                 break;
@@ -285,36 +285,28 @@ public sealed class TypedColumnsCollection(CollectionSchema schema)
         switch (type)
         {
             case ScalarFieldType.Boolean:
-                _booleanColumns[typedColumnIndex][rowIndex] = ScalarValueConverter.TryConvertBoolean(rawValue, out var convertedBoolean)
-                    ? convertedBoolean : null;
+                _booleanColumns[typedColumnIndex][rowIndex] = ScalarValueConverter.ParseBoolean(rawValue);
                 break;
             case ScalarFieldType.Int32:
-                _int32Columns[typedColumnIndex][rowIndex] = ScalarValueConverter.TryConvertInt32(rawValue, out var convertedInt32)
-                    ? convertedInt32 : null;
+                _int32Columns[typedColumnIndex][rowIndex] = ScalarValueConverter.ParseInt32(rawValue);
                 break;
             case ScalarFieldType.Int64:
-                _int64Columns[typedColumnIndex][rowIndex] = ScalarValueConverter.TryConvertInt64(rawValue, out var convertedInt64)
-                    ? convertedInt64 : null;
+                _int64Columns[typedColumnIndex][rowIndex] = ScalarValueConverter.ParseInt64(rawValue);
                 break;
             case ScalarFieldType.Double:
-                _doubleColumns[typedColumnIndex][rowIndex] = ScalarValueConverter.TryConvertDouble(rawValue, out var convertedDouble)
-                    ? convertedDouble : null;
+                _doubleColumns[typedColumnIndex][rowIndex] = ScalarValueConverter.ParseDouble(rawValue);
                 break;
             case ScalarFieldType.Decimal:
-                _decimalColumns[typedColumnIndex][rowIndex] = ScalarValueConverter.TryConvertDecimal(rawValue, out var convertedDecimal)
-                    ? convertedDecimal : null;
+                _decimalColumns[typedColumnIndex][rowIndex] = ScalarValueConverter.ParseDecimal(rawValue);
                 break;
             case ScalarFieldType.DateOnly:
-                _dateOnlyColumns[typedColumnIndex][rowIndex] = ScalarValueConverter.TryConvertDateOnly(rawValue, out var convertedDateOnly)
-                    ? convertedDateOnly : null;
+                _dateOnlyColumns[typedColumnIndex][rowIndex] = ScalarValueConverter.ParseDateOnly(rawValue);
                 break;
             case ScalarFieldType.DateTime:
-                _dateTimeColumns[typedColumnIndex][rowIndex] = ScalarValueConverter.TryConvertDateTime(rawValue, out var convertedDateTime)
-                    ? convertedDateTime : null;
+                _dateTimeColumns[typedColumnIndex][rowIndex] = ScalarValueConverter.ParseDateTime(rawValue);
                 break;
             case ScalarFieldType.DateTimeOffset:
-                _dateTimeOffsetColumns[typedColumnIndex][rowIndex] = ScalarValueConverter.TryConvertDateTimeOffset(rawValue, out var convertedDateTimeOffset)
-                    ? convertedDateTimeOffset : null;
+                _dateTimeOffsetColumns[typedColumnIndex][rowIndex] = ScalarValueConverter.ParseDateTimeOffset(rawValue);
                 break;
         }
     }
