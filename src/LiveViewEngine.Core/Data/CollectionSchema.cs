@@ -43,6 +43,7 @@ public sealed class CollectionSchema
     private static IReadOnlyList<FieldDefinition> AssignTypedColumnIndexes(FieldDefinition[] fields)
     {
         var updated = new FieldDefinition[fields.Length];
+        var booleanIndex = 0;
         var int32Index = 0;
         var int64Index = 0;
         var doubleIndex = 0;
@@ -56,6 +57,7 @@ public sealed class CollectionSchema
             var field = fields[i];
             var typedIndex = field.Type switch
             {
+                ScalarFieldType.Boolean => booleanIndex++,
                 ScalarFieldType.Int32 => int32Index++,
                 ScalarFieldType.Int64 => int64Index++,
                 ScalarFieldType.Double => doubleIndex++,
@@ -92,7 +94,7 @@ public sealed class CollectionSchema
         return _fieldNameToIndex.GetValueOrDefault(name, -1);
     }
 
-    public IReadOnlyCollection<KeyValuePair<int, string?>> MapToColumnChanges(
+    internal KeyValuePair<int, string?>[] MapToColumnChanges(
         IReadOnlyDictionary<string, string?> fieldValues)
     {
         if (fieldValues.Count == 0)

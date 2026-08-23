@@ -136,6 +136,26 @@ public class SortIndexTests
     }
 
     [Fact]
+    public void GetPageIndexes_OrdersCanonicalBooleanStrings_ForDeclaredBooleanField()
+    {
+        var schema = new CollectionSchema("flags", ["active"], [ScalarFieldType.Boolean]);
+        var collection = new RowCollection(schema);
+        var index = new SortIndex(collection, schema.GetFieldIndex("active"), true);
+
+        var upsertOne = collection.AddOrUpdate("a", new Dictionary<string, string?> { ["active"] = "true" });
+        index.OnUpsert(upsertOne.RowIndex);
+        var upsertTwo = collection.AddOrUpdate("b", new Dictionary<string, string?> { ["active"] = "false" });
+        index.OnUpsert(upsertTwo.RowIndex);
+        var upsertThree = collection.AddOrUpdate("c", new Dictionary<string, string?> { ["active"] = "true" });
+        index.OnUpsert(upsertThree.RowIndex);
+
+        var indexes = GetPage(index, 0, 10);
+        var values = indexes.Select(i => collection.GetValue(i, schema.GetFieldIndex("active"))).ToList();
+
+        Assert.Equal(["false", "true", "true"], values);
+    }
+
+    [Fact]
     public void OnUpsert_UpdatedValue_ReordersIndex()
     {
         var (col, idx, scoreFieldIndex, _) = CreateSortedByScore(true);

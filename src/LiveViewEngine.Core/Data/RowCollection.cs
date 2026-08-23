@@ -80,6 +80,8 @@ public sealed class RowCollection(CollectionSchema schema)
         return row?[fieldIndex];
     }
 
+    public bool? GetBoolean(int rowIndex, int fieldIndex) => _typedColumns.GetBoolean(fieldIndex, rowIndex);
+
     public int? GetInt32(int rowIndex, int fieldIndex) => _typedColumns.GetInt32(fieldIndex, rowIndex);
 
     public long? GetInt64(int rowIndex, int fieldIndex) => _typedColumns.GetInt64(fieldIndex, rowIndex);
@@ -107,7 +109,7 @@ public sealed class RowCollection(CollectionSchema schema)
         }
 
         var fieldDefinition = Schema.GetFieldDefinition(fieldIndex);
-        if (fieldDefinition.Type == ScalarFieldType.String)
+        if (fieldDefinition.Type is ScalarFieldType.String)
         {
             return;
         }
@@ -115,11 +117,7 @@ public sealed class RowCollection(CollectionSchema schema)
         var rowValues = new Dictionary<int, string?>();
         foreach (var pair in _rowKeyToIndex)
         {
-            var row = _rows[pair.Value];
-            if (row is not null)
-            {
-                rowValues[pair.Value] = row[fieldIndex];
-            }
+            rowValues[pair.Value] = GetValue(pair.Value, fieldIndex);
         }
 
         _typedColumns.ActivateField(fieldIndex, fieldDefinition.Type, _rows.Capacity, rowValues);
@@ -128,7 +126,7 @@ public sealed class RowCollection(CollectionSchema schema)
     public void AddTypedFieldRef(int fieldIndex)
     {
         var fieldDefinition = Schema.GetFieldDefinition(fieldIndex);
-        if (fieldDefinition.Type == ScalarFieldType.String)
+        if (fieldDefinition.Type is ScalarFieldType.String)
         {
             return;
         }
@@ -136,11 +134,7 @@ public sealed class RowCollection(CollectionSchema schema)
         var rowValues = new Dictionary<int, string?>();
         foreach (var pair in _rowKeyToIndex)
         {
-            var row = _rows[pair.Value];
-            if (row is not null)
-            {
-                rowValues[pair.Value] = row[fieldIndex];
-            }
+            rowValues[pair.Value] = GetValue(pair.Value, fieldIndex);
         }
 
         _typedColumns.AddRef(fieldIndex, fieldDefinition.Type, _rows.Capacity, rowValues);
@@ -165,15 +159,9 @@ public sealed class RowCollection(CollectionSchema schema)
         }
     }
 
-    public string? GetRowId(int index)
-    {
-        return _rows[index]?[CollectionSchema.PrimaryKeyIndex];
-    }
+    public string? GetRowId(int index) => _rows[index]?[CollectionSchema.PrimaryKeyIndex];
 
-    public ICollection<KeyValuePair<string, int>> GetAllLiveIndexes()
-    {
-        return _rowKeyToIndex;
-    }
+    public ICollection<KeyValuePair<string, int>> GetAllLiveIndexes() => _rowKeyToIndex;
 
     public bool TryGetRowIndex(string key, out int rowIndex) =>
         _rowKeyToIndex.TryGetValue(key, out rowIndex);

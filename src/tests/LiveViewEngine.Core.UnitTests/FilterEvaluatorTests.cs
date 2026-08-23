@@ -143,6 +143,14 @@ public class FilterEvaluatorTests
 
         Assert.True(ScalarValueConverter.TryConvertDateTimeOffset("2025-01-15T12:34:56+02:00", out var dateTimeOffsetValue));
         Assert.Equal(DateTimeOffset.Parse("2025-01-15T12:34:56+02:00", CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind), dateTimeOffsetValue);
+
+        Assert.True(ScalarValueConverter.TryConvertBoolean("true", out var booleanTrue));
+        Assert.True(booleanTrue);
+        Assert.True(ScalarValueConverter.TryConvertBoolean("false", out var booleanFalse));
+        Assert.False(booleanFalse);
+        Assert.False(ScalarValueConverter.TryConvertBoolean("1", out _));
+        Assert.False(ScalarValueConverter.TryConvertBoolean("0", out _));
+        Assert.False(ScalarValueConverter.TryConvertBoolean("TRUE", out _));
     }
 
     [Theory]
@@ -153,10 +161,14 @@ public class FilterEvaluatorTests
     [InlineData(ScalarFieldType.DateOnly, "not-a-date")]
     [InlineData(ScalarFieldType.DateTime, "not-a-datetime")]
     [InlineData(ScalarFieldType.DateTimeOffset, "not-an-offset")]
+    [InlineData(ScalarFieldType.Boolean, "not-a-bool")]
     public void TypedConverters_Fails_ForInvalidValue_ForAllTypedScalars(ScalarFieldType type, string raw)
     {
         switch (type)
         {
+            case ScalarFieldType.Boolean:
+                Assert.False(ScalarValueConverter.TryConvertBoolean(raw, out _));
+                break;
             case ScalarFieldType.Int32:
                 Assert.False(ScalarValueConverter.TryConvertInt32(raw, out _));
                 break;

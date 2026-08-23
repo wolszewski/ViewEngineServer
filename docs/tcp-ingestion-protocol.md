@@ -75,6 +75,8 @@ Notes:
 - The `CREATE` request contains only user-defined fields.
 - On success, the server returns a full `SCHEMA` response that includes the
   implicit key field.
+- Supported `fieldType` values include: `string` (alias: `enum`), `boolean` (alias: `bool`), `int`, `long`, `double`,
+  `decimal`, `dateonly`, `datetime`, and `datetimeoffset`.
 
 Example:
 

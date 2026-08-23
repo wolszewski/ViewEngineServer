@@ -34,18 +34,22 @@ const knownTradeColumns = [
     'price',
     'side',
     'status',
+    'isAlgo',
+    'isManualReview',
     'notional',
     'variedNumber',
     ...Array.from({ length: 30 }, (_, index) => `stringField${index.toString().padStart(2, '0')}`),
     ...Array.from({ length: 23 }, (_, index) => `intField${index.toString().padStart(2, '0')}`),
     ...Array.from({ length: 20 }, (_, index) => `decimalField${index.toString().padStart(2, '0')}`),
-    ...Array.from({ length: 20 }, (_, index) => `enumField${index.toString().padStart(2, '0')}`)
+    ...Array.from({ length: 20 }, (_, index) => `enumField${index.toString().padStart(2, '0')}`),
+    ...Array.from({ length: 20 }, (_, index) => `boolField${index.toString().padStart(2, '0')}`)
 ];
 const columnGroups: Array<{ label: string; columns: string[] }> = [
     { label: 'string',  columns: ['tradeId', ...Array.from({ length: 30 }, (_, i) => `stringField${i.toString().padStart(2, '0')}`)] },
     { label: 'int',     columns: ['accountId', 'quantity', ...Array.from({ length: 23 }, (_, i) => `intField${i.toString().padStart(2, '0')}`)] },
     { label: 'decimal', columns: ['price', 'notional', 'variedNumber', ...Array.from({ length: 20 }, (_, i) => `decimalField${i.toString().padStart(2, '0')}`)] },
     { label: 'enum',    columns: ['side', 'status', ...Array.from({ length: 20 }, (_, i) => `enumField${i.toString().padStart(2, '0')}`)] },
+    { label: 'boolean', columns: ['isAlgo', 'isManualReview', ...Array.from({ length: 20 }, (_, i) => `boolField${i.toString().padStart(2, '0')}`)] },
     { label: 'date',    columns: ['createdDate', 'updatedDate'] }
 ];
 const knownTradeColumnSet = new Set(knownTradeColumns);

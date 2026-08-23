@@ -41,7 +41,7 @@ internal sealed class FilterSet : IDisposable
             var fieldDef = schema.GetFieldDefinition(fieldIndex);
             var activateNow = keepAlive == TypedColumnKeepAlive.WhenReferencedByIndexesAndFilters
                 && collection is not null
-                && fieldDef.Type != ScalarFieldType.String;
+                && fieldDef.Type is not ScalarFieldType.String;
 
             if (activateNow)
             {
@@ -112,7 +112,7 @@ internal sealed class FilterSet : IDisposable
             };
         }
 
-        if (fieldDefinition.Type == ScalarFieldType.String)
+        if (fieldDefinition.Type is ScalarFieldType.String)
         {
             var filterValue = spec.Value;
             return (collection, rowIndex) =>
@@ -121,6 +121,8 @@ internal sealed class FilterSet : IDisposable
 
         return fieldDefinition.Type switch
         {
+            ScalarFieldType.Boolean => CompileScalarMatcher<bool>(fieldIndex, spec, ScalarValueConverter.TryConvertBoolean,
+                static (c, ri, fi) => c.GetBoolean(ri, fi), keepAlive),
             ScalarFieldType.Int32 => CompileScalarMatcher<int>(fieldIndex, spec, ScalarValueConverter.TryConvertInt32,
                 static (c, ri, fi) => c.GetInt32(ri, fi), keepAlive),
             ScalarFieldType.Int64 => CompileScalarMatcher<long>(fieldIndex, spec, ScalarValueConverter.TryConvertInt64,

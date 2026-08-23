@@ -6,6 +6,7 @@ public sealed class TypedColumnsCollection(CollectionSchema schema)
     private readonly int[] _refCounts = new int[schema.Fields.Count];
     private readonly Dictionary<int, DateTime> _pendingDeactivation = [];
 
+    private readonly List<List<bool?>> _booleanColumns = [];
     private readonly List<List<int?>> _int32Columns = [];
     private readonly List<List<long?>> _int64Columns = [];
     private readonly List<List<double?>> _doubleColumns = [];
@@ -75,6 +76,9 @@ public sealed class TypedColumnsCollection(CollectionSchema schema)
 
         switch (fieldDefinition.Type)
         {
+            case ScalarFieldType.Boolean:
+                if (typedColumnIndex < _booleanColumns.Count) { _booleanColumns[typedColumnIndex] = null!; }
+                break;
             case ScalarFieldType.Int32:
                 if (typedColumnIndex < _int32Columns.Count) { _int32Columns[typedColumnIndex] = null!; }
                 break;
@@ -103,6 +107,7 @@ public sealed class TypedColumnsCollection(CollectionSchema schema)
 
     public void AddRow()
     {
+        for (var i = 0; i < _booleanColumns.Count; i++) { _booleanColumns[i]?.Add(null); }
         for (var i = 0; i < _int32Columns.Count; i++) { _int32Columns[i]?.Add(null); }
         for (var i = 0; i < _int64Columns.Count; i++) { _int64Columns[i]?.Add(null); }
         for (var i = 0; i < _doubleColumns.Count; i++) { _doubleColumns[i]?.Add(null); }
@@ -114,6 +119,7 @@ public sealed class TypedColumnsCollection(CollectionSchema schema)
 
     public void ClearReusedSlot(int rowIndex)
     {
+        for (var i = 0; i < _booleanColumns.Count; i++) { if (_booleanColumns[i] is { } c) { c[rowIndex] = null; } }
         for (var i = 0; i < _int32Columns.Count; i++) { if (_int32Columns[i] is { } c) { c[rowIndex] = null; } }
         for (var i = 0; i < _int64Columns.Count; i++) { if (_int64Columns[i] is { } c) { c[rowIndex] = null; } }
         for (var i = 0; i < _doubleColumns.Count; i++) { if (_doubleColumns[i] is { } c) { c[rowIndex] = null; } }
@@ -127,6 +133,12 @@ public sealed class TypedColumnsCollection(CollectionSchema schema)
     {
         if (!IsActivated(fieldIndex)) { return null; }
         return _int32Columns[schema.GetFieldDefinition(fieldIndex).TypedColumnIndex][rowIndex];
+    }
+
+    public bool? GetBoolean(int fieldIndex, int rowIndex)
+    {
+        if (!IsActivated(fieldIndex)) { return null; }
+        return _booleanColumns[schema.GetFieldDefinition(fieldIndex).TypedColumnIndex][rowIndex];
     }
 
     public long? GetInt64(int fieldIndex, int rowIndex)
@@ -180,6 +192,15 @@ public sealed class TypedColumnsCollection(CollectionSchema schema)
 
         switch (type)
         {
+            case ScalarFieldType.Boolean:
+                while (_booleanColumns.Count <= fieldDefinition.TypedColumnIndex) { _booleanColumns.Add(new List<bool?>()); }
+                var booleanValues = new List<bool?>(rowCount);
+                for (var i = 0; i < rowCount; i++)
+                {
+                    booleanValues.Add(rowValues.TryGetValue(i, out var raw) && ScalarValueConverter.TryConvertBoolean(raw, out var v) ? v : null);
+                }
+                _booleanColumns[fieldDefinition.TypedColumnIndex] = booleanValues;
+                break;
             case ScalarFieldType.Int32:
                 while (_int32Columns.Count <= fieldDefinition.TypedColumnIndex) { _int32Columns.Add(new List<int?>()); }
                 var int32Values = new List<int?>(rowCount);
@@ -263,6 +284,10 @@ public sealed class TypedColumnsCollection(CollectionSchema schema)
 
         switch (type)
         {
+            case ScalarFieldType.Boolean:
+                _booleanColumns[typedColumnIndex][rowIndex] = ScalarValueConverter.TryConvertBoolean(rawValue, out var convertedBoolean)
+                    ? convertedBoolean : null;
+                break;
             case ScalarFieldType.Int32:
                 _int32Columns[typedColumnIndex][rowIndex] = ScalarValueConverter.TryConvertInt32(rawValue, out var convertedInt32)
                     ? convertedInt32 : null;
