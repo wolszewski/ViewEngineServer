@@ -660,21 +660,34 @@ public sealed class MutationPropagator
         IReadOnlyCollection<KeyValuePair<int, string?>> changedColumns,
         FieldMask visibleMask)
     {
-        if (visibleMask.IsEmpty)
+        if (visibleMask.IsEmpty || changedColumns.Count == 0)
         {
             return [];
         }
 
-        var filtered = new List<KeyValuePair<int, string?>>(changedColumns.Count);
+        var filtered = new KeyValuePair<int, string?>[changedColumns.Count];
+        var count = 0;
         foreach (var (fieldIndex, value) in changedColumns)
         {
             if (visibleMask[fieldIndex])
             {
-                filtered.Add(new KeyValuePair<int, string?>(fieldIndex, value));
+                filtered[count++] = new KeyValuePair<int, string?>(fieldIndex, value);
             }
         }
 
-        return filtered.Count == changedColumns.Count ? changedColumns : filtered;
+        if (count == 0)
+        {
+            return [];
+        }
+
+        if (count == filtered.Length)
+        {
+            return filtered;
+        }
+
+        var projected = new KeyValuePair<int, string?>[count];
+        Array.Copy(filtered, projected, count);
+        return projected;
     }
 
     private static string?[] ProjectRow(string?[] source, int[] selectedFieldIndexes)

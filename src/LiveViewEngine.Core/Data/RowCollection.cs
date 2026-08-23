@@ -26,8 +26,7 @@ public sealed class RowCollection(CollectionSchema schema)
             UpdateTypedValueForField(rowIndex, fieldIndex, value);
         }
 
-        var changedColumns = _updateBuffer.ToChangedColumnsSnapshot();
-        return new MutationInfo(key, rowIndex, isNew, changedColumns, FieldMask.From(_updateBuffer.FieldIndexes));
+        return new MutationInfo(key, rowIndex, isNew, _updateBuffer.View, FieldMask.From(_updateBuffer.FieldIndexes));
     }
 
     private string?[] GetOrAddRow(string rowKey, out int rowIndex, out bool isNew)
