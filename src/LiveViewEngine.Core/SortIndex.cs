@@ -180,44 +180,28 @@ public sealed class SortIndex : IRowIndex
     public int GetByIndex(int index) => _tree.GetByIndex(index);
 
     private bool? GetBooleanWithOverride(int rowIndex) =>
-        rowIndex == _overrideRowIndex
-            ? (ScalarValueConverter.TryConvertBoolean(_overrideValue, out var v) ? v : null)
-            : _collection.GetBoolean(rowIndex, _fieldIndex);
+        rowIndex == _overrideRowIndex ? ScalarValueConverter.ParseBoolean(_overrideValue) : _collection.GetBoolean(rowIndex, _fieldIndex);
 
     private int? GetInt32WithOverride(int rowIndex) =>
-        rowIndex == _overrideRowIndex
-            ? (ScalarValueConverter.TryConvertInt32(_overrideValue, out var v) ? v : null)
-            : _collection.GetInt32(rowIndex, _fieldIndex);
+        rowIndex == _overrideRowIndex ? ScalarValueConverter.ParseInt32(_overrideValue) : _collection.GetInt32(rowIndex, _fieldIndex);
 
     private long? GetInt64WithOverride(int rowIndex) =>
-        rowIndex == _overrideRowIndex
-            ? (ScalarValueConverter.TryConvertInt64(_overrideValue, out var v) ? v : null)
-            : _collection.GetInt64(rowIndex, _fieldIndex);
+        rowIndex == _overrideRowIndex ? ScalarValueConverter.ParseInt64(_overrideValue) : _collection.GetInt64(rowIndex, _fieldIndex);
 
     private double? GetDoubleWithOverride(int rowIndex) =>
-        rowIndex == _overrideRowIndex
-            ? (ScalarValueConverter.TryConvertDouble(_overrideValue, out var v) ? v : null)
-            : _collection.GetDouble(rowIndex, _fieldIndex);
+        rowIndex == _overrideRowIndex ? ScalarValueConverter.ParseDouble(_overrideValue) : _collection.GetDouble(rowIndex, _fieldIndex);
 
     private decimal? GetDecimalWithOverride(int rowIndex) =>
-        rowIndex == _overrideRowIndex
-            ? (ScalarValueConverter.TryConvertDecimal(_overrideValue, out var v) ? v : null)
-            : _collection.GetDecimal(rowIndex, _fieldIndex);
+        rowIndex == _overrideRowIndex ? ScalarValueConverter.ParseDecimal(_overrideValue) : _collection.GetDecimal(rowIndex, _fieldIndex);
 
     private DateOnly? GetDateOnlyWithOverride(int rowIndex) =>
-        rowIndex == _overrideRowIndex
-            ? (ScalarValueConverter.TryConvertDateOnly(_overrideValue, out var v) ? v : null)
-            : _collection.GetDateOnly(rowIndex, _fieldIndex);
+        rowIndex == _overrideRowIndex ? ScalarValueConverter.ParseDateOnly(_overrideValue) : _collection.GetDateOnly(rowIndex, _fieldIndex);
 
     private DateTime? GetDateTimeWithOverride(int rowIndex) =>
-        rowIndex == _overrideRowIndex
-            ? (ScalarValueConverter.TryConvertDateTime(_overrideValue, out var v) ? v : null)
-            : _collection.GetDateTime(rowIndex, _fieldIndex);
+        rowIndex == _overrideRowIndex ? ScalarValueConverter.ParseDateTime(_overrideValue) : _collection.GetDateTime(rowIndex, _fieldIndex);
 
     private DateTimeOffset? GetDateTimeOffsetWithOverride(int rowIndex) =>
-        rowIndex == _overrideRowIndex
-            ? (ScalarValueConverter.TryConvertDateTimeOffset(_overrideValue, out var v) ? v : null)
-            : _collection.GetDateTimeOffset(rowIndex, _fieldIndex);
+        rowIndex == _overrideRowIndex ? ScalarValueConverter.ParseDateTimeOffset(_overrideValue) : _collection.GetDateTimeOffset(rowIndex, _fieldIndex);
 
     private int CompareBoolean(int leftRowIndex, int rightRowIndex)
     {

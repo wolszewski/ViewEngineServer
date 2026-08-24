@@ -121,33 +121,33 @@ internal sealed class FilterSet : IDisposable
 
         return fieldDefinition.Type switch
         {
-            ScalarFieldType.Boolean => CompileScalarMatcher<bool>(fieldIndex, spec, ScalarValueConverter.TryConvertBoolean,
+            ScalarFieldType.Boolean => CompileScalarMatcher<bool>(fieldIndex, spec, ScalarValueConverter.ParseBoolean,
                 static (c, ri, fi) => c.GetBoolean(ri, fi), keepAlive),
-            ScalarFieldType.Int32 => CompileScalarMatcher<int>(fieldIndex, spec, ScalarValueConverter.TryConvertInt32,
+            ScalarFieldType.Int32 => CompileScalarMatcher<int>(fieldIndex, spec, ScalarValueConverter.ParseInt32,
                 static (c, ri, fi) => c.GetInt32(ri, fi), keepAlive),
-            ScalarFieldType.Int64 => CompileScalarMatcher<long>(fieldIndex, spec, ScalarValueConverter.TryConvertInt64,
+            ScalarFieldType.Int64 => CompileScalarMatcher<long>(fieldIndex, spec, ScalarValueConverter.ParseInt64,
                 static (c, ri, fi) => c.GetInt64(ri, fi), keepAlive),
-            ScalarFieldType.Double => CompileScalarMatcher<double>(fieldIndex, spec, ScalarValueConverter.TryConvertDouble,
+            ScalarFieldType.Double => CompileScalarMatcher<double>(fieldIndex, spec, ScalarValueConverter.ParseDouble,
                 static (c, ri, fi) => c.GetDouble(ri, fi), keepAlive),
-            ScalarFieldType.Decimal => CompileScalarMatcher<decimal>(fieldIndex, spec, ScalarValueConverter.TryConvertDecimal,
+            ScalarFieldType.Decimal => CompileScalarMatcher<decimal>(fieldIndex, spec, ScalarValueConverter.ParseDecimal,
                 static (c, ri, fi) => c.GetDecimal(ri, fi), keepAlive),
-            ScalarFieldType.DateOnly => CompileScalarMatcher<DateOnly>(fieldIndex, spec, ScalarValueConverter.TryConvertDateOnly,
+            ScalarFieldType.DateOnly => CompileScalarMatcher<DateOnly>(fieldIndex, spec, ScalarValueConverter.ParseDateOnly,
                 static (c, ri, fi) => c.GetDateOnly(ri, fi), keepAlive),
-            ScalarFieldType.DateTime => CompileScalarMatcher<DateTime>(fieldIndex, spec, ScalarValueConverter.TryConvertDateTime,
+            ScalarFieldType.DateTime => CompileScalarMatcher<DateTime>(fieldIndex, spec, ScalarValueConverter.ParseDateTime,
                 static (c, ri, fi) => c.GetDateTime(ri, fi), keepAlive),
-            ScalarFieldType.DateTimeOffset => CompileScalarMatcher<DateTimeOffset>(fieldIndex, spec, ScalarValueConverter.TryConvertDateTimeOffset,
+            ScalarFieldType.DateTimeOffset => CompileScalarMatcher<DateTimeOffset>(fieldIndex, spec, ScalarValueConverter.ParseDateTimeOffset,
                 static (c, ri, fi) => c.GetDateTimeOffset(ri, fi), keepAlive),
             _ => (collection, rowIndex) =>
                 FilterEvaluator.CompareString(collection.GetValue(rowIndex, fieldIndex), spec.Value, filterOperator)
         };
     }
 
-    private delegate bool TryConvert<T>(string? raw, out T value) where T : struct;
+    private delegate T? Parse<T>(string? raw) where T : struct;
 
     private static Func<RowCollection, int, bool> CompileScalarMatcher<T>(
         int fieldIndex,
         FilterSpec spec,
-        TryConvert<T> converter,
+        Parse<T> converter,
         Func<RowCollection, int, int, T?> typedGetter,
         TypedColumnKeepAlive keepAlive)
         where T : struct, IComparable<T>
@@ -161,7 +161,7 @@ internal sealed class FilterSet : IDisposable
                 return typedGetter(collection, rowIndex, fieldIndex);
             }
 
-            return converter(collection.GetValue(rowIndex, fieldIndex), out var v) ? v : null;
+            return converter(collection.GetValue(rowIndex, fieldIndex));
         }
 
         if (spec.Value is null)
@@ -178,13 +178,14 @@ internal sealed class FilterSet : IDisposable
             };
         }
 
-        if (!converter(spec.Value, out var parsedFilterValue))
+        var parsedFilterValue = converter(spec.Value);
+        if (parsedFilterValue is null)
         {
             return (collection, rowIndex) =>
                 FilterEvaluator.CompareString(collection.GetValue(rowIndex, fieldIndex), spec.Value, filterOperator);
         }
 
-        var captured = parsedFilterValue;
+        var captured = parsedFilterValue.Value;
         return (collection, rowIndex) =>
         {
             var leftValue = GetValue(collection, rowIndex);

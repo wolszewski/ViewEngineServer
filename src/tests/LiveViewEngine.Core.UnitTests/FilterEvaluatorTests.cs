@@ -123,34 +123,21 @@ public class FilterEvaluatorTests
     [Fact]
     public void TypedConverters_Parses_AllSupportedScalarTypes()
     {
-        Assert.True(ScalarValueConverter.TryConvertInt32("42", out var int32Value));
-        Assert.Equal(42, int32Value);
+        Assert.Equal(42, ScalarValueConverter.ParseInt32("42"));
+        Assert.Equal(9223372036854775807L, ScalarValueConverter.ParseInt64("9223372036854775807"));
+        Assert.Equal(3.5d, ScalarValueConverter.ParseDouble("3.5"));
+        Assert.Equal(12.75m, ScalarValueConverter.ParseDecimal("12.75"));
+        Assert.Equal(new DateOnly(2025, 1, 15), ScalarValueConverter.ParseDateOnly("2025-01-15"));
+        Assert.Equal(DateTime.Parse("2025-01-15T12:34:56Z", CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
+            ScalarValueConverter.ParseDateTime("2025-01-15T12:34:56Z"));
+        Assert.Equal(DateTimeOffset.Parse("2025-01-15T12:34:56+02:00", CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
+            ScalarValueConverter.ParseDateTimeOffset("2025-01-15T12:34:56+02:00"));
 
-        Assert.True(ScalarValueConverter.TryConvertInt64("9223372036854775807", out var int64Value));
-        Assert.Equal(9223372036854775807L, int64Value);
-
-        Assert.True(ScalarValueConverter.TryConvertDouble("3.5", out var doubleValue));
-        Assert.Equal(3.5d, doubleValue);
-
-        Assert.True(ScalarValueConverter.TryConvertDecimal("12.75", out var decimalValue));
-        Assert.Equal(12.75m, decimalValue);
-
-        Assert.True(ScalarValueConverter.TryConvertDateOnly("2025-01-15", out var dateOnlyValue));
-        Assert.Equal(new DateOnly(2025, 1, 15), dateOnlyValue);
-
-        Assert.True(ScalarValueConverter.TryConvertDateTime("2025-01-15T12:34:56Z", out var dateTimeValue));
-        Assert.Equal(DateTime.Parse("2025-01-15T12:34:56Z", CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind), dateTimeValue);
-
-        Assert.True(ScalarValueConverter.TryConvertDateTimeOffset("2025-01-15T12:34:56+02:00", out var dateTimeOffsetValue));
-        Assert.Equal(DateTimeOffset.Parse("2025-01-15T12:34:56+02:00", CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind), dateTimeOffsetValue);
-
-        Assert.True(ScalarValueConverter.TryConvertBoolean("true", out var booleanTrue));
-        Assert.True(booleanTrue);
-        Assert.True(ScalarValueConverter.TryConvertBoolean("false", out var booleanFalse));
-        Assert.False(booleanFalse);
-        Assert.False(ScalarValueConverter.TryConvertBoolean("1", out _));
-        Assert.False(ScalarValueConverter.TryConvertBoolean("0", out _));
-        Assert.False(ScalarValueConverter.TryConvertBoolean("TRUE", out _));
+        Assert.Equal(true, ScalarValueConverter.ParseBoolean("true"));
+        Assert.Equal(false, ScalarValueConverter.ParseBoolean("false"));
+        Assert.Null(ScalarValueConverter.ParseBoolean("1"));
+        Assert.Null(ScalarValueConverter.ParseBoolean("0"));
+        Assert.Null(ScalarValueConverter.ParseBoolean("TRUE"));
     }
 
     [Theory]
@@ -164,35 +151,20 @@ public class FilterEvaluatorTests
     [InlineData(ScalarFieldType.Boolean, "not-a-bool")]
     public void TypedConverters_Fails_ForInvalidValue_ForAllTypedScalars(ScalarFieldType type, string raw)
     {
-        switch (type)
+        object? result = type switch
         {
-            case ScalarFieldType.Boolean:
-                Assert.False(ScalarValueConverter.TryConvertBoolean(raw, out _));
-                break;
-            case ScalarFieldType.Int32:
-                Assert.False(ScalarValueConverter.TryConvertInt32(raw, out _));
-                break;
-            case ScalarFieldType.Int64:
-                Assert.False(ScalarValueConverter.TryConvertInt64(raw, out _));
-                break;
-            case ScalarFieldType.Double:
-                Assert.False(ScalarValueConverter.TryConvertDouble(raw, out _));
-                break;
-            case ScalarFieldType.Decimal:
-                Assert.False(ScalarValueConverter.TryConvertDecimal(raw, out _));
-                break;
-            case ScalarFieldType.DateOnly:
-                Assert.False(ScalarValueConverter.TryConvertDateOnly(raw, out _));
-                break;
-            case ScalarFieldType.DateTime:
-                Assert.False(ScalarValueConverter.TryConvertDateTime(raw, out _));
-                break;
-            case ScalarFieldType.DateTimeOffset:
-                Assert.False(ScalarValueConverter.TryConvertDateTimeOffset(raw, out _));
-                break;
-            default:
-                throw new ArgumentOutOfRangeException(nameof(type), type, null);
-        }
+            ScalarFieldType.Boolean => ScalarValueConverter.ParseBoolean(raw),
+            ScalarFieldType.Int32 => ScalarValueConverter.ParseInt32(raw),
+            ScalarFieldType.Int64 => ScalarValueConverter.ParseInt64(raw),
+            ScalarFieldType.Double => ScalarValueConverter.ParseDouble(raw),
+            ScalarFieldType.Decimal => ScalarValueConverter.ParseDecimal(raw),
+            ScalarFieldType.DateOnly => ScalarValueConverter.ParseDateOnly(raw),
+            ScalarFieldType.DateTime => ScalarValueConverter.ParseDateTime(raw),
+            ScalarFieldType.DateTimeOffset => ScalarValueConverter.ParseDateTimeOffset(raw),
+            _ => throw new ArgumentOutOfRangeException(nameof(type), type, null)
+        };
+
+        Assert.Null(result);
     }
 
     [Fact]
