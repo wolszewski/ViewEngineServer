@@ -17,3 +17,10 @@
 - `IViewEngine` and `ViewEngine` are colocated in `Core/ViewEngine.cs`.
 - `ICollectionStore` and `CollectionStore` are colocated in `Core/CollectionStore.cs`.
 - `IOutboundPublisher` stays in `Core/IOutboundPublisher.cs` because it has multiple implementations (`WebSocketOutboundPublisher`, `CapturingPublisher`).
+
+## Pull request review guidance
+
+1. Always assess whether a change can negatively affect performance.
+2. Check for extra allocations, repeated recomputation, wider snapshots or deltas, unnecessary sorting or filtering, extra round-trips, and hot-path regressions.
+3. Call out likely performance regressions even when correctness is unchanged.
+4. If a change touches a performance-sensitive path, verify the implementation still matches the existing performance-oriented design.

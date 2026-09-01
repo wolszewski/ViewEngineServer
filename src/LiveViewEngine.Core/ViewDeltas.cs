@@ -28,6 +28,7 @@ public sealed class SnapshotStartDelta : ViewDelta
 public sealed class SnapshotRowsDelta : ViewDelta
 {
     public required CollectionSchema Schema { get; init; }
+    public required int StartRowNumber { get; init; }
     public required IReadOnlyList<string?[]> Rows { get; init; }
     public bool IsPartial { get; init; }
 }

@@ -173,12 +173,13 @@ public sealed class CollectionRuntime : IDisposable
         view.AddSubscriber(subscriptionKey);
         view.SortIndex.IncrementSubscribers();
 
+        var normalizedStart = Math.Max(0, command.StartIndex);
         var viewport = new ViewportState
         {
             SubscriptionKey = subscriptionKey,
             View = command.View,
             ViewKey = viewKey,
-            StartIndex = command.StartIndex,
+            StartIndex = normalizedStart,
             PageSize = command.PageSize,
             VisibleColumns = FieldMask.From(selectedFieldIndexes.AsSpan()),
             SelectedFieldIndexes = selectedFieldIndexes
@@ -195,7 +196,7 @@ public sealed class CollectionRuntime : IDisposable
         return BuildStreamingSnapshotDeltas(
             subscriptionKey.ToString(),
             view,
-            command.StartIndex,
+            normalizedStart,
             command.PageSize,
             selectedFieldIndexes);
     }
@@ -215,10 +216,10 @@ public sealed class CollectionRuntime : IDisposable
                 return [];
             }
 
-            var newStartIndex = command.StartIndex ?? viewport.StartIndex;
+            var newStartIndex = Math.Max(0, command.StartIndex ?? viewport.StartIndex);
             var newPageSize = command.PageSize ?? viewport.PageSize;
 
-            if (command.SendSnapshot)
+            if (command.SnapshotMode == SnapshotMode.Full)
             {
                 viewport.StartIndex = newStartIndex;
                 viewport.PageSize = newPageSize;
@@ -230,11 +231,16 @@ public sealed class CollectionRuntime : IDisposable
                     viewport.SelectedFieldIndexes);
             }
 
-            return HandleViewportChange(
-                viewport,
-                view,
-                newStartIndex,
-                newPageSize);
+            return command.SnapshotMode == SnapshotMode.No
+                ? UpdateViewportState(
+                    viewport,
+                    newStartIndex,
+                    newPageSize)
+                : HandleViewportDelta(
+                    viewport,
+                    view,
+                    newStartIndex,
+                    newPageSize);
         }
 
         return HandleSubscribe(new SubscribeCommand
@@ -243,9 +249,51 @@ public sealed class CollectionRuntime : IDisposable
             SubscriptionId = command.SubscriptionId,
             StartIndex = command.StartIndex ?? viewport.StartIndex,
             PageSize = command.PageSize ?? viewport.PageSize,
-            SendSnapshot = command.SendSnapshot,
+            SendSnapshot = command.SnapshotMode != SnapshotMode.No,
             View = nextView
         });
+    }
+
+    private IReadOnlyList<ViewDelta> HandleViewportDelta(
+        ViewportState viewport,
+        SharedView view,
+        int startIndex,
+        int? pageSize)
+    {
+        var oldStart = viewport.StartIndex;
+        var oldPageSize = viewport.PageSize ?? Math.Max(0, view.GetTotalCount() - oldStart);
+
+        viewport.StartIndex = startIndex;
+        if (pageSize.HasValue)
+        {
+            viewport.PageSize = pageSize;
+        }
+
+        var newPageSize = pageSize ?? oldPageSize;
+        var newEnd = startIndex + newPageSize;
+
+        return BuildStreamingViewportDeltas(
+            viewport,
+            view,
+            oldStart,
+            oldPageSize,
+            startIndex,
+            newPageSize,
+            newEnd);
+    }
+
+    private static IReadOnlyList<ViewDelta> UpdateViewportState(
+        ViewportState viewport,
+        int startIndex,
+        int? pageSize)
+    {
+        viewport.StartIndex = startIndex;
+        if (pageSize.HasValue)
+        {
+            viewport.PageSize = pageSize;
+        }
+
+        return [];
     }
 
     public IReadOnlyList<ViewDelta> HandleChangeViewport(ChangeViewportCommand command)
@@ -442,25 +490,29 @@ public sealed class CollectionRuntime : IDisposable
         out ViewDefinition nextView)
     {
         bool hasChange = false;
-        var normalizedFields = command.Fields is { Count: > 0 } ? command.Fields : null;
+        var normalizedFields = command.Fields is null
+            ? current.Fields
+            : command.Fields.Count > 0 ? command.Fields : null;
+        var normalizedSortColumn = command.SortColumn ?? current.SortColumn;
+        var normalizedSortAscending = command.SortAscending ?? current.SortAscending;
+        var normalizedFilters = command.Filters ?? current.Filters;
 
-        if (command.SortColumn is not null &&
-            !string.Equals(command.SortColumn, current.SortColumn, StringComparison.Ordinal))
+        if (!string.Equals(normalizedSortColumn, current.SortColumn, StringComparison.Ordinal))
         {
             hasChange = true;
         }
 
-        if (command.SortAscending.HasValue && command.SortAscending.Value != current.SortAscending)
+        if (normalizedSortAscending != current.SortAscending)
         {
             hasChange = true;
         }
 
-        if (command.Filters is not null && !SequenceEqual(command.Filters, current.Filters))
+        if (!SequenceEqual(normalizedFilters, current.Filters))
         {
             hasChange = true;
         }
 
-        if (command.Fields is not null && !SequenceEqual(normalizedFields, current.Fields))
+        if (!SequenceEqual(normalizedFields, current.Fields))
         {
             hasChange = true;
         }
@@ -475,10 +527,10 @@ public sealed class CollectionRuntime : IDisposable
         {
             CollectionId = current.CollectionId,
             FilterPresetId = current.FilterPresetId,
-            SortColumn = command.SortColumn ?? current.SortColumn,
-            SortAscending = command.SortAscending ?? current.SortAscending,
-            Filters = command.Filters ?? current.Filters,
-            Fields = command.Fields is null ? current.Fields : normalizedFields
+            SortColumn = normalizedSortColumn,
+            SortAscending = normalizedSortAscending,
+            Filters = normalizedFilters,
+            Fields = normalizedFields
         };
         return true;
     }
@@ -733,6 +785,7 @@ public sealed class CollectionRuntime : IDisposable
         int[] selectedFieldIndexes,
         bool isPartial = false)
     {
+        startIndex = Math.Max(0, startIndex);
         var deltas = new List<ViewDelta>
         {
             new SnapshotStartDelta
@@ -748,20 +801,24 @@ public sealed class CollectionRuntime : IDisposable
 
         var batch = new string?[_options.SnapshotBatchSize][];
         var batchCount = 0;
+        var batchStartRowNumber = startIndex;
+        var globalRowNumber = startIndex;
         foreach (int rowIndex in view.EnumeratePageIndexes(startIndex, pageSize))
         {
             batch[batchCount++] = ProjectRow(Collection.GetRowValues(rowIndex), selectedFieldIndexes);
+            globalRowNumber++;
             if (batchCount == _options.SnapshotBatchSize)
             {
-                deltas.Add(CreateSnapshotRowsDelta(viewId, selectedFieldIndexes, batch, batchCount, isPartial));
+                deltas.Add(CreateSnapshotRowsDelta(viewId, selectedFieldIndexes, batch, batchStartRowNumber, batchCount, isPartial));
                 batch = new string?[_options.SnapshotBatchSize][];
+                batchStartRowNumber = globalRowNumber;
                 batchCount = 0;
             }
         }
 
         if (batchCount > 0)
         {
-            deltas.Add(CreateSnapshotRowsDelta(viewId, selectedFieldIndexes, batch, batchCount, isPartial));
+            deltas.Add(CreateSnapshotRowsDelta(viewId, selectedFieldIndexes, batch, batchStartRowNumber, batchCount, isPartial));
         }
 
         deltas.Add(new EndOfSnapshotDelta
@@ -776,6 +833,7 @@ public sealed class CollectionRuntime : IDisposable
         string viewId,
         int[] selectedFieldIndexes,
         string?[][] batch,
+        int startRowNumber,
         int batchCount,
         bool isPartial = false)
     {
@@ -783,6 +841,7 @@ public sealed class CollectionRuntime : IDisposable
         {
             ViewId = viewId,
             Schema = Collection.Schema,
+            StartRowNumber = startRowNumber,
             Rows = batchCount == batch.Length ? batch : batch[..batchCount],
             VisibleFieldIndexes = selectedFieldIndexes,
             IsPartial = isPartial

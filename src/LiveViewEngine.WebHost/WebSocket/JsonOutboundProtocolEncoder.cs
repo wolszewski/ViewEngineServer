@@ -40,12 +40,13 @@ public sealed class JsonOutboundProtocolEncoder : IOutboundProtocolEncoder
                 });
                 yield break;
             case SnapshotRowsDelta rows:
-                foreach (var row in rows.Rows)
+                for (int i = 0; i < rows.Rows.Count; i++)
                 {
                     yield return Serialize(new JsonSnapshotRowMessage
                     {
                         SubscriptionId = subscriptionId,
-                        Row = FormatRow(rows.Schema, row, rows.VisibleFieldIndexes)
+                        RowNumber = rows.StartRowNumber + i,
+                        Row = FormatRow(rows.Schema, rows.Rows[i], rows.VisibleFieldIndexes)
                     });
                 }
                 yield break;
@@ -61,12 +62,13 @@ public sealed class JsonOutboundProtocolEncoder : IOutboundProtocolEncoder
                     IsPartial = snapshot.IsPartial,
                     Fields = GetVisibleFieldNames(snapshot.Schema, snapshot.VisibleFieldIndexes)
                 });
-                foreach (var row in snapshot.Rows)
+                for (int i = 0; i < snapshot.Rows.Count; i++)
                 {
                     yield return Serialize(new JsonSnapshotRowMessage
                     {
                         SubscriptionId = subscriptionId,
-                        Row = FormatRow(snapshot.Schema, row, snapshot.VisibleFieldIndexes)
+                        RowNumber = snapshot.StartIndex + i,
+                        Row = FormatRow(snapshot.Schema, snapshot.Rows[i], snapshot.VisibleFieldIndexes)
                     });
                 }
                 yield return Serialize(new JsonEndOfSnapshotMessage { SubscriptionId = subscriptionId });
@@ -187,6 +189,7 @@ public sealed class JsonOutboundProtocolEncoder : IOutboundProtocolEncoder
     private sealed class JsonSnapshotRowMessage : JsonMessage
     {
         public JsonSnapshotRowMessage() => Type = "snapshotRow";
+        public required int RowNumber { get; init; }
         public required IReadOnlyDictionary<string, string?> Row { get; init; }
     }
 

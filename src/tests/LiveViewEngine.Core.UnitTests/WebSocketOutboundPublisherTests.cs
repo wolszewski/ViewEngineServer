@@ -33,6 +33,7 @@ public class WebSocketOutboundPublisherTests
                 {
                     ViewId = "1:7",
                     Schema = schema,
+                    StartRowNumber = 0,
                     VisibleFieldIndexes = [0, 1, 2],
                     Rows = [["o1", "Alice", "100"]]
                 }
@@ -64,7 +65,7 @@ public class WebSocketOutboundPublisherTests
         await socket.WaitForMessagesAsync(4);
 
         Assert.Equal(
-            ["P|7|0|1|customer|amount", "S|7|o1|Alice|100", "EOS|7", "U|7|o1|0|^1|150"],
+            ["P|7|0|1|customer|amount", "S|7|0|o1|Alice|100", "EOS|7", "U|7|o1|0|^1|150"],
             socket.Messages.ToArray());
     }
 
@@ -92,6 +93,7 @@ public class WebSocketOutboundPublisherTests
                 {
                     ViewId = "1:7",
                     Schema = schema,
+                    StartRowNumber = 0,
                     VisibleFieldIndexes = [0, 1, 2],
                     Rows = [["o1", "Alice", "100"]]
                 }
@@ -123,7 +125,7 @@ public class WebSocketOutboundPublisherTests
         await socket.WaitForMessagesAsync(4);
 
         AssertJsonMessage(socket.Messages.ElementAt(0), "snapshotStart", 7, ("startIndex", "0"), ("totalCount", "1"), ("fields", "[\"customer\",\"amount\"]"));
-        AssertJsonMessage(socket.Messages.ElementAt(1), "snapshotRow", 7, ("row", "{\"key\":\"o1\",\"customer\":\"Alice\",\"amount\":\"100\"}"));
+        AssertJsonMessage(socket.Messages.ElementAt(1), "snapshotRow", 7, ("rowNumber", "0"), ("row", "{\"key\":\"o1\",\"customer\":\"Alice\",\"amount\":\"100\"}"));
         AssertJsonMessage(socket.Messages.ElementAt(2), "eos", 7);
         AssertJsonMessage(socket.Messages.ElementAt(3), "rowUpdate", 7, ("rowId", "\"o1\""), ("position", "0"), ("changedFields", "{\"amount\":\"150\"}"));
     }

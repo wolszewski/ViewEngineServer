@@ -83,6 +83,7 @@ export type ProtocolFrame =
     | {
         kind: 'snapshotRow';
         subscriptionId: number;
+        rowNumber: number;
         row: RowData;
     }
     | {

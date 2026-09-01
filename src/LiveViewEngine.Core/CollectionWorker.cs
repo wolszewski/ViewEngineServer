@@ -5,7 +5,7 @@ namespace LiveViewEngine.Core;
 
 public interface IWorkItem
 {
-    void Execute();
+    ValueTask ExecuteAsync();
 }
 
 public interface IWorkItem<T> : IWorkItem
@@ -81,7 +81,7 @@ internal sealed class CollectionWorker : IDisposable
             await foreach (var item in _queue.Reader.ReadAllAsync(_cts.Token).ConfigureAwait(false))
             {
                 Interlocked.Decrement(ref _queuedCount);
-                item.Execute();
+                await item.ExecuteAsync().ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException)

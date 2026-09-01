@@ -95,30 +95,36 @@ public sealed class WebSocketSessionManager
                         messageFormat,
                         snapshotActive: subscribe.SendSnapshot);
                 }
-                var shouldBufferSnapshot = command is UpdateViewCommand { SendSnapshot: true } && clientSubscriptionId > 0;
-                if (shouldBufferSnapshot)
+
+                bool snapshotBegan = false;
+                Action? onBeforeProcess = null;
+                if (command is UpdateViewCommand { SnapshotMode: not SnapshotMode.No } && clientSubscriptionId > 0)
                 {
-                    _publisher.SetSnapshotActive(context.ConnectionId, command.SubscriptionId, snapshotActive: true);
+                    onBeforeProcess = () =>
+                    {
+                        snapshotBegan = true;
+                        _publisher.BeginViewportSnapshot(context.ConnectionId, command.SubscriptionId);
+                    };
                 }
 
                 IReadOnlyList<ViewDelta> events;
                 try
                 {
-                    events = await _engine.SubscribeAsync(command, ct);
+                    events = await _engine.SubscribeAsync(command, onBeforeProcess, ct);
                 }
                 catch
                 {
-                    if (shouldBufferSnapshot)
+                    if (snapshotBegan)
                     {
-                        _publisher.SetSnapshotActive(context.ConnectionId, command.SubscriptionId, snapshotActive: false);
+                        _publisher.CancelSnapshot(context.ConnectionId, command.SubscriptionId);
                     }
 
                     throw;
                 }
 
-                if (command is UpdateViewCommand { SendSnapshot: true } && events.Count == 0)
+                if (snapshotBegan && events.Count == 0)
                 {
-                    _publisher.SetSnapshotActive(context.ConnectionId, command.SubscriptionId, snapshotActive: false);
+                    _publisher.CancelSnapshot(context.ConnectionId, command.SubscriptionId);
                 }
 
                 if (command is SubscribeCommand subscribeCommand && clientSubscriptionId > 0)
@@ -210,7 +216,8 @@ public sealed class WebSocketSessionManager
                         Enum.TryParse<FilterOperator>(f.Operator, ignoreCase: true, out var op)
                             ? op : FilterOperator.Eq,
                         f.Value)).ToList(),
-                    Fields = inbound.Fields
+                    Fields = inbound.Fields,
+                    SnapshotMode = ResolveSnapshotMode(inbound, SnapshotMode.Delta)
                 }),
             "setviewport" => TryCreateExistingCommand(
                 context,
@@ -222,7 +229,7 @@ public sealed class WebSocketSessionManager
                     SubscriptionId = subscriptionId,
                     StartIndex = inbound.StartIndex,
                     PageSize = inbound.PageSize,
-                    SendSnapshot = inbound.SendSnapshot ?? false
+                    SnapshotMode = ResolveSnapshotMode(inbound, SnapshotMode.Delta)
                 }),
             "unsubscribe" => TryCreateExistingCommand(
                 context,
@@ -294,6 +301,22 @@ public sealed class WebSocketSessionManager
                 Fields = msg.Fields
             }
         };
+    }
+
+    private static SnapshotMode ResolveSnapshotMode(WsInboundMessage msg, SnapshotMode defaultMode)
+    {
+        if (!string.IsNullOrWhiteSpace(msg.SnapshotMode) &&
+            Enum.TryParse<SnapshotMode>(msg.SnapshotMode, ignoreCase: true, out var parsedMode))
+        {
+            return parsedMode;
+        }
+
+        if (msg.SendSnapshot.HasValue)
+        {
+            return msg.SendSnapshot.Value ? SnapshotMode.Full : SnapshotMode.No;
+        }
+
+        return defaultMode;
     }
 
     private static SnapshotStartDelta? TryExtractSnapshotStart(

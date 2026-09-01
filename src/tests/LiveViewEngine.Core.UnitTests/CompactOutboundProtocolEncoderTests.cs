@@ -32,12 +32,13 @@ public class CompactOutboundProtocolEncoderTests
             {
                 ViewId = "1:7",
                 Schema = Schema,
+                StartRowNumber = 0,
                 VisibleFieldIndexes = [0, 1, 2, 3],
                 Rows = [["o1", "Al|ce", "100", "o\\pen"]]
             },
             subscriptionId: 7).Select(ToText).ToArray();
 
-        Assert.Equal(["S|7|o1|Al\\|ce|100|o\\\\pen"], frames);
+        Assert.Equal(["S|7|0|o1|Al\\|ce|100|o\\\\pen"], frames);
 
         var insert = ToText(_encoder.EncodeFrames(
             new RowInsertDelta
@@ -126,11 +127,12 @@ public class CompactOutboundProtocolEncoderTests
             {
                 ViewId = "1:1",
                 Schema = Schema,
+                StartRowNumber = 0,
                 VisibleFieldIndexes = [0, 1, 2, 3],
                 Rows = [["o1", "val~ue", "100", "~"]]
             },
             subscriptionId: 1).Single());
-        Assert.Equal("S|1|o1|val\\~ue|100|\\~", row);
+        Assert.Equal("S|1|0|o1|val\\~ue|100|\\~", row);
     }
 
     [Fact]
@@ -181,6 +183,23 @@ public class CompactOutboundProtocolEncoderTests
             },
             subscriptionId: 2).Single();
         Assert.Equal("P|2|10|50|customer|amount", ToText(start));
+    }
+
+    [Fact]
+    public void EncodeSnapshotRow_IncludesRowNumber()
+    {
+        var row = _encoder.EncodeFrames(
+            new SnapshotRowsDelta
+            {
+                ViewId = "1:1",
+                Schema = Schema,
+                StartRowNumber = 50,
+                VisibleFieldIndexes = [0, 1, 2],
+                Rows = [["o1", "Alice", "100"]]
+            },
+            subscriptionId: 1).Single();
+
+        Assert.Equal("S|1|50|o1|Alice|100", ToText(row));
     }
 
     [Fact]

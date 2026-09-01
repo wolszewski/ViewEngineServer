@@ -13,6 +13,7 @@ public interface IViewEngine
 {
     Task<IngestResult> IngestAsync(IngestCommand command, CancellationToken ct = default);
     Task<IReadOnlyList<ViewDelta>> SubscribeAsync(SubscriptionCommand command, CancellationToken ct = default);
+    Task<IReadOnlyList<ViewDelta>> SubscribeAsync(SubscriptionCommand command, Action? onBeforeProcess, CancellationToken ct = default);
 }
 
 public sealed class ViewEngine : IViewEngine, IDisposable
@@ -62,7 +63,13 @@ public sealed class ViewEngine : IViewEngine, IDisposable
     public Task<IReadOnlyList<ViewDelta>> SubscribeAsync(SubscriptionCommand command, CancellationToken ct = default)
     {
         ThrowIfDisposed();
-        return ProcessSubscribeAsync(command, ct);
+        return ProcessSubscribeAsync(command, null, ct);
+    }
+
+    public Task<IReadOnlyList<ViewDelta>> SubscribeAsync(SubscriptionCommand command, Action? onBeforeProcess, CancellationToken ct = default)
+    {
+        ThrowIfDisposed();
+        return ProcessSubscribeAsync(command, onBeforeProcess, ct);
     }
 
     public void Dispose()
@@ -113,23 +120,18 @@ public sealed class ViewEngine : IViewEngine, IDisposable
 
             RuntimeWorkItem<MutationResult> work = command switch
             {
-                UpsertRowCommand upsert => new UpsertRuntimeWork(runtime, upsert),
-                DeleteRowCommand delete => new DeleteRuntimeWork(runtime, delete),
+                UpsertRowCommand upsert => new UpsertRuntimeWork(
+                    runtime,
+                    upsert,
+                    result => PublishMutationResultAsync(result, ct)),
+                DeleteRowCommand delete => new DeleteRuntimeWork(
+                    runtime,
+                    delete,
+                    result => PublishMutationResultAsync(result, ct)),
                 _ => new UnknownCommandRuntimeWork(command),
             };
 
             var mutationResult = await runtime.EnqueueAsync(work, ct);
-
-            if (mutationResult.Groups is { Count: > 0 })
-            {
-                foreach (var group in mutationResult.Groups)
-                {
-                    await _publisher.PublishAsync(group.Targets, group.Deltas, ct);
-                }
-
-                await _publisher.FlushAsync(ct);
-            }
-
             return mutationResult.Result;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -141,6 +143,7 @@ public sealed class ViewEngine : IViewEngine, IDisposable
     }
 
     private async Task<IReadOnlyList<ViewDelta>> ProcessSubscribeAsync(SubscriptionCommand command,
+        Action? onBeforeProcess,
         CancellationToken ct)
     {
         var started = Stopwatch.GetTimestamp();
@@ -161,7 +164,7 @@ public sealed class ViewEngine : IViewEngine, IDisposable
                 {
                     SubscribeCommand subscribe => await HandleSubscribeCommandAsync(subscribe, ct),
                     UnsubscribeCommand unsubscribeCommand => await HandleUnsubscribeCommandAsync(unsubscribeCommand, ct),
-                    UpdateViewCommand updateCommand => await HandleUpdateViewCommandAsync(updateCommand, ct),
+                    UpdateViewCommand updateCommand => await HandleUpdateViewCommandAsync(updateCommand, onBeforeProcess, ct),
                     _ => await HandleUnknownSubscriptionCommandAsync(command, ct)
                 };
             });
@@ -173,6 +176,21 @@ public sealed class ViewEngine : IViewEngine, IDisposable
         }
 
         return result;
+    }
+
+    private async ValueTask PublishMutationResultAsync(MutationResult mutationResult, CancellationToken ct)
+    {
+        if (mutationResult.Groups is not { Count: > 0 })
+        {
+            return;
+        }
+
+        foreach (var group in mutationResult.Groups)
+        {
+            await _publisher.PublishAsync(group.Targets, group.Deltas, ct).ConfigureAwait(false);
+        }
+
+        await _publisher.FlushAsync(ct).ConfigureAwait(false);
     }
 
     private async Task<IReadOnlyList<ViewDelta>> HandleSubscribeCommandAsync(SubscribeCommand subscribe,
@@ -223,6 +241,7 @@ public sealed class ViewEngine : IViewEngine, IDisposable
     }
 
     private async Task<IReadOnlyList<ViewDelta>> HandleUpdateViewCommandAsync(UpdateViewCommand updateCommand,
+        Action? onBeforeProcess,
         CancellationToken ct)
     {
         var collectionId = GetCollectionIdForSubscription(updateCommand);
@@ -233,7 +252,7 @@ public sealed class ViewEngine : IViewEngine, IDisposable
         }
 
         return await updateRuntime.EnqueueAsync(
-            new UpdateViewRuntimeWork(updateRuntime, updateCommand),
+            new UpdateViewRuntimeWork(updateRuntime, updateCommand, onBeforeProcess),
             ct);
     }
 

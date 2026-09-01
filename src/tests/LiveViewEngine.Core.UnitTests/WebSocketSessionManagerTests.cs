@@ -38,7 +38,7 @@ public class WebSocketSessionManagerTests
     }
 
     [Fact]
-    public async Task HandleConnectionAsync_UpdateViewWithProjectedFields_EmitsSnapshotMetadataForNewProjection()
+    public async Task HandleConnectionAsync_UpdateViewWithProjectedFields_SnapshotModeFull_EmitsSnapshotMetadata()
     {
         var metrics = new ViewEngineMetrics();
         var store = new CollectionStore(metrics, new LiveViewEngineOptions { EagerIndexing = false });
@@ -70,7 +70,7 @@ public class WebSocketSessionManagerTests
 
         var socket = new ScriptedWebSocket([
             "{\"type\":\"subscribe\",\"collectionId\":\"trades\",\"fields\":[\"symbol\",\"status\"],\"startIndex\":0,\"pageSize\":50,\"sendSnapshot\":true,\"messageFormat\":\"compact\"}",
-            "{\"type\":\"updateview\",\"subscriptionId\":1,\"startIndex\":0,\"pageSize\":50,\"fields\":[\"status\",\"amount\"],\"messageFormat\":\"compact\"}"
+            "{\"type\":\"updateview\",\"subscriptionId\":1,\"startIndex\":0,\"pageSize\":50,\"fields\":[\"status\",\"amount\"],\"messageFormat\":\"compact\",\"snapshotMode\":\"full\"}"
         ], closeAfterSentCount: 6);
 
         var handleTask = manager.HandleConnectionAsync(socket, CancellationToken.None);
@@ -80,14 +80,127 @@ public class WebSocketSessionManagerTests
 
         var snapshotStarts = socket.SentMessages
             .Where(message => message.StartsWith("P|", StringComparison.Ordinal))
-            .Select(static message => message.Split('|', StringSplitOptions.None))
-            .ToList();
+            .ToArray();
+        Assert.Equal("P|1|0|1|status|amount", snapshotStarts[^1]);
+    }
 
-        Assert.NotEmpty(snapshotStarts);
-        Assert.Contains(snapshotStarts, static fields =>
-            fields.Length >= 6
-            && fields[4] == "status"
-            && fields[5] == "amount");
+    [Fact]
+    public async Task HandleConnectionAsync_UpdateViewViewportExpansionWithoutSendSnapshot_SendsOnlyMissingCompactRows()
+    {
+        var metrics = new ViewEngineMetrics();
+        var store = new CollectionStore(metrics, new LiveViewEngineOptions { EagerIndexing = false });
+        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance);
+        var engine = new ViewEngine(store, publisher, NullLogger<ViewEngine>.Instance, metrics);
+        var manager = new WebSocketSessionManager(
+            engine,
+            store,
+            publisher,
+            NullLogger<WebSocketSessionManager>.Instance);
+
+        await engine.IngestAsync(new CreateCollectionCommand
+        {
+            CollectionId = "trades",
+            Schema = new CollectionSchema("trades", ["tradeId"], [ScalarFieldType.String])
+        });
+
+        for (int i = 0; i < 500; i++)
+        {
+            await engine.IngestAsync(new UpsertRowCommand
+            {
+                CollectionId = "trades",
+                Key = $"t{i:D3}",
+                Fields = new Dictionary<string, string?> { ["tradeId"] = i.ToString("D3") }
+            });
+        }
+
+        var socket = new ScriptedWebSocket(
+            [
+                "{\"type\":\"subscribe\",\"collectionId\":\"trades\",\"sortColumn\":\"tradeId\",\"sortAscending\":true,\"startIndex\":0,\"pageSize\":200,\"sendSnapshot\":true,\"messageFormat\":\"compact\",\"filters\":[]}",
+                "{\"type\":\"updateview\",\"subscriptionId\":1,\"startIndex\":0,\"pageSize\":400,\"sortColumn\":\"tradeId\",\"sortAscending\":true,\"filters\":[],\"fields\":[],\"snapshotMode\":\"delta\"}"
+            ],
+            closeAfterSentCount: 404);
+
+        var handleTask = manager.HandleConnectionAsync(socket, CancellationToken.None);
+        await socket.WaitForMessagesAsync(404);
+        socket.Close();
+        await handleTask;
+
+        var allMessages = socket.SentMessages.ToArray();
+
+        var snapshotStarts = allMessages
+            .Where(static message => message.StartsWith("P|", StringComparison.Ordinal))
+            .ToArray();
+        Assert.Single(snapshotStarts);
+        Assert.Equal("P|1|200|500|1|tradeId", snapshotStarts[0]);
+
+        var snapshotStartIndex = Array.IndexOf(allMessages, snapshotStarts[0]);
+        var eosIndex = Array.FindIndex(allMessages, snapshotStartIndex + 1,
+            static message => message.StartsWith("EOS|", StringComparison.Ordinal));
+        Assert.True(snapshotStartIndex >= 0);
+        Assert.True(eosIndex > snapshotStartIndex);
+
+        var updateSnapshotMessages = allMessages[(snapshotStartIndex + 1)..eosIndex];
+        var snapshotRows = updateSnapshotMessages
+            .Where(static message => message.StartsWith("S|", StringComparison.Ordinal))
+            .ToArray();
+        Assert.Equal(200, snapshotRows.Length);
+        Assert.Equal("S|1|200|t200|200", snapshotRows[0]);
+        Assert.Equal("S|1|399|t399|399", snapshotRows[^1]);
+
+        var insertFrames = updateSnapshotMessages
+            .Where(static message => message.StartsWith("I|", StringComparison.Ordinal))
+            .ToArray();
+        Assert.Empty(insertFrames);
+
+        var eosFrames = allMessages
+            .Where(static message => message.StartsWith("EOS|", StringComparison.Ordinal))
+            .ToArray();
+        Assert.Equal(2, eosFrames.Length);
+    }
+
+    [Fact]
+    public async Task HandleConnectionAsync_UpdateViewViewportExpansionSnapshotModeNo_DoesNotEmitSnapshot()
+    {
+        var metrics = new ViewEngineMetrics();
+        var store = new CollectionStore(metrics, new LiveViewEngineOptions { EagerIndexing = false });
+        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance);
+        var engine = new ViewEngine(store, publisher, NullLogger<ViewEngine>.Instance, metrics);
+        var manager = new WebSocketSessionManager(
+            engine,
+            store,
+            publisher,
+            NullLogger<WebSocketSessionManager>.Instance);
+
+        await engine.IngestAsync(new CreateCollectionCommand
+        {
+            CollectionId = "trades",
+            Schema = new CollectionSchema("trades", ["tradeId"], [ScalarFieldType.String])
+        });
+
+        for (int i = 0; i < 500; i++)
+        {
+            await engine.IngestAsync(new UpsertRowCommand
+            {
+                CollectionId = "trades",
+                Key = $"t{i:D3}",
+                Fields = new Dictionary<string, string?> { ["tradeId"] = i.ToString("D3") }
+            });
+        }
+
+        var socket = new ScriptedWebSocket(
+            [
+                "{\"type\":\"subscribe\",\"collectionId\":\"trades\",\"sortColumn\":\"tradeId\",\"sortAscending\":true,\"startIndex\":0,\"pageSize\":200,\"sendSnapshot\":true,\"messageFormat\":\"compact\",\"filters\":[]}",
+                "{\"type\":\"updateview\",\"subscriptionId\":1,\"startIndex\":0,\"pageSize\":400,\"sortColumn\":\"tradeId\",\"sortAscending\":true,\"filters\":[],\"fields\":[],\"snapshotMode\":\"no\"}"
+            ],
+            closeAfterSentCount: 1);
+
+        var handleTask = manager.HandleConnectionAsync(socket, CancellationToken.None);
+        await socket.WaitForMessagesAsync(1);
+        socket.Close();
+        await handleTask;
+
+        var updateMessages = socket.SentMessages.SkipWhile(static m => !m.StartsWith("EOS|", StringComparison.Ordinal)).Skip(1).ToArray();
+        Assert.Empty(updateMessages);
     }
 
     [Fact]
@@ -247,6 +360,12 @@ public class WebSocketSessionManagerTests
             }
 
             return [];
+        }
+
+        public Task<IReadOnlyList<ViewDelta>> SubscribeAsync(SubscriptionCommand command, Action? onBeforeProcess, CancellationToken ct = default)
+        {
+            onBeforeProcess?.Invoke();
+            return SubscribeAsync(command, ct);
         }
 
         public Task<IngestResult> IngestAsync(IngestCommand command, CancellationToken ct = default) =>

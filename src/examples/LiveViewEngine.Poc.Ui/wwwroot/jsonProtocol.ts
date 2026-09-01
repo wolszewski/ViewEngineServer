@@ -10,6 +10,7 @@ type JsonFrame = {
     fields?: string[];
     row?: RowData;
     rowId?: string;
+    rowNumber?: number;
     position?: number;
     removePosition?: number;
     insertPosition?: number;
@@ -55,6 +56,7 @@ export function parseJsonFrame(frame: string): ProtocolFrame[] {
                     frames.push({
                         kind: 'snapshotRow',
                         subscriptionId,
+                        rowNumber: message.rowNumber ?? 0,
                         row: message.row
                     });
                 }
@@ -64,18 +66,20 @@ export function parseJsonFrame(frame: string): ProtocolFrame[] {
                 break;
             case 'snapshot':
                 if (message.rows) {
+                    const snapshotStart = Number(message.startIndex) || 0;
                     frames.push({
                         kind: 'snapshotStart',
                         subscriptionId,
-                        startIndex: Number(message.startIndex) || 0,
+                        startIndex: snapshotStart,
                         totalCount: Number(message.totalCount) || 0,
                         fields: Array.isArray(message.fields) ? message.fields : undefined
                     });
-                    for (const row of message.rows) {
+                    for (let i = 0; i < message.rows.length; i++) {
                         frames.push({
                             kind: 'snapshotRow',
                             subscriptionId,
-                            row
+                            rowNumber: snapshotStart + i,
+                            row: message.rows[i]
                         });
                     }
                     frames.push({ kind: 'eos', subscriptionId });

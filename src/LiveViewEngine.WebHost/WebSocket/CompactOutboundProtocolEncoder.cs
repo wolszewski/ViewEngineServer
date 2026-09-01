@@ -64,9 +64,14 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
                     start.VisibleFieldIndexes);
                 yield break;
             case SnapshotRowsDelta rows:
-                foreach (var row in rows.Rows)
+                for (int i = 0; i < rows.Rows.Count; i++)
                 {
-                    yield return EncodeSnapshotRow(subscriptionId, rows.Schema, rows.VisibleFieldIndexes, row);
+                    yield return EncodeSnapshotRow(
+                        subscriptionId,
+                        rows.Schema,
+                        rows.VisibleFieldIndexes,
+                        rows.StartRowNumber + i,
+                        rows.Rows[i]);
                 }
                 yield break;
             case EndOfSnapshotDelta:
@@ -80,9 +85,14 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
                     snapshot.IsPartial,
                     snapshot.Schema,
                     snapshot.VisibleFieldIndexes);
-                foreach (var row in snapshot.Rows)
+                for (int i = 0; i < snapshot.Rows.Count; i++)
                 {
-                    yield return EncodeSnapshotRow(subscriptionId, snapshot.Schema, snapshot.VisibleFieldIndexes, row);
+                    yield return EncodeSnapshotRow(
+                        subscriptionId,
+                        snapshot.Schema,
+                        snapshot.VisibleFieldIndexes,
+                        snapshot.StartIndex + i,
+                        snapshot.Rows[i]);
                 }
                 yield return EncodeEndOfSnapshot(subscriptionId);
                 yield break;
@@ -157,12 +167,15 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
         int subscriptionId,
         CollectionSchema schema,
         IReadOnlyList<int>? visibleFieldIndexes,
+        int rowNumber,
         string?[] row)
     {
         var writer = new ArrayBufferWriter<byte>();
         writer.Write(SSpan);
         writer.Write(SeparatorSpan);
         WriteInt32(writer, subscriptionId);
+        writer.Write(SeparatorSpan);
+        WriteInt32(writer, rowNumber);
         writer.Write(SeparatorSpan);
         WriteKeyField(writer, schema, visibleFieldIndexes, row);
         WriteFullRow(writer, schema, visibleFieldIndexes, row);

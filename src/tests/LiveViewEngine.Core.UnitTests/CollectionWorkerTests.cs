@@ -32,9 +32,10 @@ public class CollectionWorkerTests
     {
         public TaskCompletionSource<T> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public void Execute()
+        public ValueTask ExecuteAsync()
         {
             Completion.TrySetResult(execute());
+            return ValueTask.CompletedTask;
         }
     }
 }

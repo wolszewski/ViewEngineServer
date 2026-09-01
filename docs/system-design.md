@@ -230,6 +230,10 @@ The current inbound message types are:
 { "type": "unsubscribe", "subscriptionId": 1 }
 ```
 
+For existing subscriptions, `updateview` and `setviewport` support `snapshotMode: "no" | "delta" | "full"` and default to `"delta"`.
+Legacy `sendSnapshot` is still accepted and maps to `"full"` or `"no"`.
+When the effective view stays the same and only the viewport grows, `"delta"` emits only the uncovered rows as a partial snapshot.
+
 ### TCP ingest lifecycle
 
 ```
@@ -247,21 +251,37 @@ TCP connect
 
 ## Current wire format
 
-WebSocket output supports both compact and JSON encodings. Compact is the default; clients can request JSON with `messageFormat: "json"` in the subscribe message. In both cases, the event model is generated from `ViewDelta` types (`SnapshotStartDelta`, `SnapshotDataDelta`, `SnapshotDelta`, `RowUpdateDelta`, `RowInsertDelta`, `RowRemoveDelta`, and snapshot control deltas).
+WebSocket output supports both compact and JSON encodings. Compact is the default; clients can request JSON with `messageFormat: "json"` in the subscribe message. Snapshot delivery is streamed as `snapshotStart`, `snapshotRow...`, `eos` rather than a single aggregate snapshot payload.
 
-### Snapshot event
+### JSON snapshot stream
 
 ```json
 {
- "type": "snapshot",
- "viewId": "orders|amount|asc|",
+ "type": "snapshotStart",
+ "subscriptionId": 1,
+ "startIndex": 200,
  "totalCount": 1000,
- "startIndex": 0,
- "rows": [
-   { "key": "o1", "customer": "Alice", "amount": "99.5", "status": "open" },
-   { "key": "o2", "customer": "Bob", "amount": "120", "status": "closed" }
- ]
+ "isPartial": true,
+ "fields": ["customer", "amount", "status"]
 }
+{
+ "type": "snapshotRow",
+ "subscriptionId": 1,
+ "rowNumber": 200,
+ "row": { "key": "o201", "customer": "Alice", "amount": "99.5", "status": "open" }
+}
+{
+ "type": "eos",
+ "subscriptionId": 1
+}
+```
+
+### Compact snapshot stream
+
+```text
+P|1|200|1000|1|customer|amount|status
+S|1|200|o201|Alice|99.5|open
+EOS|1
 ```
 
 ### Row insert event

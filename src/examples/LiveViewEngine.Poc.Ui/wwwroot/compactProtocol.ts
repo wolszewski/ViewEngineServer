@@ -53,7 +53,8 @@ export function parseCompactFrame(frame: string, currentFields: string[]): Proto
         return [{
             kind: 'snapshotRow',
             subscriptionId,
-            row: buildFullRow(tokens[2] ?? '', tokens.slice(3), currentFields)
+            rowNumber: parseInt(tokens[2] ?? '0', 10),
+            row: buildFullRow(tokens[3] ?? '', tokens.slice(4), currentFields)
         }];
     }
 

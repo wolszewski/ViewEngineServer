@@ -104,13 +104,19 @@ Connect to `ws://localhost:5000/ws` and send:
 }
 ```
 
-The server responds with a `snapshot` event and then pushes `rowUpdate`,
-`rowInsert`, and `rowRemove` events as data changes.
+The server responds with a streamed snapshot (`snapshotStart`, `snapshotRow...`, `eos`)
+and then pushes `rowUpdate`, `rowInsert`, and `rowRemove` events as data changes.
 
 Change page:
 
 ```json
 { "type": "setviewport", "subscriptionId": 1, "startIndex": 50, "pageSize": 50 }
+```
+
+Expand with minimal reconciliation:
+
+```json
+{ "type": "updateview", "subscriptionId": 1, "startIndex": 0, "pageSize": 400, "snapshotMode": "delta" }
 ```
 
 Unsubscribe:
@@ -125,7 +131,9 @@ Unsubscribe:
 
 | `type` | Sent when |
 |--------|-----------|
-| `snapshot` | Initial subscribe or viewport change. Contains `totalCount`, `startIndex`, `rows[]`. |
+| `snapshotStart` | Starts a full or partial snapshot. Contains `totalCount`, `startIndex`, and snapshot metadata. |
+| `snapshotRow` | One row from a snapshot. Includes `rowNumber` and `row`. |
+| `eos` | Ends the current snapshot stream. |
 | `rowUpdate` | A visible row's field values changed in-place. Contains `rowId`, `position`, `changedFields`. |
 | `rowInsert` | A row entered the visible window. Contains `position`, `row`. |
 | `rowRemove` | A row left the visible window. Contains `position`. |
