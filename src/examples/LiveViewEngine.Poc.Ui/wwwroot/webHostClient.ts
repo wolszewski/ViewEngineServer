@@ -332,6 +332,7 @@ export class WebHostClient {
         this.socket.send(JSON.stringify(message));
         this.hasReceivedSnapshot = false;
         this.snapshotRequestStartedAt = performance.now();
+        this.startSubscribeRetry();
     }
 
     private sendUnsubscribe(subscriptionId: number): void {
@@ -363,7 +364,11 @@ export class WebHostClient {
             }
 
             this.callbacks.onStatus('Connected (waiting for collection/snapshot)');
-            this.sendSubscribe(this.lastSubscribe);
+            if (this.activeSubscriptionId !== null) {
+                this.sendUpdateView(this.lastSubscribe);
+            } else {
+                this.sendSubscribe(this.lastSubscribe);
+            }
         }, 1_000);
     }
 
