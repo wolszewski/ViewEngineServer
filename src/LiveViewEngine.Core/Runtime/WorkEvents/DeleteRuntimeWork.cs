@@ -10,7 +10,7 @@ internal sealed class DeleteRuntimeWork : RuntimeWorkItem<MutationResult>
     public DeleteRuntimeWork(
         CollectionRuntime runtime,
         DeleteRowCommand command,
-        Action<MutationResult>? onCompleted = null) : base(onCompleted)
+        Func<MutationResult, ValueTask>? onCompleted = null) : base(onCompleted)
     {
         _runtime = runtime;
         _command = command;

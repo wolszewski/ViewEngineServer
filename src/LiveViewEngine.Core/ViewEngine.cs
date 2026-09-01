@@ -123,11 +123,11 @@ public sealed class ViewEngine : IViewEngine, IDisposable
                 UpsertRowCommand upsert => new UpsertRuntimeWork(
                     runtime,
                     upsert,
-                    result => PublishMutationResult(result, ct)),
+                    result => PublishMutationResultAsync(result, ct)),
                 DeleteRowCommand delete => new DeleteRuntimeWork(
                     runtime,
                     delete,
-                    result => PublishMutationResult(result, ct)),
+                    result => PublishMutationResultAsync(result, ct)),
                 _ => new UnknownCommandRuntimeWork(command),
             };
 
@@ -178,7 +178,7 @@ public sealed class ViewEngine : IViewEngine, IDisposable
         return result;
     }
 
-    private void PublishMutationResult(MutationResult mutationResult, CancellationToken ct)
+    private async ValueTask PublishMutationResultAsync(MutationResult mutationResult, CancellationToken ct)
     {
         if (mutationResult.Groups is not { Count: > 0 })
         {
@@ -187,10 +187,10 @@ public sealed class ViewEngine : IViewEngine, IDisposable
 
         foreach (var group in mutationResult.Groups)
         {
-            _publisher.PublishAsync(group.Targets, group.Deltas, ct).GetAwaiter().GetResult();
+            await _publisher.PublishAsync(group.Targets, group.Deltas, ct).ConfigureAwait(false);
         }
 
-        _publisher.FlushAsync(ct).GetAwaiter().GetResult();
+        await _publisher.FlushAsync(ct).ConfigureAwait(false);
     }
 
     private async Task<IReadOnlyList<ViewDelta>> HandleSubscribeCommandAsync(SubscribeCommand subscribe,
