@@ -50,7 +50,7 @@ On reconnect, clients subscribe again and receive a new server-assigned `subscri
 
 - snapshot delivery is streamed as:
   1. `snapshotStart`
-  2. one or more `snapshotRow`
+  2. zero or more `snapshotRow` events
   3. `eos`
 - both full and partial snapshots use the same shape.
 - every `snapshotRow` includes an explicit row number so clients can place rows correctly during partial viewport expansion.
