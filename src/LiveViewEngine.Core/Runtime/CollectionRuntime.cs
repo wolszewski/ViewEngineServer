@@ -173,12 +173,13 @@ public sealed class CollectionRuntime : IDisposable
         view.AddSubscriber(subscriptionKey);
         view.SortIndex.IncrementSubscribers();
 
+        var normalizedStart = Math.Max(0, command.StartIndex);
         var viewport = new ViewportState
         {
             SubscriptionKey = subscriptionKey,
             View = command.View,
             ViewKey = viewKey,
-            StartIndex = command.StartIndex,
+            StartIndex = normalizedStart,
             PageSize = command.PageSize,
             VisibleColumns = FieldMask.From(selectedFieldIndexes.AsSpan()),
             SelectedFieldIndexes = selectedFieldIndexes
@@ -195,7 +196,7 @@ public sealed class CollectionRuntime : IDisposable
         return BuildStreamingSnapshotDeltas(
             subscriptionKey.ToString(),
             view,
-            command.StartIndex,
+            normalizedStart,
             command.PageSize,
             selectedFieldIndexes);
     }
@@ -215,7 +216,7 @@ public sealed class CollectionRuntime : IDisposable
                 return [];
             }
 
-            var newStartIndex = command.StartIndex ?? viewport.StartIndex;
+            var newStartIndex = Math.Max(0, command.StartIndex ?? viewport.StartIndex);
             var newPageSize = command.PageSize ?? viewport.PageSize;
 
             if (command.SnapshotMode == SnapshotMode.Full)

@@ -13,6 +13,7 @@ public interface IViewEngine
 {
     Task<IngestResult> IngestAsync(IngestCommand command, CancellationToken ct = default);
     Task<IReadOnlyList<ViewDelta>> SubscribeAsync(SubscriptionCommand command, CancellationToken ct = default);
+    Task<IReadOnlyList<ViewDelta>> SubscribeAsync(SubscriptionCommand command, Action? onBeforeProcess, CancellationToken ct = default);
 }
 
 public sealed class ViewEngine : IViewEngine, IDisposable
@@ -62,7 +63,13 @@ public sealed class ViewEngine : IViewEngine, IDisposable
     public Task<IReadOnlyList<ViewDelta>> SubscribeAsync(SubscriptionCommand command, CancellationToken ct = default)
     {
         ThrowIfDisposed();
-        return ProcessSubscribeAsync(command, ct);
+        return ProcessSubscribeAsync(command, null, ct);
+    }
+
+    public Task<IReadOnlyList<ViewDelta>> SubscribeAsync(SubscriptionCommand command, Action? onBeforeProcess, CancellationToken ct = default)
+    {
+        ThrowIfDisposed();
+        return ProcessSubscribeAsync(command, onBeforeProcess, ct);
     }
 
     public void Dispose()
@@ -141,6 +148,7 @@ public sealed class ViewEngine : IViewEngine, IDisposable
     }
 
     private async Task<IReadOnlyList<ViewDelta>> ProcessSubscribeAsync(SubscriptionCommand command,
+        Action? onBeforeProcess,
         CancellationToken ct)
     {
         var started = Stopwatch.GetTimestamp();
@@ -161,7 +169,7 @@ public sealed class ViewEngine : IViewEngine, IDisposable
                 {
                     SubscribeCommand subscribe => await HandleSubscribeCommandAsync(subscribe, ct),
                     UnsubscribeCommand unsubscribeCommand => await HandleUnsubscribeCommandAsync(unsubscribeCommand, ct),
-                    UpdateViewCommand updateCommand => await HandleUpdateViewCommandAsync(updateCommand, ct),
+                    UpdateViewCommand updateCommand => await HandleUpdateViewCommandAsync(updateCommand, onBeforeProcess, ct),
                     _ => await HandleUnknownSubscriptionCommandAsync(command, ct)
                 };
             });
@@ -223,6 +231,7 @@ public sealed class ViewEngine : IViewEngine, IDisposable
     }
 
     private async Task<IReadOnlyList<ViewDelta>> HandleUpdateViewCommandAsync(UpdateViewCommand updateCommand,
+        Action? onBeforeProcess,
         CancellationToken ct)
     {
         var collectionId = GetCollectionIdForSubscription(updateCommand);
@@ -233,7 +242,7 @@ public sealed class ViewEngine : IViewEngine, IDisposable
         }
 
         return await updateRuntime.EnqueueAsync(
-            new UpdateViewRuntimeWork(updateRuntime, updateCommand),
+            new UpdateViewRuntimeWork(updateRuntime, updateCommand, onBeforeProcess),
             ct);
     }
 

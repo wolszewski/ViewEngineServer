@@ -95,20 +95,26 @@ public sealed class WebSocketSessionManager
                         messageFormat,
                         snapshotActive: subscribe.SendSnapshot);
                 }
-                var shouldBufferSnapshot = command is UpdateViewCommand { SnapshotMode: not SnapshotMode.No } && clientSubscriptionId > 0;
-                if (shouldBufferSnapshot)
+
+                bool snapshotBegan = false;
+                Action? onBeforeProcess = null;
+                if (command is UpdateViewCommand { SnapshotMode: not SnapshotMode.No } && clientSubscriptionId > 0)
                 {
-                    _publisher.BeginViewportSnapshot(context.ConnectionId, command.SubscriptionId);
+                    onBeforeProcess = () =>
+                    {
+                        snapshotBegan = true;
+                        _publisher.BeginViewportSnapshot(context.ConnectionId, command.SubscriptionId);
+                    };
                 }
 
                 IReadOnlyList<ViewDelta> events;
                 try
                 {
-                    events = await _engine.SubscribeAsync(command, ct);
+                    events = await _engine.SubscribeAsync(command, onBeforeProcess, ct);
                 }
                 catch
                 {
-                    if (shouldBufferSnapshot)
+                    if (snapshotBegan)
                     {
                         _publisher.CancelSnapshot(context.ConnectionId, command.SubscriptionId);
                     }
@@ -116,7 +122,7 @@ public sealed class WebSocketSessionManager
                     throw;
                 }
 
-                if (command is UpdateViewCommand { SnapshotMode: not SnapshotMode.No } && events.Count == 0)
+                if (snapshotBegan && events.Count == 0)
                 {
                     _publisher.CancelSnapshot(context.ConnectionId, command.SubscriptionId);
                 }

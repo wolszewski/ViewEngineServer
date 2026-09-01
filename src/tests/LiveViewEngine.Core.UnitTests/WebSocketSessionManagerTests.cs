@@ -362,6 +362,12 @@ public class WebSocketSessionManagerTests
             return [];
         }
 
+        public Task<IReadOnlyList<ViewDelta>> SubscribeAsync(SubscriptionCommand command, Action? onBeforeProcess, CancellationToken ct = default)
+        {
+            onBeforeProcess?.Invoke();
+            return SubscribeAsync(command, ct);
+        }
+
         public Task<IngestResult> IngestAsync(IngestCommand command, CancellationToken ct = default) =>
             Task.FromResult(IngestResult.Ok());
 
