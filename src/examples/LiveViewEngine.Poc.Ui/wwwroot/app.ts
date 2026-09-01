@@ -803,12 +803,13 @@ function App(): React.ReactElement {
                 + `(${snapshot.waitMs.toFixed(0)}ms wait, ${snapshot.transferMs.toFixed(0)}ms transfer)`);
 
         if (!snapshot.isPartial) {
-            rowsByPositionRef.current.clear();
-            rowsByIdRef.current.clear();
-            subscribedViewportRef.current = {
-                start: snapshot.startIndex,
-                end: Math.max(snapshot.startIndex, snapshot.startIndex + rows.length - 1)
-            };
+            if (rows.length > 0) {
+                rowsByPositionRef.current.clear();
+                rowsByIdRef.current.clear();
+            }
+            subscribedViewportRef.current = rows.length > 0
+                ? { start: snapshot.startIndex, end: snapshot.startIndex + rows.length - 1 }
+                : (subscribedViewportRef.current ?? { start: snapshot.startIndex, end: snapshot.startIndex });
         }
 
         // Store rows in caches

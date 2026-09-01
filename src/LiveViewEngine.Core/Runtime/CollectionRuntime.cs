@@ -749,13 +749,28 @@ public sealed class CollectionRuntime : IDisposable
 
         var hasBeforeRange = newStart < overlapStart;
         var hasAfterRange = overlapEnd < newEnd;
+        var viewId = viewport.SubscriptionKey.ToString();
 
         if (!hasBeforeRange && !hasAfterRange)
         {
-            return [];
+            return
+            [
+                new SnapshotStartDelta
+                {
+                    ViewId = viewId,
+                    Schema = Collection.Schema,
+                    TotalCount = view.GetTotalCount(),
+                    StartIndex = newStart,
+                    IsPartial = false,
+                    VisibleFieldIndexes = viewport.SelectedFieldIndexes
+                },
+                new EndOfSnapshotDelta
+                {
+                    ViewId = viewId,
+                    VisibleFieldIndexes = viewport.SelectedFieldIndexes
+                }
+            ];
         }
-
-        var viewId = viewport.SubscriptionKey.ToString();
 
         if (hasBeforeRange && !hasAfterRange)
         {
