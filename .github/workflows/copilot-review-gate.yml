@@ -32,12 +32,22 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            const copilotLogins = new Set([
+              "copilot-pull-request-reviewer[bot]",
+              "github-copilot[bot]"
+            ]);
+
             const isCopilotLogin = (login) => {
-              return (login ?? "").toLowerCase().includes("copilot");
+              return copilotLogins.has((login ?? "").toLowerCase());
             };
 
             const { owner, repo } = context.repo;
-            const pull_number = context.payload.pull_request.number;
+            const pull_number = context.payload.pull_request?.number;
+
+            if (!pull_number) {
+              core.setFailed("Unable to determine pull request number from workflow event payload.");
+              return;
+            }
 
             const pr = await github.rest.pulls.get({
               owner,
@@ -60,11 +70,7 @@ jobs:
               return isCopilotLogin(review.user?.login);
             });
 
-            const copilotReviewSubmitted = copilotReviews.some((review) => {
-              return review.state && review.state !== "PENDING";
-            });
-
-            const hasCopilotActivity = requestedCopilot || copilotReviews.length > 0;
+            let hasCopilotThreadActivity = false;
 
             let unresolvedCopilotThreads = 0;
             let cursor = null;
@@ -103,15 +109,23 @@ jobs:
 
               const threads = result.repository.pullRequest.reviewThreads.nodes ?? [];
 
-              unresolvedCopilotThreads += threads.filter((thread) => {
-                if (thread.isResolved) {
+              const copilotThreads = threads.filter((thread) => {
+                const hasCopilotComment = (thread.comments?.nodes ?? []).some((comment) => {
+                  return isCopilotLogin(comment.author?.login);
+                });
+
+                if (!hasCopilotComment) {
                   return false;
                 }
 
-                return (thread.comments?.nodes ?? []).some((comment) => {
-                  return isCopilotLogin(comment.author?.login);
-                });
-              }).length;
+                if (!thread.isResolved) {
+                  unresolvedCopilotThreads += 1;
+                }
+
+                return true;
+              });
+
+              hasCopilotThreadActivity = hasCopilotThreadActivity || copilotThreads.length > 0;
 
               const pageInfo = result.repository.pullRequest.reviewThreads.pageInfo;
               if (!pageInfo.hasNextPage) {
@@ -121,12 +135,15 @@ jobs:
               cursor = pageInfo.endCursor;
             }
 
+            const hasCopilotActivity =
+              requestedCopilot || copilotReviews.length > 0 || hasCopilotThreadActivity;
+
             if (!hasCopilotActivity) {
               core.info("No Copilot review requested; merge is allowed.");
               return;
             }
 
-            if (requestedCopilot && !copilotReviewSubmitted) {
+            if (requestedCopilot) {
               core.setFailed("Copilot review was requested and is still in progress.");
               return;
             }
