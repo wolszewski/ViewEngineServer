@@ -67,7 +67,7 @@ public class UpdateViewRuntimeTests
         Assert.Equal(50, start.StartIndex);
 
         var rows = Assert.IsType<SnapshotRowsDelta>(deltas[1]);
-        Assert.Equal(Enumerable.Range(50, 20).ToArray(), rows.RowNumbers);
+        Assert.Equal(50, rows.StartRowNumber);
         Assert.Equal(20, rows.Rows.Count);
         Assert.IsType<EndOfSnapshotDelta>(deltas[^1]);
     }
@@ -92,7 +92,7 @@ public class UpdateViewRuntimeTests
         Assert.Equal(50, start.StartIndex);
 
         var rows = Assert.IsType<SnapshotRowsDelta>(deltas[1]);
-        Assert.Equal(Enumerable.Range(50, 50).ToArray(), rows.RowNumbers);
+        Assert.Equal(50, rows.StartRowNumber);
         Assert.Equal(50, rows.Rows.Count);
         Assert.IsType<EndOfSnapshotDelta>(deltas[^1]);
     }
@@ -117,7 +117,7 @@ public class UpdateViewRuntimeTests
         Assert.Equal(50, start.StartIndex);
 
         var rows = Assert.IsType<SnapshotRowsDelta>(deltas[1]);
-        Assert.Equal(Enumerable.Range(50, 50).ToArray(), rows.RowNumbers);
+        Assert.Equal(50, rows.StartRowNumber);
         Assert.Equal(50, rows.Rows.Count);
         Assert.IsType<EndOfSnapshotDelta>(deltas[^1]);
     }
@@ -229,7 +229,7 @@ public class UpdateViewRuntimeTests
         Assert.Equal(0, start.StartIndex);
 
         var rows = Assert.IsType<SnapshotRowsDelta>(deltas[1]);
-        Assert.Equal(Enumerable.Range(0, 50).ToArray(), rows.RowNumbers);
+        Assert.Equal(0, rows.StartRowNumber);
         Assert.Equal(50, rows.Rows.Count);
         Assert.IsType<EndOfSnapshotDelta>(deltas[^1]);
     }
@@ -254,7 +254,7 @@ public class UpdateViewRuntimeTests
         Assert.Equal(0, start.StartIndex);
 
         var rows = Assert.IsType<SnapshotRowsDelta>(deltas[1]);
-        Assert.Equal(Enumerable.Range(0, 100).ToArray(), rows.RowNumbers);
+        Assert.Equal(0, rows.StartRowNumber);
         Assert.Equal(100, rows.Rows.Count);
         Assert.IsType<EndOfSnapshotDelta>(deltas[^1]);
 
@@ -296,7 +296,9 @@ public class UpdateViewRuntimeTests
 
         var rows = Assert.IsType<SnapshotRowsDelta>(deltas[1]);
         var tailRows = deltas.OfType<SnapshotRowsDelta>().SelectMany(static delta => delta.Rows).ToArray();
-        var tailRowNumbers = deltas.OfType<SnapshotRowsDelta>().SelectMany(static delta => delta.RowNumbers).ToArray();
+        var tailRowNumbers = deltas.OfType<SnapshotRowsDelta>()
+            .SelectMany(static delta => Enumerable.Range(delta.StartRowNumber, delta.Rows.Count))
+            .ToArray();
         Assert.Equal(200, tailRows.Length);
         Assert.Equal(Enumerable.Range(200, 200).ToArray(), tailRowNumbers);
         Assert.Equal("row-200", rows.Rows[0][1]);

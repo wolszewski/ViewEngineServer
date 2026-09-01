@@ -98,7 +98,7 @@ public sealed class WebSocketSessionManager
                 var shouldBufferSnapshot = command is UpdateViewCommand { SnapshotMode: not SnapshotMode.No } && clientSubscriptionId > 0;
                 if (shouldBufferSnapshot)
                 {
-                    _publisher.SetSnapshotActive(context.ConnectionId, command.SubscriptionId, snapshotActive: true);
+                    _publisher.BeginViewportSnapshot(context.ConnectionId, command.SubscriptionId);
                 }
 
                 IReadOnlyList<ViewDelta> events;
@@ -110,7 +110,7 @@ public sealed class WebSocketSessionManager
                 {
                     if (shouldBufferSnapshot)
                     {
-                        _publisher.SetSnapshotActive(context.ConnectionId, command.SubscriptionId, snapshotActive: false);
+                        _publisher.CancelSnapshot(context.ConnectionId, command.SubscriptionId);
                     }
 
                     throw;
@@ -118,7 +118,7 @@ public sealed class WebSocketSessionManager
 
                 if (command is UpdateViewCommand { SnapshotMode: not SnapshotMode.No } && events.Count == 0)
                 {
-                    _publisher.SetSnapshotActive(context.ConnectionId, command.SubscriptionId, snapshotActive: false);
+                    _publisher.CancelSnapshot(context.ConnectionId, command.SubscriptionId);
                 }
 
                 if (command is SubscribeCommand subscribeCommand && clientSubscriptionId > 0)

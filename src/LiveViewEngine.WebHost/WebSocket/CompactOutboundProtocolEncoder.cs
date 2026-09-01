@@ -70,7 +70,7 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
                         subscriptionId,
                         rows.Schema,
                         rows.VisibleFieldIndexes,
-                        rows.RowNumbers[i],
+                        rows.StartRowNumber + i,
                         rows.Rows[i]);
                 }
                 yield break;

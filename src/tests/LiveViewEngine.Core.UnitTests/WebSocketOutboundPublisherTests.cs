@@ -33,7 +33,7 @@ public class WebSocketOutboundPublisherTests
                 {
                     ViewId = "1:7",
                     Schema = schema,
-                    RowNumbers = [0],
+                    StartRowNumber = 0,
                     VisibleFieldIndexes = [0, 1, 2],
                     Rows = [["o1", "Alice", "100"]]
                 }
@@ -93,7 +93,7 @@ public class WebSocketOutboundPublisherTests
                 {
                     ViewId = "1:7",
                     Schema = schema,
-                    RowNumbers = [0],
+                    StartRowNumber = 0,
                     VisibleFieldIndexes = [0, 1, 2],
                     Rows = [["o1", "Alice", "100"]]
                 }

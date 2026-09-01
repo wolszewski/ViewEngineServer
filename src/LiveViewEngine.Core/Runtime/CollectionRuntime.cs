@@ -784,6 +784,7 @@ public sealed class CollectionRuntime : IDisposable
         int[] selectedFieldIndexes,
         bool isPartial = false)
     {
+        startIndex = Math.Max(0, startIndex);
         var deltas = new List<ViewDelta>
         {
             new SnapshotStartDelta
@@ -798,25 +799,25 @@ public sealed class CollectionRuntime : IDisposable
         };
 
         var batch = new string?[_options.SnapshotBatchSize][];
-        var rowNumbers = new int[_options.SnapshotBatchSize];
         var batchCount = 0;
-        var rowNumber = startIndex;
+        var batchStartRowNumber = startIndex;
+        var globalRowNumber = startIndex;
         foreach (int rowIndex in view.EnumeratePageIndexes(startIndex, pageSize))
         {
-            rowNumbers[batchCount] = rowNumber++;
             batch[batchCount++] = ProjectRow(Collection.GetRowValues(rowIndex), selectedFieldIndexes);
+            globalRowNumber++;
             if (batchCount == _options.SnapshotBatchSize)
             {
-                deltas.Add(CreateSnapshotRowsDelta(viewId, selectedFieldIndexes, batch, rowNumbers, batchCount, isPartial));
+                deltas.Add(CreateSnapshotRowsDelta(viewId, selectedFieldIndexes, batch, batchStartRowNumber, batchCount, isPartial));
                 batch = new string?[_options.SnapshotBatchSize][];
-                rowNumbers = new int[_options.SnapshotBatchSize];
+                batchStartRowNumber = globalRowNumber;
                 batchCount = 0;
             }
         }
 
         if (batchCount > 0)
         {
-            deltas.Add(CreateSnapshotRowsDelta(viewId, selectedFieldIndexes, batch, rowNumbers, batchCount, isPartial));
+            deltas.Add(CreateSnapshotRowsDelta(viewId, selectedFieldIndexes, batch, batchStartRowNumber, batchCount, isPartial));
         }
 
         deltas.Add(new EndOfSnapshotDelta
@@ -831,7 +832,7 @@ public sealed class CollectionRuntime : IDisposable
         string viewId,
         int[] selectedFieldIndexes,
         string?[][] batch,
-        int[] rowNumbers,
+        int startRowNumber,
         int batchCount,
         bool isPartial = false)
     {
@@ -839,7 +840,7 @@ public sealed class CollectionRuntime : IDisposable
         {
             ViewId = viewId,
             Schema = Collection.Schema,
-            RowNumbers = batchCount == rowNumbers.Length ? rowNumbers : rowNumbers[..batchCount],
+            StartRowNumber = startRowNumber,
             Rows = batchCount == batch.Length ? batch : batch[..batchCount],
             VisibleFieldIndexes = selectedFieldIndexes,
             IsPartial = isPartial

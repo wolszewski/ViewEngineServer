@@ -79,6 +79,47 @@ public sealed class WebSocketOutboundPublisher(
         }
     }
 
+    public void BeginViewportSnapshot(int connectionId, int subscriptionId)
+    {
+        if (!_connections.TryGetValue(connectionId, out var connection))
+        {
+            return;
+        }
+
+        lock (connection.Gate)
+        {
+            if (!connection.Subscriptions.TryGetValue(subscriptionId, out var subscription))
+            {
+                return;
+            }
+
+            subscription.IsSnapshotActive = true;
+            subscription.BufferedFrames.Clear();
+        }
+    }
+
+    public void CancelSnapshot(int connectionId, int subscriptionId)
+    {
+        if (!_connections.TryGetValue(connectionId, out var connection))
+        {
+            return;
+        }
+
+        lock (connection.Gate)
+        {
+            if (!connection.Subscriptions.TryGetValue(subscriptionId, out var subscription))
+            {
+                return;
+            }
+
+            subscription.IsSnapshotActive = false;
+            while (subscription.BufferedFrames.Count > 0)
+            {
+                connection.TryWrite(subscription.BufferedFrames.Dequeue());
+            }
+        }
+    }
+
     public void SetSnapshotActive(int connectionId, int subscriptionId, bool snapshotActive)
     {
         if (!_connections.TryGetValue(connectionId, out var connection))

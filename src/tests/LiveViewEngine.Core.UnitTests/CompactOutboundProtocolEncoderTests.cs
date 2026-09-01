@@ -32,7 +32,7 @@ public class CompactOutboundProtocolEncoderTests
             {
                 ViewId = "1:7",
                 Schema = Schema,
-                RowNumbers = [0],
+                StartRowNumber = 0,
                 VisibleFieldIndexes = [0, 1, 2, 3],
                 Rows = [["o1", "Al|ce", "100", "o\\pen"]]
             },
@@ -127,7 +127,7 @@ public class CompactOutboundProtocolEncoderTests
             {
                 ViewId = "1:1",
                 Schema = Schema,
-                RowNumbers = [0],
+                StartRowNumber = 0,
                 VisibleFieldIndexes = [0, 1, 2, 3],
                 Rows = [["o1", "val~ue", "100", "~"]]
             },
@@ -193,7 +193,7 @@ public class CompactOutboundProtocolEncoderTests
             {
                 ViewId = "1:1",
                 Schema = Schema,
-                RowNumbers = [50],
+                StartRowNumber = 50,
                 VisibleFieldIndexes = [0, 1, 2],
                 Rows = [["o1", "Alice", "100"]]
             },

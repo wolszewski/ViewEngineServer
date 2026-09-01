@@ -45,7 +45,7 @@ public sealed class JsonOutboundProtocolEncoder : IOutboundProtocolEncoder
                     yield return Serialize(new JsonSnapshotRowMessage
                     {
                         SubscriptionId = subscriptionId,
-                        RowNumber = rows.RowNumbers[i],
+                        RowNumber = rows.StartRowNumber + i,
                         Row = FormatRow(rows.Schema, rows.Rows[i], rows.VisibleFieldIndexes)
                     });
                 }
