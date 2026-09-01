@@ -110,11 +110,10 @@ jobs:
               const threads = result.repository.pullRequest.reviewThreads.nodes ?? [];
 
               const copilotThreads = threads.filter((thread) => {
-                const hasCopilotComment = (thread.comments?.nodes ?? []).some((comment) => {
-                  return isCopilotLogin(comment.author?.login);
-                });
+                const firstComment = (thread.comments?.nodes ?? [])[0];
+                const isCopilotAuthored = firstComment && isCopilotLogin(firstComment.author?.login);
 
-                if (!hasCopilotComment) {
+                if (!isCopilotAuthored) {
                   return false;
                 }
 
