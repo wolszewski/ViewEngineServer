@@ -804,16 +804,13 @@ function App(): React.ReactElement {
 
         if (!snapshot.isPartial) {
             const currentViewport = subscribedViewportRef.current;
-            let cacheMatchesViewport = false;
+            let cacheCoversViewport = false;
             if (currentViewport !== null) {
-                const viewportSize = currentViewport.end - currentViewport.start + 1;
-                cacheMatchesViewport = rowsByPositionRef.current.size === viewportSize;
-                if (cacheMatchesViewport) {
-                    for (const position of rowsByPositionRef.current.keys()) {
-                        if (position < currentViewport.start || position > currentViewport.end) {
-                            cacheMatchesViewport = false;
-                            break;
-                        }
+                cacheCoversViewport = true;
+                for (let position = currentViewport.start; position <= currentViewport.end; position += 1) {
+                    if (!rowsByPositionRef.current.has(position)) {
+                        cacheCoversViewport = false;
+                        break;
                     }
                 }
             }
@@ -822,7 +819,7 @@ function App(): React.ReactElement {
                 && snapshot.totalCount === totalCountRef.current
                 && currentViewport !== null
                 && snapshot.startIndex === currentViewport.start
-                && cacheMatchesViewport;
+                && cacheCoversViewport;
 
             if (!isNoOpFullSnapshot) {
                 rowsByPositionRef.current.clear();
