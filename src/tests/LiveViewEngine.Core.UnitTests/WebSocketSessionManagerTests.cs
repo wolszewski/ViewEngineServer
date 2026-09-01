@@ -118,10 +118,10 @@ public class WebSocketSessionManagerTests
                 "{\"type\":\"subscribe\",\"collectionId\":\"trades\",\"sortColumn\":\"tradeId\",\"sortAscending\":true,\"startIndex\":0,\"pageSize\":200,\"sendSnapshot\":true,\"messageFormat\":\"compact\",\"filters\":[]}",
                 "{\"type\":\"updateview\",\"subscriptionId\":1,\"startIndex\":0,\"pageSize\":400,\"sortColumn\":\"tradeId\",\"sortAscending\":true,\"filters\":[],\"fields\":[],\"snapshotMode\":\"delta\"}"
             ],
-            closeAfterSentCount: 204);
+            closeAfterSentCount: 404);
 
         var handleTask = manager.HandleConnectionAsync(socket, CancellationToken.None);
-        await socket.WaitForMessagesAsync(204);
+        await socket.WaitForMessagesAsync(404);
         socket.Close();
         await handleTask;
 
