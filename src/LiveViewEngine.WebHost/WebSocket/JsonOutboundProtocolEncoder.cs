@@ -18,12 +18,20 @@ public sealed class JsonOutboundProtocolEncoder : IOutboundProtocolEncoder
         return JsonSerializer.SerializeToUtf8Bytes(new JsonSubscriptionAcceptedMessage
         {
             SubscriptionId = payload.SubscriptionId,
-            SnapshotFollows = payload.SnapshotFollows,
+            SnapshotFollows = ToWireString(payload.SnapshotFollows),
             StartIndex = payload.StartIndex,
             TotalCount = payload.TotalCount,
             Fields = payload.Fields
         }, JsonOptions);
     }
+
+    private static string ToWireString(SnapshotFollowsKind kind) => kind switch
+    {
+        SnapshotFollowsKind.None => "none",
+        SnapshotFollowsKind.Immediate => "immediate",
+        SnapshotFollowsKind.Pending => "pending",
+        _ => "none"
+    };
 
     public IEnumerable<byte[]> EncodeFrames(ViewDelta delta, int subscriptionId)
     {
@@ -171,7 +179,7 @@ public sealed class JsonOutboundProtocolEncoder : IOutboundProtocolEncoder
     private sealed class JsonSubscriptionAcceptedMessage : JsonMessage
     {
         public JsonSubscriptionAcceptedMessage() => Type = "subscriptionAccepted";
-        public required bool SnapshotFollows { get; init; }
+        public required string SnapshotFollows { get; init; }
         public required int StartIndex { get; init; }
         public required int TotalCount { get; init; }
         public required IReadOnlyList<string> Fields { get; init; }

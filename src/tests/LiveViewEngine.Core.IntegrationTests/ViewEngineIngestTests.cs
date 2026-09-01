@@ -83,6 +83,30 @@ public class ViewEngineIngestTests
         Assert.False(result.Success);
     }
 
+    [Fact]
+    public async Task Subscribe_BeforeCollectionExists_IsPushedSnapshotOnceCollectionIsCreated()
+    {
+        var (engine, publisher, _) = CreateEngine();
+
+        var initialEvents = await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = 1,
+            SubscriptionId = 1,
+            View = new ViewDefinition { CollectionId = "orders" },
+            StartIndex = 0,
+            PageSize = 50
+        });
+
+        Assert.Empty(initialEvents);
+        Assert.Empty(publisher.Published);
+
+        await CreateOrders(engine);
+        await Upsert(engine, "o1", "Alice", "100");
+
+        var pushed = publisher.EventsFor(1).ToList();
+        Assert.NotEmpty(pushed);
+    }
+
     private sealed class UnknownTestCommand : IngestCommand { }
 
     [Fact]

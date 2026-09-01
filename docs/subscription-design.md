@@ -46,6 +46,17 @@
 
 On reconnect, clients subscribe again and receive a new server-assigned `subscriptionId`. A previous id is not portable across connections.
 
+## Subscribing before the collection exists
+
+`subscribe` is always accepted at the WebSocket layer (an `accepted` frame is sent with the assigned `subscriptionId`), even if the target `collectionId` does not exist yet.
+
+- The `accepted` frame's `snapshotFollows` field is tri-state, not a boolean: `"none"` (no snapshot is coming), `"immediate"` (a snapshot is being sent right now), or `"pending"` (the collection doesn't exist yet, so the snapshot is deferred).
+- If the collection does not exist yet, `accepted` reports `snapshotFollows: "pending"` and `totalCount: -1`, and no snapshot frames follow immediately.
+- The server remembers the pending subscribe request (per connection/subscription id).
+- When the collection is later created (first `createCollection`/ingest for that `collectionId`), the server automatically resumes any pending subscriptions for it and pushes the real snapshot (`snapshotStart`/`snapshotRow`/`eos`) to the client without requiring any further client action.
+- The client does not need to poll or resend `updateview` to detect collection creation; it should treat `snapshotFollows: "pending"` as "waiting for data" and simply wait for the pushed snapshot.
+- Compact frame shape: `A|subscriptionId|snapshotFollows|startIndex|totalCount|field1|field2|...`, where `snapshotFollows` is encoded as a single digit: `0` = none, `1` = immediate, `2` = pending.
+
 ## Outbound snapshot contract
 
 - snapshot delivery is streamed as:

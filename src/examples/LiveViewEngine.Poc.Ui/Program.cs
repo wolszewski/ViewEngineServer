@@ -14,4 +14,9 @@ app.UseStaticFiles(new StaticFileOptions
         context.Context.Response.Headers[HeaderNames.Expires] = "0";
     }
 });
+
+// Client-side routes (e.g. /server-sorted, /client-sorted) aren't real files; serve index.html
+// for direct navigation/refresh so the SPA router can take over.
+app.MapFallbackToFile("index.html");
+
 app.Run();

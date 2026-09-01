@@ -18,7 +18,7 @@ public class JsonOutboundProtocolEncoderTests
         {
             SubscriptionId = 9,
             Fields = ["customer", "amount"],
-            SnapshotFollows = true,
+            SnapshotFollows = SnapshotFollowsKind.Immediate,
             StartIndex = 20,
             TotalCount = 100
         });
@@ -27,13 +27,29 @@ public class JsonOutboundProtocolEncoderTests
         var root = document.RootElement;
         Assert.Equal("subscriptionAccepted", root.GetProperty("type").GetString());
         Assert.Equal(9, root.GetProperty("subscriptionId").GetInt32());
-        Assert.True(root.GetProperty("snapshotFollows").GetBoolean());
+        Assert.Equal("immediate", root.GetProperty("snapshotFollows").GetString());
         Assert.Equal(20, root.GetProperty("startIndex").GetInt32());
         Assert.Equal(100, root.GetProperty("totalCount").GetInt32());
         var fields = root.GetProperty("fields").EnumerateArray().Select(e => e.GetString()).ToArray();
         Assert.Collection(fields,
             value => Assert.Equal("customer", value),
             value => Assert.Equal("amount", value));
+    }
+
+    [Fact]
+    public void EncodeSubscriptionAccepted_CollectionDoesNotExist_ReportsPending()
+    {
+        var payload = _encoder.EncodeSubscriptionAccepted(new SubscriptionAcceptedPayload
+        {
+            SubscriptionId = 9,
+            Fields = [],
+            SnapshotFollows = SnapshotFollowsKind.Pending,
+            StartIndex = 0,
+            TotalCount = -1
+        });
+
+        using var document = JsonDocument.Parse(payload);
+        Assert.Equal("pending", document.RootElement.GetProperty("snapshotFollows").GetString());
     }
 
     [Fact]

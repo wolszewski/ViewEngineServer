@@ -1,7 +1,18 @@
-import type { ProtocolFrame, RowData } from './webHostClient.types';
+import type { ProtocolFrame, RowData, SnapshotFollowsKind } from './webHostClient.types';
 
 const escapePrefix = '\\';
 const nullToken = '~';
+
+function parseSnapshotFollows(token: string | undefined): SnapshotFollowsKind {
+    switch (token) {
+        case '1':
+            return 'immediate';
+        case '2':
+            return 'pending';
+        default:
+            return 'none';
+    }
+}
 
 export function parseCompactFrame(frame: string, currentFields: string[]): ProtocolFrame[] {
     const tokens = splitTokens(frame);
@@ -16,7 +27,7 @@ export function parseCompactFrame(frame: string, currentFields: string[]): Proto
         return [{
             kind: 'accepted',
             subscriptionId,
-            snapshotFollows: tokens[2] === '1',
+            snapshotFollows: parseSnapshotFollows(tokens[2]),
             startIndex: parseInt(tokens[3] ?? '0', 10) || 0,
             totalCount: parseInt(tokens[4] ?? '0', 10) || 0,
             fields: tokens.slice(5).map(decodeToken).filter((value): value is string => value !== null)

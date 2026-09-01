@@ -34,7 +34,7 @@ public class WebSocketSessionManagerTests
             .Select(static message => JsonDocument.Parse(message))
             .Select(static document => document.RootElement)
             .First(static root => root.GetProperty("type").GetString() == "subscriptionAccepted");
-        Assert.True(accepted.GetProperty("snapshotFollows").GetBoolean());
+        Assert.Equal("pending", accepted.GetProperty("snapshotFollows").GetString());
     }
 
     [Fact]

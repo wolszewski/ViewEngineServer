@@ -131,8 +131,11 @@ public sealed class WebSocketSessionManager
                 {
                     var originalEvents = events;
                     var start = TryExtractSnapshotStart(events, out var snapshotEvents);
-                    var snapshotFollows = start is not null ||
-                                          ShouldWaitForDeferredSnapshot(subscribeCommand, originalEvents);
+                    var snapshotFollows = start is not null
+                        ? SnapshotFollowsKind.Immediate
+                        : ShouldWaitForDeferredSnapshot(subscribeCommand, originalEvents)
+                            ? SnapshotFollowsKind.Pending
+                            : SnapshotFollowsKind.None;
                     await _publisher.PublishSubscriptionAcceptedAsync(
                         context.ConnectionId,
                         messageFormat,

@@ -1,9 +1,9 @@
-import type { ProtocolFrame, RowData } from './webHostClient.types';
+import type { ProtocolFrame, RowData, SnapshotFollowsKind } from './webHostClient.types';
 
 type JsonFrame = {
     type: string;
     subscriptionId?: number;
-    snapshotFollows?: boolean;
+    snapshotFollows?: string;
     startIndex?: number;
     totalCount?: number;
     isPartial?: boolean;
@@ -18,6 +18,10 @@ type JsonFrame = {
     changedFields?: RowData;
     rows?: RowData[];
 };
+
+function parseSnapshotFollows(value: string | undefined): SnapshotFollowsKind {
+    return value === 'immediate' || value === 'pending' ? value : 'none';
+}
 
 export function parseJsonFrame(frame: string): ProtocolFrame[] {
     const parsed = JSON.parse(frame) as JsonFrame | JsonFrame[];
@@ -35,7 +39,7 @@ export function parseJsonFrame(frame: string): ProtocolFrame[] {
                 frames.push({
                     kind: 'accepted',
                     subscriptionId,
-                    snapshotFollows: message.snapshotFollows === true,
+                    snapshotFollows: parseSnapshotFollows(message.snapshotFollows),
                     startIndex: Number(message.startIndex) || 0,
                     totalCount: Number(message.totalCount) || 0,
                     fields: message.fields ?? []

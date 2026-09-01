@@ -53,9 +53,9 @@ export interface FilterRequest {
 
 export interface SubscribeRequest {
     collectionId: string;
-    sortColumn: string;
+x    sortColumn?: string;
     sortAscending: boolean;
-    pageSize: number;
+    pageSize?: number;
     startIndex: number;
     filters: FilterRequest[];
     fields?: string[];
@@ -63,11 +63,13 @@ export interface SubscribeRequest {
     messageFormat?: MessageFormat;
 }
 
+export type SnapshotFollowsKind = 'none' | 'immediate' | 'pending';
+
 export type ProtocolFrame =
     | {
         kind: 'accepted';
         subscriptionId: number;
-        snapshotFollows: boolean;
+        snapshotFollows: SnapshotFollowsKind;
         startIndex: number;
         totalCount: number;
         fields: string[];

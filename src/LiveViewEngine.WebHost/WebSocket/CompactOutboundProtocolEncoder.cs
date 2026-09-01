@@ -35,7 +35,7 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
         writer.Write(SeparatorSpan);
         WriteInt32(writer, payload.SubscriptionId);
         writer.Write(SeparatorSpan);
-        writer.Write(payload.SnapshotFollows ? OneByte : SeparatorSpan);
+        WriteInt32(writer, (int)payload.SnapshotFollows);
         writer.Write(SeparatorSpan);
         WriteInt32(writer, payload.StartIndex);
         writer.Write(SeparatorSpan);

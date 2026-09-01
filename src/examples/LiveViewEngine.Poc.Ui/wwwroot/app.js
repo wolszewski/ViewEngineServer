@@ -25,9 +25,29 @@ const webHostClientModuleUrl = await loadTypeScriptModule('/webHostClient.ts', [
     ['./jsonProtocol', jsonProtocolModuleUrl],
     ["./jsonProtocol.ts", jsonProtocolModuleUrl]
 ]);
-const appModuleUrl = await loadTypeScriptModule('/app.ts', [
+const sharedModuleUrl = await loadTypeScriptModule('/shared.ts', [
     ['./webHostClient', webHostClientModuleUrl],
     ["./webHostClient.ts", webHostClientModuleUrl]
+]);
+const serverSortedGridModuleUrl = await loadTypeScriptModule('/serverSortedGrid.ts', [
+    ['./webHostClient', webHostClientModuleUrl],
+    ["./webHostClient.ts", webHostClientModuleUrl],
+    ['./shared', sharedModuleUrl],
+    ["./shared.ts", sharedModuleUrl]
+]);
+const clientSortedGridModuleUrl = await loadTypeScriptModule('/clientSortedGrid.ts', [
+    ['./webHostClient', webHostClientModuleUrl],
+    ["./webHostClient.ts", webHostClientModuleUrl],
+    ['./shared', sharedModuleUrl],
+    ["./shared.ts", sharedModuleUrl]
+]);
+const appModuleUrl = await loadTypeScriptModule('/app.ts', [
+    ['./shared', sharedModuleUrl],
+    ["./shared.ts", sharedModuleUrl],
+    ['./serverSortedGrid', serverSortedGridModuleUrl],
+    ["./serverSortedGrid.ts", serverSortedGridModuleUrl],
+    ['./clientSortedGrid', clientSortedGridModuleUrl],
+    ["./clientSortedGrid.ts", clientSortedGridModuleUrl]
 ]);
 
 try {
@@ -36,5 +56,8 @@ try {
     URL.revokeObjectURL(compactProtocolModuleUrl);
     URL.revokeObjectURL(jsonProtocolModuleUrl);
     URL.revokeObjectURL(webHostClientModuleUrl);
+    URL.revokeObjectURL(sharedModuleUrl);
+    URL.revokeObjectURL(serverSortedGridModuleUrl);
+    URL.revokeObjectURL(clientSortedGridModuleUrl);
     URL.revokeObjectURL(appModuleUrl);
 }

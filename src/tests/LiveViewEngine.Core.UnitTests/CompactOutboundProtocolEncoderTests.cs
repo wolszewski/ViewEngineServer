@@ -16,12 +16,27 @@ public class CompactOutboundProtocolEncoderTests
         {
             SubscriptionId = 7,
             Fields = ["customer", "amount"],
-            SnapshotFollows = true,
+            SnapshotFollows = SnapshotFollowsKind.Immediate,
             StartIndex = 50,
             TotalCount = 200
         });
 
         Assert.Equal("A|7|1|50|200|customer|amount", ToText(payload));
+    }
+
+    [Fact]
+    public void EncodeSubscriptionAccepted_CollectionDoesNotExist_UsesPendingSnapshotFollows()
+    {
+        var payload = _encoder.EncodeSubscriptionAccepted(new SubscriptionAcceptedPayload
+        {
+            SubscriptionId = 7,
+            Fields = [],
+            SnapshotFollows = SnapshotFollowsKind.Pending,
+            StartIndex = 0,
+            TotalCount = -1
+        });
+
+        Assert.Equal("A|7|2|0|-1", ToText(payload));
     }
 
     [Fact]

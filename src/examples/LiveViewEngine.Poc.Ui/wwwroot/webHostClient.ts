@@ -28,6 +28,7 @@ export type {
 interface ClientCallbacks {
     onStatus: (status: string) => void;
     onEvent: (event: DeltaEvent) => void;
+    onWaitingForCollection?: () => void;
 }
 
 interface PendingSnapshot {
@@ -167,12 +168,23 @@ export class WebHostClient {
             case 'accepted':
                 this.activeSubscriptionId = frame.subscriptionId;
                 this.currentFields = frame.fields;
-                if (!frame.snapshotFollows) {
+                if (frame.snapshotFollows === 'none') {
                     this.hasReceivedSnapshot = true;
                     this.stopSubscribeRetry();
                     this.callbacks.onStatus('Connected');
                     this.pendingSnapshot = null;
                     this.snapshotRequestStartedAt = null;
+                    return;
+                }
+
+                if (frame.snapshotFollows === 'pending') {
+                    // The collection doesn't exist yet. The server remembers this subscription
+                    // and will push the real snapshot automatically once the collection is
+                    // created - no client polling/resend is needed, so stop the retry loop.
+                    this.pendingSnapshot = null;
+                    this.stopSubscribeRetry();
+                    this.callbacks.onStatus('Connected (waiting for collection/snapshot)');
+                    this.callbacks.onWaitingForCollection?.();
                     return;
                 }
 
@@ -276,10 +288,8 @@ export class WebHostClient {
         const message: Record<string, unknown> = {
             type: 'subscribe',
             collectionId: request.collectionId,
-            sortColumn: request.sortColumn,
             sortAscending: request.sortAscending,
             startIndex: request.startIndex,
-            pageSize: request.pageSize,
             sendSnapshot: request.sendSnapshot !== false,
             messageFormat: this.currentMessageFormat,
             filters: (request.filters ?? []).map((filter) => ({
@@ -288,6 +298,14 @@ export class WebHostClient {
                 value: filter.value
             }))
         };
+
+        if (request.sortColumn) {
+            message.sortColumn = request.sortColumn;
+        }
+
+        if (request.pageSize !== undefined) {
+            message.pageSize = request.pageSize;
+        }
 
         if (request.fields !== undefined && request.fields.length > 0) {
             message.fields = request.fields;
@@ -359,11 +377,18 @@ export class WebHostClient {
                 return;
             }
 
+            if (this.pendingSnapshot !== null) {
+                // A snapshot is already streaming in (e.g. a large all-rows transfer) - don't
+                // send redundant retries while we're actively receiving it.
+                return;
+            }
+
             if (!this.lastSubscribe) {
                 return;
             }
 
             this.callbacks.onStatus('Connected (waiting for collection/snapshot)');
+            this.callbacks.onWaitingForCollection?.();
             if (this.activeSubscriptionId !== null) {
                 this.sendUpdateView(this.lastSubscribe);
             } else {

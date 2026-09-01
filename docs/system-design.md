@@ -133,6 +133,7 @@ The viewport is not persisted across reconnects; it is rebuilt on the next subsc
 - `SubscribeCommand` creates or reuses a `SharedView`, creates a `ViewportState`, and sends snapshot deltas.
 - `UpdateViewCommand` updates viewport/view settings for an existing subscription and keeps collection binding stable.
 - `UnsubscribeCommand` removes viewport state and clears route mapping.
+- If a `SubscribeCommand` targets a `collectionId` that does not exist yet, `ViewEngine` accepts the subscription (per the WebSocket-level `accepted` handshake) but remembers it as a pending subscribe rather than erroring. When `CreateCollectionCommand` later creates that collection, `ViewEngine` automatically resumes any pending subscribes for it and proactively pushes the snapshot to the subscribing connection — no client-side retry or polling is required. See [subscription-design.md](./subscription-design.md#subscribing-before-the-collection-exists).
 
 ### TCP ingest components
 
