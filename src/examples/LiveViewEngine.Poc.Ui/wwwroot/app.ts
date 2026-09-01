@@ -620,6 +620,8 @@ function App(): React.ReactElement {
     const gridApiRef = useRef<GridApi<RowData> | null>(null);
     const isApplyingGridStateRef = useRef(false);
     const isReloadingGridRef = useRef(false);
+    const pageSizeRef = useRef(pageSize);
+    const isMountedRef = useRef(false);
     const pendingScrollToTopRef = useRef(false);
     const scrollViewportDebounceRef = useRef<number | null>(null);
     const subscribedViewportRef = useRef<ViewportWindow | null>(null);
@@ -672,23 +674,23 @@ function App(): React.ReactElement {
     }, []);
 
     const resetViewportToFirstPage = useCallback(() => {
-        const initialWindow = buildViewportWindow(1, pageSize, null);
+        const initialWindow = buildViewportWindow(1, pageSizeRef.current, null);
         subscribedViewportRef.current = initialWindow;
         pendingScrollToTopRef.current = true;
         return initialWindow;
-    }, [pageSize]);
+    }, []);
 
     const computeViewportWindow = useCallback((firstRow: number) => {
         const current = subscribedViewportRef.current;
         if (!current) {
-            return buildViewportWindow(1, pageSize, totalCountRef.current);
+            return buildViewportWindow(1, pageSizeRef.current, totalCountRef.current);
         }
 
         let nextWindow = current;
-        while (firstRow >= getViewportExpansionRow(nextWindow, pageSize, viewportThresholdPercent)) {
+        while (firstRow >= getViewportExpansionRow(nextWindow, pageSizeRef.current, viewportThresholdPercent)) {
             const expandedWindow = buildViewportWindow(
-                getViewportPageCount(nextWindow, pageSize) + 1,
-                pageSize,
+                getViewportPageCount(nextWindow, pageSizeRef.current) + 1,
+                pageSizeRef.current,
                 totalCountRef.current
             );
             if (expandedWindow.start === nextWindow.start && expandedWindow.end === nextWindow.end) {
@@ -698,7 +700,7 @@ function App(): React.ReactElement {
         }
 
         return nextWindow;
-    }, [pageSize, viewportThresholdPercent]);
+    }, [viewportThresholdPercent]);
 
     const requestViewportWindow = useCallback(
         (firstRow: number, lastRow: number, options: { includeGridViewportLog: boolean }) => {
@@ -801,12 +803,33 @@ function App(): React.ReactElement {
                 + `(${snapshot.waitMs.toFixed(0)}ms wait, ${snapshot.transferMs.toFixed(0)}ms transfer)`);
 
         if (!snapshot.isPartial) {
-            rowsByPositionRef.current.clear();
-            rowsByIdRef.current.clear();
-            subscribedViewportRef.current = {
-                start: snapshot.startIndex,
-                end: Math.max(snapshot.startIndex, snapshot.startIndex + rows.length - 1)
-            };
+            const currentViewport = subscribedViewportRef.current;
+            let cacheCoversViewport = false;
+            if (currentViewport !== null) {
+                cacheCoversViewport = true;
+                for (let position = currentViewport.start; position <= currentViewport.end; position += 1) {
+                    if (!rowsByPositionRef.current.has(position)) {
+                        cacheCoversViewport = false;
+                        break;
+                    }
+                }
+            }
+
+            const isNoOpFullSnapshot = rows.length === 0
+                && snapshot.totalCount === totalCountRef.current
+                && currentViewport !== null
+                && snapshot.startIndex === currentViewport.start
+                && cacheCoversViewport;
+
+            if (!isNoOpFullSnapshot) {
+                rowsByPositionRef.current.clear();
+                rowsByIdRef.current.clear();
+            }
+            subscribedViewportRef.current = rows.length > 0
+                ? { start: snapshot.startIndex, end: snapshot.startIndex + rows.length - 1 }
+                : (isNoOpFullSnapshot
+                    ? currentViewport
+                    : { start: snapshot.startIndex, end: snapshot.startIndex });
         }
 
         // Store rows in caches
@@ -1046,7 +1069,7 @@ function App(): React.ReactElement {
             fields: selectedFields,
             messageFormat
         });
-    }, [appendLog, clearState, collectionId, messageFormat, normalisedFilters, resetViewportToFirstPage, pageSize, selectedFields, sortAscending, sortColumn]);
+    }, [appendLog, clearState, collectionId, messageFormat, normalisedFilters, selectedFields, sortAscending, sortColumn]);
 
     const disconnect = useCallback(() => {
         clientRef.current?.disconnect();
@@ -1160,6 +1183,7 @@ function App(): React.ReactElement {
 
     useEffect(() => {
         setPageSizeInput(String(pageSize));
+        pageSizeRef.current = pageSize;
     }, [pageSize]);
 
     useEffect(() => {
@@ -1225,7 +1249,26 @@ function App(): React.ReactElement {
             fields: selectedFields,
             messageFormat
         });
-    }, [clearState, collectionId, messageFormat, normalisedFilters, resetViewportToFirstPage, pageSize, selectedFields, sortAscending, sortColumn]);
+    }, [clearState, collectionId, messageFormat, normalisedFilters, selectedFields, sortAscending, sortColumn]);
+
+    useEffect(() => {
+        if (!isMountedRef.current) {
+            isMountedRef.current = true;
+            return;
+        }
+
+        const client = clientRef.current;
+        if (!client?.isConnected) {
+            return;
+        }
+
+        const nextWindow = buildViewportWindow(1, pageSize, totalCountRef.current);
+        subscribedViewportRef.current = nextWindow;
+        pendingScrollToTopRef.current = true;
+        publishRowsFromWindow();
+        client.setViewport(nextWindow.start, nextWindow.end - nextWindow.start + 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [pageSize]);
 
     return React.createElement(
         React.Fragment,

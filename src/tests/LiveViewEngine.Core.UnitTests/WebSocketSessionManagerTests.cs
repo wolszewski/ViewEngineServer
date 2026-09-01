@@ -273,19 +273,20 @@ public class WebSocketSessionManagerTests
             Fields = new Dictionary<string, string?> { ["instrument"] = "AAPL" }
         });
 
-        // subscribe (pageSize=50), then setViewport to the same range (contained → engine returns [])
+        // subscribe (pageSize=50), then setViewport to the same range (contained → engine returns snapshotStart+eos)
         // then a live ingest should still produce a rowInsert
         var socket = new ScriptedWebSocket(
             [
                 "{\"type\":\"subscribe\",\"collectionId\":\"trades\",\"startIndex\":0,\"pageSize\":50,\"sendSnapshot\":true,\"messageFormat\":\"json\"}",
                 "{\"type\":\"setViewport\",\"subscriptionId\":1,\"startIndex\":0,\"pageSize\":50}"
             ],
-            closeAfterSentCount: 5); // wait until eos + at least one rowInsert arrives
+            closeAfterSentCount: 7); // subscriptionAccepted + snapshotStart + eos (subscribe) + snapshotStart + eos (setViewport) + rowInsert
 
         var handleTask = manager.HandleConnectionAsync(socket, CancellationToken.None);
 
-        // wait for eos (end-of-snapshot), meaning subscribe snapshot is complete
-        await socket.WaitForMessageTypeAsync("eos");
+        // wait for both snapshots to complete (subscribe + setViewport each produce snapshotStart+eos)
+        // subscriptionAccepted(1) + snapshotStart(1) + eos(1) + snapshotStart(1) + eos(1) = 5
+        await socket.WaitForMessagesAsync(5);
 
         // ingest a new row → should produce a live rowInsert if buffering is not stuck
         await engine.IngestAsync(new UpsertRowCommand

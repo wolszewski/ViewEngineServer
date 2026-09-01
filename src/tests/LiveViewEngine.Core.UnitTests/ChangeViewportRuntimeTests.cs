@@ -325,7 +325,7 @@ public class UpdateViewRuntimeTests
     }
 
     [Fact]
-    public void UpdateView_WithSnapshotModeDelta_AndIdenticalViewport_ReturnsEmpty()
+    public void UpdateView_WithSnapshotModeDelta_AndIdenticalViewport_ReturnsEos()
     {
         var runtime = MakeRuntime(100);
         Subscribe(runtime, 0, 50);
@@ -339,6 +339,34 @@ public class UpdateViewRuntimeTests
             SnapshotMode = SnapshotMode.Delta
         });
 
-        Assert.Empty(deltas);
+        Assert.Equal(2, deltas.Count);
+        var start = Assert.IsType<SnapshotStartDelta>(deltas[0]);
+        Assert.False(start.IsPartial);
+        Assert.Equal(0, start.StartIndex);
+        Assert.Equal(100, start.TotalCount);
+        Assert.IsType<EndOfSnapshotDelta>(deltas[1]);
+    }
+
+    [Fact]
+    public void UpdateView_WithSnapshotModeDelta_AndShrinkingViewport_ReturnsEos()
+    {
+        var runtime = MakeRuntime(1000);
+        Subscribe(runtime, 0, 1000);
+
+        var deltas = runtime.HandleUpdateView(new UpdateViewCommand
+        {
+            ConnectionId = 1,
+            SubscriptionId = 1,
+            StartIndex = 0,
+            PageSize = 100,
+            SnapshotMode = SnapshotMode.Delta
+        });
+
+        Assert.Equal(2, deltas.Count);
+        var start = Assert.IsType<SnapshotStartDelta>(deltas[0]);
+        Assert.False(start.IsPartial);
+        Assert.Equal(0, start.StartIndex);
+        Assert.Equal(1000, start.TotalCount);
+        Assert.IsType<EndOfSnapshotDelta>(deltas[1]);
     }
 }
