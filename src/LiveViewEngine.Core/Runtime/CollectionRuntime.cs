@@ -218,7 +218,7 @@ public sealed class CollectionRuntime : IDisposable
             var newStartIndex = command.StartIndex ?? viewport.StartIndex;
             var newPageSize = command.PageSize ?? viewport.PageSize;
 
-            if (command.SendSnapshot)
+            if (command.SnapshotMode == SnapshotMode.Full)
             {
                 viewport.StartIndex = newStartIndex;
                 viewport.PageSize = newPageSize;
@@ -230,11 +230,16 @@ public sealed class CollectionRuntime : IDisposable
                     viewport.SelectedFieldIndexes);
             }
 
-            return HandleViewportChange(
-                viewport,
-                view,
-                newStartIndex,
-                newPageSize);
+            return command.SnapshotMode == SnapshotMode.No
+                ? UpdateViewportState(
+                    viewport,
+                    newStartIndex,
+                    newPageSize)
+                : HandleViewportDelta(
+                    viewport,
+                    view,
+                    newStartIndex,
+                    newPageSize);
         }
 
         return HandleSubscribe(new SubscribeCommand
@@ -243,9 +248,51 @@ public sealed class CollectionRuntime : IDisposable
             SubscriptionId = command.SubscriptionId,
             StartIndex = command.StartIndex ?? viewport.StartIndex,
             PageSize = command.PageSize ?? viewport.PageSize,
-            SendSnapshot = command.SendSnapshot,
+            SendSnapshot = command.SnapshotMode != SnapshotMode.No,
             View = nextView
         });
+    }
+
+    private IReadOnlyList<ViewDelta> HandleViewportDelta(
+        ViewportState viewport,
+        SharedView view,
+        int startIndex,
+        int? pageSize)
+    {
+        var oldStart = viewport.StartIndex;
+        var oldPageSize = viewport.PageSize ?? 0;
+
+        viewport.StartIndex = startIndex;
+        if (pageSize.HasValue)
+        {
+            viewport.PageSize = pageSize;
+        }
+
+        var newPageSize = pageSize ?? oldPageSize;
+        var newEnd = startIndex + newPageSize;
+
+        return BuildStreamingViewportDeltas(
+            viewport,
+            view,
+            oldStart,
+            oldPageSize,
+            startIndex,
+            newPageSize,
+            newEnd);
+    }
+
+    private static IReadOnlyList<ViewDelta> UpdateViewportState(
+        ViewportState viewport,
+        int startIndex,
+        int? pageSize)
+    {
+        viewport.StartIndex = startIndex;
+        if (pageSize.HasValue)
+        {
+            viewport.PageSize = pageSize;
+        }
+
+        return [];
     }
 
     public IReadOnlyList<ViewDelta> HandleChangeViewport(ChangeViewportCommand command)

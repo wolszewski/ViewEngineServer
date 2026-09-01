@@ -230,8 +230,9 @@ The current inbound message types are:
 { "type": "unsubscribe", "subscriptionId": 1 }
 ```
 
-For existing subscriptions, `updateview` and `setviewport` default `sendSnapshot` to `false`.
-When the effective view stays the same and only the viewport grows, the server emits only the uncovered rows as a partial snapshot.
+For existing subscriptions, `updateview` and `setviewport` support `snapshotMode: "no" | "delta" | "full"` and default to `"delta"`.
+Legacy `sendSnapshot` is still accepted and maps to `"full"` or `"no"`.
+When the effective view stays the same and only the viewport grows, `"delta"` emits only the uncovered rows as a partial snapshot.
 
 ### TCP ingest lifecycle
 

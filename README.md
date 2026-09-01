@@ -113,6 +113,12 @@ Change page:
 { "type": "setviewport", "subscriptionId": 1, "startIndex": 50, "pageSize": 50 }
 ```
 
+Expand with minimal reconciliation:
+
+```json
+{ "type": "updateview", "subscriptionId": 1, "startIndex": 0, "pageSize": 400, "snapshotMode": "delta" }
+```
+
 Unsubscribe:
 
 ```json

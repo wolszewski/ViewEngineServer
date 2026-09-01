@@ -38,6 +38,13 @@ public sealed class SubscribeCommand : SubscriptionCommand
     public bool SendSnapshot { get; init; } = true;
 }
 
+public enum SnapshotMode
+{
+    No,
+    Delta,
+    Full
+}
+
 public class UpdateViewCommand : SubscriptionCommand
 {
     public int? StartIndex { get; init; }
@@ -46,7 +53,7 @@ public class UpdateViewCommand : SubscriptionCommand
     public bool? SortAscending { get; init; }
     public IReadOnlyList<FilterSpec>? Filters { get; init; }
     public IReadOnlyList<string>? Fields { get; init; }
-    public bool SendSnapshot { get; init; } = true;
+    public SnapshotMode SnapshotMode { get; init; } = SnapshotMode.Delta;
 }
 
 public sealed class ChangeViewportCommand : UpdateViewCommand { }
