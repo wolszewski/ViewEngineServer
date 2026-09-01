@@ -120,23 +120,18 @@ public sealed class ViewEngine : IViewEngine, IDisposable
 
             RuntimeWorkItem<MutationResult> work = command switch
             {
-                UpsertRowCommand upsert => new UpsertRuntimeWork(runtime, upsert),
-                DeleteRowCommand delete => new DeleteRuntimeWork(runtime, delete),
+                UpsertRowCommand upsert => new UpsertRuntimeWork(
+                    runtime,
+                    upsert,
+                    result => PublishMutationResult(result, ct)),
+                DeleteRowCommand delete => new DeleteRuntimeWork(
+                    runtime,
+                    delete,
+                    result => PublishMutationResult(result, ct)),
                 _ => new UnknownCommandRuntimeWork(command),
             };
 
             var mutationResult = await runtime.EnqueueAsync(work, ct);
-
-            if (mutationResult.Groups is { Count: > 0 })
-            {
-                foreach (var group in mutationResult.Groups)
-                {
-                    await _publisher.PublishAsync(group.Targets, group.Deltas, ct);
-                }
-
-                await _publisher.FlushAsync(ct);
-            }
-
             return mutationResult.Result;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -181,6 +176,21 @@ public sealed class ViewEngine : IViewEngine, IDisposable
         }
 
         return result;
+    }
+
+    private void PublishMutationResult(MutationResult mutationResult, CancellationToken ct)
+    {
+        if (mutationResult.Groups is not { Count: > 0 })
+        {
+            return;
+        }
+
+        foreach (var group in mutationResult.Groups)
+        {
+            _publisher.PublishAsync(group.Targets, group.Deltas, ct).GetAwaiter().GetResult();
+        }
+
+        _publisher.FlushAsync(ct).GetAwaiter().GetResult();
     }
 
     private async Task<IReadOnlyList<ViewDelta>> HandleSubscribeCommandAsync(SubscribeCommand subscribe,

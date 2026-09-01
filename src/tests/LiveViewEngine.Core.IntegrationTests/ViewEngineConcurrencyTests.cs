@@ -209,6 +209,53 @@ public class ViewEngineConcurrencyTests
     }
 
     [Fact]
+    public async Task UpdateViewBoundaryWaitsForEarlierIngestPublish()
+    {
+        var metrics = new ViewEngineMetrics();
+        var store = new CollectionStore(metrics, new LiveViewEngineOptions { EagerIndexing = false });
+        var publisher = new BlockingPublishPublisher();
+        var engine = new ViewEngine(store, publisher, NullLogger<ViewEngine>.Instance, metrics);
+
+        await CreateTrades(engine);
+        await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = 1,
+            SubscriptionId = 1,
+            View = new ViewDefinition { CollectionId = "trades" },
+            StartIndex = 0,
+            PageSize = 10
+        });
+
+        var ingestTask = engine.IngestAsync(new UpsertRowCommand
+        {
+            CollectionId = "trades",
+            Key = "t1",
+            Fields = new Dictionary<string, string?> { ["symbol"] = "AAPL", ["price"] = "1", ["quantity"] = "10" }
+        });
+
+        await publisher.WaitForPublishAsync();
+
+        var boundaryReached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var updateTask = engine.SubscribeAsync(
+            new UpdateViewCommand
+            {
+                ConnectionId = 1,
+                SubscriptionId = 1,
+                StartIndex = 0,
+                PageSize = 10,
+                SnapshotMode = SnapshotMode.Delta
+            },
+            () => boundaryReached.TrySetResult());
+
+        await Assert.ThrowsAsync<TimeoutException>(
+            () => boundaryReached.Task.WaitAsync(TimeSpan.FromMilliseconds(100)));
+
+        publisher.ReleasePublish();
+
+        await Task.WhenAll(ingestTask, updateTask, boundaryReached.Task);
+    }
+
+    [Fact]
     public async Task SubscriptionRouteLocks_AreReclaimedAfterDisconnectChurn()
     {
         var (engine, _) = CreateEngine();
@@ -268,5 +315,31 @@ public class ViewEngineConcurrencyTests
             _published
                 .Where(p => p.ConnectionId == connectionId)
                 .SelectMany(p => p.Events);
+    }
+
+    private sealed class BlockingPublishPublisher : IOutboundPublisher
+    {
+        private readonly TaskCompletionSource _publishStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _publishRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public ValueTask PublishAsync(
+            IReadOnlyList<SubscriberTarget> targets,
+            IReadOnlyList<ViewDelta> deltas,
+            CancellationToken ct = default)
+        {
+            if (targets.Count > 0 && deltas.OfType<RowInsertDelta>().Any())
+            {
+                _publishStarted.TrySetResult();
+                _publishRelease.Task.GetAwaiter().GetResult();
+            }
+
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask FlushAsync(CancellationToken ct = default) => ValueTask.CompletedTask;
+
+        public Task WaitForPublishAsync() => _publishStarted.Task;
+
+        public void ReleasePublish() => _publishRelease.TrySetResult();
     }
 }
