@@ -210,7 +210,8 @@ public sealed class WebSocketSessionManager
                         Enum.TryParse<FilterOperator>(f.Operator, ignoreCase: true, out var op)
                             ? op : FilterOperator.Eq,
                         f.Value)).ToList(),
-                    Fields = inbound.Fields
+                    Fields = inbound.Fields,
+                    SendSnapshot = inbound.SendSnapshot ?? false
                 }),
             "setviewport" => TryCreateExistingCommand(
                 context,

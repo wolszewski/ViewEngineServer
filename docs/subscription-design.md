@@ -24,10 +24,14 @@
   - requires an existing `subscriptionId`.
   - may update `startIndex`, `pageSize`, `sortColumn`, `sortAscending`, `filters`, and `fields`.
   - `fields: []` clears projection back to all fields.
+- `sendSnapshot` defaults to `false`.
+- if `sendSnapshot` is `false` and the effective view definition is unchanged, viewport expansion sends only the uncovered range.
+  - example: existing `0-200` updated to `0-400` sends rows `200-399` only.
+- if `sendSnapshot` is `true`, the server sends a fresh snapshot for the requested view.
 
 - `setviewport`
-  - requires an existing `subscriptionId`.
-  - updates `startIndex`/`pageSize` only; `sendSnapshot` defaults to `false` (no snapshot), but can be set to `true` to force one.
+- requires an existing `subscriptionId`.
+- updates `startIndex`/`pageSize` only; `sendSnapshot` defaults to `false` (no snapshot), but can be set to `true` to force one.
 - `unsubscribe`
   - requires an existing `subscriptionId`.
   - removes route/viewport state for that subscription.
@@ -35,3 +39,14 @@
 ## Reconnect behavior
 
 On reconnect, clients subscribe again and receive a new server-assigned `subscriptionId`. A previous id is not portable across connections.
+
+## Outbound snapshot contract
+
+- snapshot delivery is streamed as:
+  1. `snapshotStart`
+  2. one or more `snapshotRow`
+  3. `eos`
+- both full and partial snapshots use the same shape.
+- every `snapshotRow` includes an explicit row number so clients can place rows correctly during partial viewport expansion.
+- compact snapshot rows are `S|subscriptionId|rowNumber|key|...`
+- JSON snapshot rows include `rowNumber` next to `row`
