@@ -53,6 +53,7 @@ public class CompactSnapshotStreamingTests
         Assert.Equal([0, 2, 3], start.VisibleFieldIndexes);
 
         var rows = Assert.IsType<SnapshotRowsDelta>(events[1]);
+        Assert.Equal([0], rows.RowNumbers);
         Assert.Collection(rows.Rows.Single(),
             value => Assert.Equal("o1", value),
             value => Assert.Equal("100", value),
@@ -93,6 +94,12 @@ public class CompactSnapshotStreamingTests
         Assert.IsType<SnapshotStartDelta>(events[0]);
         var batches = events.OfType<SnapshotRowsDelta>().ToArray();
         Assert.Equal([128, 128, 44], batches.Select(b => b.Rows.Count).ToArray());
+        Assert.Equal(0, batches[0].RowNumbers[0]);
+        Assert.Equal(127, batches[0].RowNumbers[^1]);
+        Assert.Equal(128, batches[1].RowNumbers[0]);
+        Assert.Equal(255, batches[1].RowNumbers[^1]);
+        Assert.Equal(256, batches[2].RowNumbers[0]);
+        Assert.Equal(299, batches[2].RowNumbers[^1]);
         Assert.IsType<EndOfSnapshotDelta>(events[^1]);
     }
 }

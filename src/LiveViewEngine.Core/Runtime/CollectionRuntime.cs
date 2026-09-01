@@ -442,25 +442,29 @@ public sealed class CollectionRuntime : IDisposable
         out ViewDefinition nextView)
     {
         bool hasChange = false;
-        var normalizedFields = command.Fields is { Count: > 0 } ? command.Fields : null;
+        var normalizedFields = command.Fields is null
+            ? current.Fields
+            : command.Fields.Count > 0 ? command.Fields : null;
+        var normalizedSortColumn = command.SortColumn ?? current.SortColumn;
+        var normalizedSortAscending = command.SortAscending ?? current.SortAscending;
+        var normalizedFilters = command.Filters ?? current.Filters;
 
-        if (command.SortColumn is not null &&
-            !string.Equals(command.SortColumn, current.SortColumn, StringComparison.Ordinal))
+        if (!string.Equals(normalizedSortColumn, current.SortColumn, StringComparison.Ordinal))
         {
             hasChange = true;
         }
 
-        if (command.SortAscending.HasValue && command.SortAscending.Value != current.SortAscending)
+        if (normalizedSortAscending != current.SortAscending)
         {
             hasChange = true;
         }
 
-        if (command.Filters is not null && !SequenceEqual(command.Filters, current.Filters))
+        if (!SequenceEqual(normalizedFilters, current.Filters))
         {
             hasChange = true;
         }
 
-        if (command.Fields is not null && !SequenceEqual(normalizedFields, current.Fields))
+        if (!SequenceEqual(normalizedFields, current.Fields))
         {
             hasChange = true;
         }
@@ -475,10 +479,10 @@ public sealed class CollectionRuntime : IDisposable
         {
             CollectionId = current.CollectionId,
             FilterPresetId = current.FilterPresetId,
-            SortColumn = command.SortColumn ?? current.SortColumn,
-            SortAscending = command.SortAscending ?? current.SortAscending,
-            Filters = command.Filters ?? current.Filters,
-            Fields = command.Fields is null ? current.Fields : normalizedFields
+            SortColumn = normalizedSortColumn,
+            SortAscending = normalizedSortAscending,
+            Filters = normalizedFilters,
+            Fields = normalizedFields
         };
         return true;
     }
@@ -747,21 +751,25 @@ public sealed class CollectionRuntime : IDisposable
         };
 
         var batch = new string?[_options.SnapshotBatchSize][];
+        var rowNumbers = new int[_options.SnapshotBatchSize];
         var batchCount = 0;
+        var rowNumber = startIndex;
         foreach (int rowIndex in view.EnumeratePageIndexes(startIndex, pageSize))
         {
+            rowNumbers[batchCount] = rowNumber++;
             batch[batchCount++] = ProjectRow(Collection.GetRowValues(rowIndex), selectedFieldIndexes);
             if (batchCount == _options.SnapshotBatchSize)
             {
-                deltas.Add(CreateSnapshotRowsDelta(viewId, selectedFieldIndexes, batch, batchCount, isPartial));
+                deltas.Add(CreateSnapshotRowsDelta(viewId, selectedFieldIndexes, batch, rowNumbers, batchCount, isPartial));
                 batch = new string?[_options.SnapshotBatchSize][];
+                rowNumbers = new int[_options.SnapshotBatchSize];
                 batchCount = 0;
             }
         }
 
         if (batchCount > 0)
         {
-            deltas.Add(CreateSnapshotRowsDelta(viewId, selectedFieldIndexes, batch, batchCount, isPartial));
+            deltas.Add(CreateSnapshotRowsDelta(viewId, selectedFieldIndexes, batch, rowNumbers, batchCount, isPartial));
         }
 
         deltas.Add(new EndOfSnapshotDelta
@@ -776,6 +784,7 @@ public sealed class CollectionRuntime : IDisposable
         string viewId,
         int[] selectedFieldIndexes,
         string?[][] batch,
+        int[] rowNumbers,
         int batchCount,
         bool isPartial = false)
     {
@@ -783,6 +792,7 @@ public sealed class CollectionRuntime : IDisposable
         {
             ViewId = viewId,
             Schema = Collection.Schema,
+            RowNumbers = batchCount == rowNumbers.Length ? rowNumbers : rowNumbers[..batchCount],
             Rows = batchCount == batch.Length ? batch : batch[..batchCount],
             VisibleFieldIndexes = selectedFieldIndexes,
             IsPartial = isPartial
