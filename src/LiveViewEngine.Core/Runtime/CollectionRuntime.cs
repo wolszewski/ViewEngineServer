@@ -260,7 +260,7 @@ public sealed class CollectionRuntime : IDisposable
         int? pageSize)
     {
         var oldStart = viewport.StartIndex;
-        var oldPageSize = viewport.PageSize ?? 0;
+        var oldPageSize = viewport.PageSize ?? Math.Max(0, view.GetTotalCount() - oldStart);
 
         viewport.StartIndex = startIndex;
         if (pageSize.HasValue)
