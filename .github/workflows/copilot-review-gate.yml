@@ -83,7 +83,7 @@ jobs:
                       reviewThreads(first: 100, after: $cursor) {
                         nodes {
                           isResolved
-                          comments(first: 50) {
+                          comments(first: 100) {
                             nodes {
                               author {
                                 login
