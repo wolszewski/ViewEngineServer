@@ -804,10 +804,25 @@ function App(): React.ReactElement {
 
         if (!snapshot.isPartial) {
             const currentViewport = subscribedViewportRef.current;
+            let cacheMatchesViewport = false;
+            if (currentViewport !== null) {
+                const viewportSize = currentViewport.end - currentViewport.start + 1;
+                cacheMatchesViewport = rowsByPositionRef.current.size === viewportSize;
+                if (cacheMatchesViewport) {
+                    for (const position of rowsByPositionRef.current.keys()) {
+                        if (position < currentViewport.start || position > currentViewport.end) {
+                            cacheMatchesViewport = false;
+                            break;
+                        }
+                    }
+                }
+            }
+
             const isNoOpFullSnapshot = rows.length === 0
                 && snapshot.totalCount === totalCountRef.current
                 && currentViewport !== null
-                && snapshot.startIndex === currentViewport.start;
+                && snapshot.startIndex === currentViewport.start
+                && cacheMatchesViewport;
 
             if (!isNoOpFullSnapshot) {
                 rowsByPositionRef.current.clear();
