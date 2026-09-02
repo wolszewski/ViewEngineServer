@@ -25,6 +25,7 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
     private static readonly byte[] PSpan = [(byte)'P'];
     private static readonly byte[] SkipSpan = [(byte)'^'];
     private static readonly byte[] OneByte = [(byte)'1'];
+    private static readonly byte[] TwoByte = [(byte)'2'];
 
     public OutboundMessageFormat Format => OutboundMessageFormat.Compact;
 
@@ -60,6 +61,7 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
                     start.StartIndex,
                     start.TotalCount,
                     start.IsPartial,
+                    start.NoChanges,
                     start.Schema,
                     start.VisibleFieldIndexes);
                 yield break;
@@ -83,8 +85,8 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
                     snapshot.StartIndex,
                     snapshot.TotalCount,
                     snapshot.IsPartial,
-                    snapshot.Schema,
-                    snapshot.VisibleFieldIndexes);
+                    schema: snapshot.Schema,
+                    visibleFieldIndexes: snapshot.VisibleFieldIndexes);
                 for (int i = 0; i < snapshot.Rows.Count; i++)
                 {
                     yield return EncodeSnapshotRow(
@@ -125,6 +127,7 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
         int startIndex,
         int totalCount,
         bool isPartial = false,
+        bool noChanges = false,
         CollectionSchema? schema = null,
         IReadOnlyList<int>? visibleFieldIndexes = null)
     {
@@ -140,6 +143,11 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
         {
             writer.Write(SeparatorSpan);
             writer.Write(OneByte);
+        }
+        else if (noChanges)
+        {
+            writer.Write(SeparatorSpan);
+            writer.Write(TwoByte);
         }
 
         if (schema is not null)

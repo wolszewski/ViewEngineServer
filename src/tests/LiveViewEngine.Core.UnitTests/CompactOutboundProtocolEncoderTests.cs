@@ -201,6 +201,24 @@ public class CompactOutboundProtocolEncoderTests
     }
 
     [Fact]
+    public void EncodeSnapshotStart_WithNoChangesFlag()
+    {
+        var start = _encoder.EncodeFrames(
+            new SnapshotStartDelta
+            {
+                ViewId = "1:1",
+                StartIndex = 0,
+                TotalCount = 100,
+                IsPartial = false,
+                NoChanges = true,
+                Schema = Schema,
+                VisibleFieldIndexes = [0, 1, 2]
+            },
+            subscriptionId: 1).Single();
+        Assert.Equal("P|1|0|100|2|customer|amount", ToText(start));
+    }
+
+    [Fact]
     public void EncodeSnapshotRow_IncludesRowNumber()
     {
         var row = _encoder.EncodeFrames(

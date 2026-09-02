@@ -762,6 +762,7 @@ public sealed class CollectionRuntime : IDisposable
                     TotalCount = view.GetTotalCount(),
                     StartIndex = newStart,
                     IsPartial = false,
+                    NoChanges = true,
                     VisibleFieldIndexes = viewport.SelectedFieldIndexes
                 },
                 new EndOfSnapshotDelta

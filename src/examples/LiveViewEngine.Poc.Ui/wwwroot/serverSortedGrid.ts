@@ -654,40 +654,32 @@ export function ServerSortedGrid(): React.ReactElement {
 
         const snapshotStart = snapshot.startIndex;
         const snapshotEnd = Math.max(snapshotStart, snapshotStart + rows.length - 1);
-        appendLog(snapshot.isPartial
-            ? `partial snapshot received: ${snapshotStart.toLocaleString()} - ${snapshotEnd.toLocaleString()} `
-                + `(${snapshot.waitMs.toFixed(0)}ms wait, ${snapshot.transferMs.toFixed(0)}ms transfer)`
-            : `snapshot received: ${snapshotStart.toLocaleString()} - ${snapshotEnd.toLocaleString()} `
-                + `(${snapshot.waitMs.toFixed(0)}ms wait, ${snapshot.transferMs.toFixed(0)}ms transfer)`);
+        appendLog(snapshot.noChanges
+            ? `snapshot unchanged, no new rows (${snapshot.waitMs.toFixed(0)}ms wait, ${snapshot.transferMs.toFixed(0)}ms transfer)`
+            : snapshot.isPartial
+                ? `partial snapshot received: ${snapshotStart.toLocaleString()} - ${snapshotEnd.toLocaleString()} `
+                    + `(${snapshot.waitMs.toFixed(0)}ms wait, ${snapshot.transferMs.toFixed(0)}ms transfer)`
+                : `snapshot received: ${snapshotStart.toLocaleString()} - ${snapshotEnd.toLocaleString()} `
+                    + `(${snapshot.waitMs.toFixed(0)}ms wait, ${snapshot.transferMs.toFixed(0)}ms transfer)`);
+
+        // The server sends this as an explicit "you already have this data" ack (e.g. to flush
+        // buffered live deltas for an unchanged viewport) rather than a genuine empty result.
+        // Preserve whatever rows/viewport we already have instead of clearing them.
+        if (snapshot.noChanges) {
+            totalCountRef.current = snapshot.totalCount;
+            setTotalCount(snapshot.totalCount);
+            setIsLoadingSnapshot(false);
+            setIsWaitingForCollection(false);
+            isReloadingGridRef.current = false;
+            return;
+        }
 
         if (!snapshot.isPartial) {
-            const currentViewport = subscribedViewportRef.current;
-            let cacheCoversViewport = false;
-            if (currentViewport !== null) {
-                cacheCoversViewport = true;
-                for (let position = currentViewport.start; position <= currentViewport.end; position += 1) {
-                    if (!rowsByPositionRef.current.has(position)) {
-                        cacheCoversViewport = false;
-                        break;
-                    }
-                }
-            }
-
-            const isNoOpFullSnapshot = rows.length === 0
-                && snapshot.totalCount === totalCountRef.current
-                && currentViewport !== null
-                && snapshot.startIndex === currentViewport.start
-                && cacheCoversViewport;
-
-            if (!isNoOpFullSnapshot) {
-                rowsByPositionRef.current.clear();
-                rowsByIdRef.current.clear();
-            }
+            rowsByPositionRef.current.clear();
+            rowsByIdRef.current.clear();
             subscribedViewportRef.current = rows.length > 0
                 ? { start: snapshot.startIndex, end: snapshot.startIndex + rows.length - 1 }
-                : (isNoOpFullSnapshot
-                    ? currentViewport
-                    : { start: snapshot.startIndex, end: snapshot.startIndex });
+                : { start: snapshot.startIndex, end: snapshot.startIndex };
         }
 
         // Store rows in caches

@@ -226,6 +226,7 @@ public class UpdateViewRuntimeTests
 
         var start = Assert.IsType<SnapshotStartDelta>(deltas[0]);
         Assert.False(start.IsPartial);
+        Assert.False(start.NoChanges);
         Assert.Equal(0, start.StartIndex);
 
         var rows = Assert.IsType<SnapshotRowsDelta>(deltas[1]);
@@ -342,6 +343,7 @@ public class UpdateViewRuntimeTests
         Assert.Equal(2, deltas.Count);
         var start = Assert.IsType<SnapshotStartDelta>(deltas[0]);
         Assert.False(start.IsPartial);
+        Assert.True(start.NoChanges);
         Assert.Equal(0, start.StartIndex);
         Assert.Equal(100, start.TotalCount);
         Assert.IsType<EndOfSnapshotDelta>(deltas[1]);
@@ -365,6 +367,7 @@ public class UpdateViewRuntimeTests
         Assert.Equal(2, deltas.Count);
         var start = Assert.IsType<SnapshotStartDelta>(deltas[0]);
         Assert.False(start.IsPartial);
+        Assert.True(start.NoChanges);
         Assert.Equal(0, start.StartIndex);
         Assert.Equal(1000, start.TotalCount);
         Assert.IsType<EndOfSnapshotDelta>(deltas[1]);

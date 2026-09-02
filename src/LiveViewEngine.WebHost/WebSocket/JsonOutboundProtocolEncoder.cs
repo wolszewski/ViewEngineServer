@@ -44,6 +44,7 @@ public sealed class JsonOutboundProtocolEncoder : IOutboundProtocolEncoder
                     StartIndex = start.StartIndex,
                     TotalCount = start.TotalCount,
                     IsPartial = start.IsPartial,
+                    NoChanges = start.NoChanges,
                     Fields = GetVisibleFieldNames(start.Schema, start.VisibleFieldIndexes)
                 });
                 yield break;
@@ -191,6 +192,7 @@ public sealed class JsonOutboundProtocolEncoder : IOutboundProtocolEncoder
         public required int StartIndex { get; init; }
         public required int TotalCount { get; init; }
         public bool IsPartial { get; init; }
+        public bool NoChanges { get; init; }
         public IReadOnlyList<string> Fields { get; init; } = [];
     }
 

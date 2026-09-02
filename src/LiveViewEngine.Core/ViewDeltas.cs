@@ -23,6 +23,14 @@ public sealed class SnapshotStartDelta : ViewDelta
     public required int TotalCount { get; init; }
     public required int StartIndex { get; init; }
     public bool IsPartial { get; init; }
+
+    /// <summary>
+    /// True when this snapshot carries no rows because the requested viewport is already fully
+    /// covered by what the client previously received (e.g. an unchanged/contained viewport
+    /// re-request used to flush buffered live deltas). Distinguishes "you already have this data"
+    /// from a genuine full refresh that happens to match zero rows.
+    /// </summary>
+    public bool NoChanges { get; init; }
 }
 
 public sealed class SnapshotRowsDelta : ViewDelta

@@ -7,6 +7,7 @@ type JsonFrame = {
     startIndex?: number;
     totalCount?: number;
     isPartial?: boolean;
+    noChanges?: boolean;
     fields?: string[];
     row?: RowData;
     rowId?: string;
@@ -52,6 +53,7 @@ export function parseJsonFrame(frame: string): ProtocolFrame[] {
                     startIndex: Number(message.startIndex) || 0,
                     totalCount: Number(message.totalCount) || 0,
                     isPartial: message.isPartial === true,
+                    noChanges: message.noChanges === true,
                     fields: Array.isArray(message.fields) ? message.fields : undefined
                 });
                 break;

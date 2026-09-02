@@ -37,6 +37,7 @@ interface PendingSnapshot {
     totalCount: number;
     rows: RowData[];
     isPartial: boolean;
+    noChanges: boolean;
     firstMessageAt: number | null;
 }
 
@@ -194,6 +195,7 @@ export class WebHostClient {
                     totalCount: frame.totalCount,
                     rows: [],
                     isPartial: false,
+                    noChanges: false,
                     firstMessageAt: null
                 };
                 return;
@@ -212,6 +214,7 @@ export class WebHostClient {
                     totalCount: frame.totalCount,
                     rows: [],
                     isPartial: frame.isPartial === true,
+                    noChanges: frame.noChanges === true,
                     firstMessageAt: performance.now()
                 };
                 if (!frame.isPartial) {
@@ -233,6 +236,7 @@ export class WebHostClient {
 
                 {
                     const isPartial = this.pendingSnapshot.isPartial;
+                    const noChanges = this.pendingSnapshot.noChanges;
                     const now = performance.now();
                     const firstMessageAt = this.pendingSnapshot.firstMessageAt ?? now;
                     const waitMs = this.snapshotRequestStartedAt === null
@@ -248,7 +252,8 @@ export class WebHostClient {
                         rows: this.pendingSnapshot.rows,
                         waitMs,
                         transferMs,
-                        isPartial
+                        isPartial,
+                        noChanges
                     };
 
                     this.pendingSnapshot = null;

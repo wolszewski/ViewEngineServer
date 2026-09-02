@@ -11,6 +11,8 @@ export interface SnapshotEvent {
     waitMs: number;
     transferMs: number;
     isPartial?: boolean;
+    /** True when the server sent no rows because the client already has this data (a viewport-unchanged flush ack), not a genuine empty result. */
+    noChanges?: boolean;
 }
 
 export interface RowUpdateEvent {
@@ -53,7 +55,7 @@ export interface FilterRequest {
 
 export interface SubscribeRequest {
     collectionId: string;
-x    sortColumn?: string;
+    sortColumn?: string;
     sortAscending: boolean;
     pageSize?: number;
     startIndex: number;
@@ -80,6 +82,7 @@ export type ProtocolFrame =
         startIndex: number;
         totalCount: number;
         isPartial?: boolean;
+        noChanges?: boolean;
         fields?: string[];
     }
     | {

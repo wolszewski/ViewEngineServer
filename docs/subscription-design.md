@@ -67,3 +67,29 @@ On reconnect, clients subscribe again and receive a new server-assigned `subscri
 - every `snapshotRow` includes an explicit row number so clients can place rows correctly during partial viewport expansion.
 - compact snapshot rows are `S|subscriptionId|rowNumber|key|...`
 - JSON snapshot rows include `rowNumber` next to `row`
+
+### `snapshotStart` flags: `isPartial` and `noChanges`
+
+`snapshotStart` carries two independent, mutually exclusive boolean flags describing why (or whether) rows follow:
+
+- `isPartial: true` — this snapshot only covers part of the requested viewport (e.g. the client already
+  has the overlapping rows from a previous snapshot, and the server is only streaming the newly-uncovered
+  range). More `snapshotStart`/`snapshotRow` sequences and/or an immediate `eos` may still be needed to
+  cover the rest of the viewport.
+- `noChanges: true` — the requested viewport is already fully covered by what the client previously
+  received (an unchanged or shrunk/contained viewport re-request). No rows follow; this is purely an
+  acknowledgement used to flush any live deltas that were buffered while the viewport request was in
+  flight. `totalCount` is still current and should be applied, but the client must **not** clear its
+  existing rows/cache — there is nothing new to show.
+- When neither flag is set, this is a genuine full snapshot: the client should discard any previously
+  cached rows for this subscription and replace them with what follows (which may legitimately be zero
+  rows, e.g. a filter that currently matches nothing).
+
+Compact wire encoding: the optional flag token (position 5, `P|subscriptionId|startIndex|totalCount|<flag>|field1|...`)
+is `1` for `isPartial`, `2` for `noChanges`, and omitted entirely when both are false. JSON frames include
+explicit `isPartial`/`noChanges` boolean fields (defaulting to `false` when omitted).
+
+Clients should treat `noChanges` as authoritative and must not try to infer this "no-op" case from
+`rows.length === 0` plus `totalCount`/viewport heuristics — this previously caused the client to
+incorrectly clear a populated grid when its local row cache had gaps (e.g. after a live row removal near
+the edge of the tracked viewport).
