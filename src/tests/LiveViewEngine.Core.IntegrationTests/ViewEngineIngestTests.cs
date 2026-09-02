@@ -101,10 +101,29 @@ public class ViewEngineIngestTests
         Assert.Empty(publisher.Published);
 
         await CreateOrders(engine);
+        var createPublish = Assert.Single(publisher.DeltaBatchesFor(1));
+        Assert.Collection(
+            createPublish,
+            publishedDelta =>
+            {
+                var snapshotStart = Assert.IsType<SnapshotStartDelta>(publishedDelta);
+                Assert.Equal(0, snapshotStart.TotalCount);
+                Assert.Equal(0, snapshotStart.StartIndex);
+            },
+            publishedDelta => Assert.IsType<EndOfSnapshotDelta>(publishedDelta));
+        Assert.Empty(createPublish.OfType<SnapshotRowsDelta>());
+
         await Upsert(engine, "o1", "Alice", "100");
 
-        var pushed = publisher.EventsFor(1).ToList();
-        Assert.NotEmpty(pushed);
+        var publishedBatches = publisher.DeltaBatchesFor(1).ToList();
+        Assert.Equal(2, publishedBatches.Count);
+        Assert.Collection(
+            publishedBatches[1],
+            publishedDelta =>
+            {
+                var insert = Assert.IsType<RowInsertDelta>(publishedDelta);
+                Assert.Equal(0, insert.Position);
+            });
     }
 
     private sealed class UnknownTestCommand : IngestCommand { }

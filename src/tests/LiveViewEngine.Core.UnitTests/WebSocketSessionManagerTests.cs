@@ -38,6 +38,58 @@ public class WebSocketSessionManagerTests
     }
 
     [Fact]
+    public async Task HandleConnectionAsync_UpdateViewPendingSubscriptionWithSendSnapshotFalse_CancelsSnapshotBuffering()
+    {
+        var metrics = new ViewEngineMetrics();
+        var store = new CollectionStore(metrics, new LiveViewEngineOptions { EagerIndexing = false });
+        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance);
+        var engine = new ViewEngine(store, publisher, NullLogger<ViewEngine>.Instance, metrics);
+        var manager = new WebSocketSessionManager(
+            engine,
+            store,
+            publisher,
+            NullLogger<WebSocketSessionManager>.Instance);
+        var socket = new ScriptedWebSocket(
+            [
+                "{\"type\":\"subscribe\",\"collectionId\":\"trades\",\"startIndex\":0,\"pageSize\":50,\"sendSnapshot\":true,\"messageFormat\":\"json\"}",
+                "{\"type\":\"updateview\",\"subscriptionId\":1,\"sendSnapshot\":false}"
+            ],
+            closeAfterSentCount: 10);
+
+        var handleTask = manager.HandleConnectionAsync(socket, CancellationToken.None);
+        await socket.WaitForMessagesAsync(1);
+        await WaitForSnapshotActiveAsync(publisher, 1, 1, expected: false);
+        socket.Close();
+        await handleTask;
+    }
+
+    [Fact]
+    public async Task HandleConnectionAsync_UpdateViewPendingSubscriptionWithSendSnapshotTrue_KeepsSnapshotBufferingActive()
+    {
+        var metrics = new ViewEngineMetrics();
+        var store = new CollectionStore(metrics, new LiveViewEngineOptions { EagerIndexing = false });
+        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance);
+        var engine = new ViewEngine(store, publisher, NullLogger<ViewEngine>.Instance, metrics);
+        var manager = new WebSocketSessionManager(
+            engine,
+            store,
+            publisher,
+            NullLogger<WebSocketSessionManager>.Instance);
+        var socket = new ScriptedWebSocket(
+            [
+                "{\"type\":\"subscribe\",\"collectionId\":\"trades\",\"startIndex\":0,\"pageSize\":50,\"sendSnapshot\":false,\"messageFormat\":\"json\"}",
+                "{\"type\":\"updateview\",\"subscriptionId\":1,\"sendSnapshot\":true}"
+            ],
+            closeAfterSentCount: 10);
+
+        var handleTask = manager.HandleConnectionAsync(socket, CancellationToken.None);
+        await socket.WaitForMessagesAsync(1);
+        await WaitForSnapshotActiveAsync(publisher, 1, 1, expected: true);
+        socket.Close();
+        await handleTask;
+    }
+
+    [Fact]
     public async Task HandleConnectionAsync_UpdateViewWithProjectedFields_SnapshotModeFull_EmitsSnapshotMetadata()
     {
         var metrics = new ViewEngineMetrics();
@@ -344,6 +396,26 @@ public class WebSocketSessionManagerTests
         var subscription = subscriptions?[subscriptionId];
         var isSnapshotActiveProperty = subscription?.GetType().GetProperty("IsSnapshotActive");
         return isSnapshotActiveProperty is not null && (bool)isSnapshotActiveProperty.GetValue(subscription)!;
+    }
+
+    private static async Task WaitForSnapshotActiveAsync(
+        WebSocketOutboundPublisher publisher,
+        int connectionId,
+        int subscriptionId,
+        bool expected)
+    {
+        var timeoutAt = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < timeoutAt)
+        {
+            if (ReadSnapshotActive(publisher, connectionId, subscriptionId) == expected)
+            {
+                return;
+            }
+
+            await Task.Delay(25);
+        }
+
+        Assert.Equal(expected, ReadSnapshotActive(publisher, connectionId, subscriptionId));
     }
 
     private sealed class BlockingViewEngine : IViewEngine

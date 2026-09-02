@@ -490,7 +490,7 @@ public sealed class ViewEngine : IViewEngine, IDisposable
             .Select(static pending => pending.Key)
             .ToArray();
 
-        var pendingPublishes = new List<PendingResumeResult>();
+        var publishedAny = false;
         foreach (var subscriptionKey in keysToResume)
         {
             try
@@ -499,7 +499,11 @@ public sealed class ViewEngine : IViewEngine, IDisposable
                     .ConfigureAwait(false);
                 if (resumeResult is not null)
                 {
-                    pendingPublishes.Add(resumeResult.Value);
+                    await _publisher.PublishAsync(
+                        [resumeResult.Value.Target],
+                        resumeResult.Value.Deltas,
+                        CancellationToken.None).ConfigureAwait(false);
+                    publishedAny = true;
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -511,15 +515,7 @@ public sealed class ViewEngine : IViewEngine, IDisposable
             }
         }
 
-        foreach (var resumeResult in pendingPublishes)
-        {
-            await _publisher.PublishAsync(
-                [resumeResult.Target],
-                resumeResult.Deltas,
-                CancellationToken.None).ConfigureAwait(false);
-        }
-
-        if (pendingPublishes.Count > 0)
+        if (publishedAny)
         {
             await _publisher.FlushAsync(CancellationToken.None).ConfigureAwait(false);
         }

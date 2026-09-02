@@ -240,7 +240,7 @@ function decodeToken(token: string): string | null {
     let escaping = false;
     for (const ch of token) {
         if (escaping) {
-            decoded += ch;
+            decoded += ch === 'n' ? '\n' : ch;
             escaping = false;
             continue;
         }

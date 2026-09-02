@@ -237,6 +237,32 @@ public class WebSocketOutboundPublisherTests
         Assert.Empty(socket.Messages);
     }
 
+    [Fact]
+    public async Task PublishAsync_WhenOutboundQueueFills_AbortsSlowConnectionInsteadOfBlocking()
+    {
+        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance);
+        var socket = new BlockingWebSocket();
+        publisher.Register(1, socket);
+        publisher.ConfigureSubscription(1, 7, OutboundMessageFormat.Compact, snapshotActive: false);
+
+        var schema = new Data.CollectionSchema("orders", ["customer", "amount"]);
+        var deltas = Enumerable.Range(0, 600)
+            .Select(i => (ViewDelta)new RowInsertDelta
+            {
+                ViewId = "1:7",
+                Schema = schema,
+                Position = i,
+                VisibleFieldIndexes = [0, 1, 2],
+                Row = [$"o{i}", $"Customer {i}", i.ToString()]
+            })
+            .ToArray();
+
+        await publisher.PublishAsync([new SubscriberTarget(1, 7)], deltas).AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        await publisher.FlushAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal(WebSocketState.Aborted, socket.State);
+    }
+
     private static void AssertJsonMessage(string json, string type, int subscriptionId, params (string Name, string Value)[] properties)
     {
         using var document = JsonDocument.Parse(json);
@@ -301,5 +327,54 @@ public class WebSocketOutboundPublisherTests
             _messages.Enqueue(Encoding.UTF8.GetString(buffer.Span));
             return ValueTask.CompletedTask;
         }
+    }
+
+    private sealed class BlockingWebSocket : WebSocket
+    {
+        private readonly TaskCompletionSource _blockedSend = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private WebSocketState _state = WebSocketState.Open;
+
+        public override WebSocketCloseStatus? CloseStatus => null;
+        public override string? CloseStatusDescription => null;
+        public override WebSocketState State => _state;
+        public override string? SubProtocol => null;
+
+        public override void Abort()
+        {
+            _state = WebSocketState.Aborted;
+            _blockedSend.TrySetException(new WebSocketException("aborted"));
+        }
+
+        public override Task CloseAsync(WebSocketCloseStatus closeStatus, string? statusDescription, CancellationToken cancellationToken)
+        {
+            _state = WebSocketState.Closed;
+            _blockedSend.TrySetResult();
+            return Task.CompletedTask;
+        }
+
+        public override Task CloseOutputAsync(WebSocketCloseStatus closeStatus, string? statusDescription, CancellationToken cancellationToken)
+        {
+            _state = WebSocketState.CloseSent;
+            _blockedSend.TrySetResult();
+            return Task.CompletedTask;
+        }
+
+        public override void Dispose()
+        {
+            _state = WebSocketState.Closed;
+            _blockedSend.TrySetResult();
+        }
+
+        public override Task<WebSocketReceiveResult> ReceiveAsync(ArraySegment<byte> buffer, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override ValueTask<ValueWebSocketReceiveResult> ReceiveAsync(Memory<byte> buffer, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task SendAsync(ArraySegment<byte> buffer, WebSocketMessageType messageType, bool endOfMessage,
+            CancellationToken cancellationToken) => _blockedSend.Task;
+
+        public override ValueTask SendAsync(ReadOnlyMemory<byte> buffer, WebSocketMessageType messageType,
+            WebSocketMessageFlags endOfMessage, CancellationToken cancellationToken) => new(_blockedSend.Task);
     }
 }

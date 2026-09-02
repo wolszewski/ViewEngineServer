@@ -122,7 +122,19 @@ public sealed class WebSocketSessionManager
                     throw;
                 }
 
-                if (snapshotBegan && events.Count == 0)
+                if (command is UpdateViewCommand updateCommand && clientSubscriptionId > 0 && events.Count == 0)
+                {
+                    if (_engine.GetSubscribeSnapshotFollows(updateCommand.EffectiveSubscriptionKey)
+                        == SubscribeSnapshotFollows.Pending)
+                    {
+                        _publisher.SetSnapshotActive(context.ConnectionId, command.SubscriptionId, snapshotActive: true);
+                    }
+                    else
+                    {
+                        _publisher.CancelSnapshot(context.ConnectionId, command.SubscriptionId);
+                    }
+                }
+                else if (snapshotBegan && events.Count == 0)
                 {
                     _publisher.CancelSnapshot(context.ConnectionId, command.SubscriptionId);
                 }

@@ -379,6 +379,13 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
         for (int i = 0; i < value.Length; i++)
         {
             char ch = value[i];
+            if (ch == '\n')
+            {
+                buffer[bytesWritten++] = EscapeByte;
+                buffer[bytesWritten++] = (byte)'n';
+                continue;
+            }
+
             if (ch is '|' or '\\' or '^' or '~')
             {
                 buffer[bytesWritten++] = EscapeByte;

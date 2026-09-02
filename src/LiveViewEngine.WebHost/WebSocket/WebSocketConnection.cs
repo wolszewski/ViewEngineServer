@@ -9,6 +9,7 @@ internal sealed class WebSocketConnection(
     System.Net.WebSockets.WebSocket socket,
     ILogger<WebSocketOutboundPublisher> logger)
 {
+    private int _completionRequested;
     private readonly Channel<byte[]> _channel = System.Threading.Channels.Channel.CreateBounded<byte[]>(new BoundedChannelOptions(512)
     {
         FullMode = BoundedChannelFullMode.Wait,
@@ -29,10 +30,30 @@ internal sealed class WebSocketConnection(
 
     public void Complete()
     {
-        _channel.Writer.TryComplete();
+        if (Interlocked.Exchange(ref _completionRequested, 1) == 0)
+        {
+            _channel.Writer.TryComplete();
+        }
     }
 
-    public ValueTask WriteAsync(byte[] payload, CancellationToken ct = default) => _channel.Writer.WriteAsync(payload, ct);
+    public ValueTask WriteAsync(byte[] payload, CancellationToken ct = default)
+    {
+        if (_channel.Writer.TryWrite(payload))
+        {
+            return ValueTask.CompletedTask;
+        }
+
+        if (Interlocked.Exchange(ref _completionRequested, 1) == 0)
+        {
+            logger.LogWarning(
+                "Disconnecting slow WebSocket client '{ConnectionId}' after the outbound queue reached capacity.",
+                ConnectionId);
+            Socket.Abort();
+            _channel.Writer.TryComplete();
+        }
+
+        return ValueTask.CompletedTask;
+    }
 
     private async Task DrainAsync()
     {

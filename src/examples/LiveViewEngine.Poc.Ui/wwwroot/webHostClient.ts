@@ -69,7 +69,11 @@ export class WebHostClient {
             const sameCollection = this.lastSubscribe?.collectionId === request.collectionId;
             const sameMessageFormat = (this.lastSubscribe?.messageFormat ?? 'compact') === (request.messageFormat ?? 'compact');
             if (this.activeSubscriptionId !== null && sameCollection && sameMessageFormat) {
-                this.sendUpdateView(request);
+                this.sendUpdateView({
+                    ...request,
+                    sendSnapshot: true
+                });
+                this.lastSubscribe = request;
             } else {
                 if (this.activeSubscriptionId !== null) {
                     this.sendUnsubscribe(this.activeSubscriptionId);

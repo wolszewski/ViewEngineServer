@@ -139,6 +139,27 @@ public class CompactOutboundProtocolEncoderTests
     }
 
     [Fact]
+    public void EncodeSnapshotRows_EscapesEmbeddedNewlinesInsideBatchedPayload()
+    {
+        var payload = ToText(_encoder.EncodeFrames(
+            new SnapshotRowsDelta
+            {
+                ViewId = "1:1",
+                Schema = Schema,
+                StartRowNumber = 0,
+                VisibleFieldIndexes = [0, 1, 2],
+                Rows =
+                [
+                    ["o1", "Alice\nSmith", "100"],
+                    ["o2", "Bob", "200"]
+                ]
+            },
+            subscriptionId: 1).Single());
+
+        Assert.Equal("S|1|0|o1|Alice\\nSmith|100\nS|1|1|o2|Bob|200", payload);
+    }
+
+    [Fact]
     public void EncodeUpdate_HandlesNullValues()
     {
         var update = ToText(_encoder.EncodeFrames(
