@@ -133,7 +133,7 @@ public class WebSocketSessionManagerTests
         var snapshotStarts = socket.SentMessages
             .Where(message => message.StartsWith("P|", StringComparison.Ordinal))
             .ToArray();
-        Assert.Equal("P|1|0|1|status|amount", snapshotStarts[^1]);
+        Assert.Equal("P|1|0|1|0|status|amount", snapshotStarts[^1]);
     }
 
     [Fact]

@@ -239,7 +239,7 @@ public class CompactOutboundProtocolEncoderTests
                 VisibleFieldIndexes = [0, 1, 2]
             },
             subscriptionId: 2).Single();
-        Assert.Equal("P|2|10|50|customer|amount", ToText(start));
+        Assert.Equal("P|2|10|50|0|customer|amount", ToText(start));
     }
 
     [Fact]

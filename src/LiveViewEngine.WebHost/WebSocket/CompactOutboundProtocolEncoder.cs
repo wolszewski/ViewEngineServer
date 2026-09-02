@@ -24,6 +24,7 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
     private static readonly byte[] RSpan = [(byte)'R'];
     private static readonly byte[] PSpan = [(byte)'P'];
     private static readonly byte[] SkipSpan = [(byte)'^'];
+    private static readonly byte[] ZeroByte = [(byte)'0'];
     private static readonly byte[] OneByte = [(byte)'1'];
     private static readonly byte[] TwoByte = [(byte)'2'];
     private static readonly byte[] NewLineSpan = [(byte)'\n'];
@@ -134,15 +135,18 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
         WriteInt32(writer, startIndex);
         writer.Write(SeparatorSpan);
         WriteInt32(writer, totalCount);
+        writer.Write(SeparatorSpan);
         if (isPartial)
         {
-            writer.Write(SeparatorSpan);
             writer.Write(OneByte);
         }
         else if (noChanges)
         {
-            writer.Write(SeparatorSpan);
             writer.Write(TwoByte);
+        }
+        else
+        {
+            writer.Write(ZeroByte);
         }
 
         if (schema is not null)

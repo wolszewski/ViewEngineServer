@@ -49,7 +49,7 @@ export function parseCompactFrame(frame: string, currentFields: string[]): Proto
 
         const isPartial = tokens[4] === '1';
         const noChanges = tokens[4] === '2';
-        const fields = (tokens.slice((isPartial || noChanges) ? 5 : 4)
+        const fields = (tokens.slice(5)
             .map(decodeToken)
             .filter((value): value is string => value !== null));
 

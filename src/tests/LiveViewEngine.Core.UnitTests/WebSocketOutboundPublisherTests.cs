@@ -65,7 +65,7 @@ public class WebSocketOutboundPublisherTests
         await socket.WaitForMessagesAsync(4);
 
         Assert.Equal(
-            ["P|7|0|1|customer|amount", "S|7|0|o1|Alice|100", "EOS|7", "U|7|o1|0|^1|150"],
+            ["P|7|0|1|0|customer|amount", "S|7|0|o1|Alice|100", "EOS|7", "U|7|o1|0|^1|150"],
             socket.Messages.ToArray());
     }
 
