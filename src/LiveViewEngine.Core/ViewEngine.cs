@@ -16,6 +16,8 @@ public interface IViewEngine
     Task<IngestResult> IngestAsync(IngestCommand command, CancellationToken ct = default);
     Task<IReadOnlyList<ViewDelta>> SubscribeAsync(SubscriptionCommand command, CancellationToken ct = default);
     Task<IReadOnlyList<ViewDelta>> SubscribeAsync(SubscriptionCommand command, Action? onBeforeProcess, CancellationToken ct = default);
+    SubscribeSnapshotFollows GetSubscribeSnapshotFollows(SubscriptionKey key);
+    Task NotifySubscriptionAcceptedAsync(SubscriptionKey key, CancellationToken ct = default);
 }
 
 public sealed class ViewEngine : IViewEngine, IDisposable
@@ -28,6 +30,8 @@ public sealed class ViewEngine : IViewEngine, IDisposable
     private readonly ConcurrentDictionary<SubscriptionKey, string> _subscriptionRoutes = new();
     private readonly ConcurrentDictionary<SubscriptionKey, SubscriptionRouteLock> _subscriptionRouteLocks = new();
     private readonly ConcurrentDictionary<SubscriptionKey, SubscribeCommand> _pendingSubscribes = new();
+    private readonly ConcurrentDictionary<SubscriptionKey, SubscribeSnapshotFollows> _subscribeSnapshotFollows = new();
+    private readonly ConcurrentDictionary<SubscriptionKey, byte> _acceptedPendingSubscribes = new();
     private bool _disposed;
 
     public ViewEngine(
@@ -94,6 +98,28 @@ public sealed class ViewEngine : IViewEngine, IDisposable
         foreach (var runtime in _collectionRuntimes.Values)
         {
             runtime.Dispose();
+        }
+    }
+
+    public SubscribeSnapshotFollows GetSubscribeSnapshotFollows(SubscriptionKey key)
+    {
+        return _subscribeSnapshotFollows.GetValueOrDefault(key, SubscribeSnapshotFollows.None);
+    }
+
+    public async Task NotifySubscriptionAcceptedAsync(SubscriptionKey key, CancellationToken ct = default)
+    {
+        _acceptedPendingSubscribes[key] = 0;
+        var resumeResult = await TryResumePendingSubscriptionAsync(key, expectedCollectionId: null, ct).ConfigureAwait(false);
+        if (resumeResult is not null)
+        {
+            await _publisher.PublishAsync([resumeResult.Value.Target], resumeResult.Value.Deltas, CancellationToken.None)
+                .ConfigureAwait(false);
+            await _publisher.FlushAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+
+        if (!_pendingSubscribes.ContainsKey(key))
+        {
+            _acceptedPendingSubscribes.TryRemove(key, out _);
         }
     }
 
@@ -200,15 +226,21 @@ public sealed class ViewEngine : IViewEngine, IDisposable
         CancellationToken ct)
     {
         var subscribeCollectionId = subscribe.View.CollectionId;
+        var subscriptionKey = subscribe.EffectiveSubscriptionKey;
         if (!_collectionRuntimes.TryGetValue(subscribeCollectionId, out var subscribeRuntime))
         {
-            // Remember the request so a later updateview retry can resume it once the collection exists.
-            _pendingSubscribes[subscribe.EffectiveSubscriptionKey] = subscribe;
-            return [];
+            _pendingSubscribes[subscriptionKey] = subscribe;
+            _subscribeSnapshotFollows[subscriptionKey] = subscribe.SendSnapshot
+                ? SubscribeSnapshotFollows.Pending
+                : SubscribeSnapshotFollows.None;
+            if (!_collectionRuntimes.TryGetValue(subscribeCollectionId, out subscribeRuntime))
+            {
+                return [];
+            }
         }
 
-        var subscriptionKey = subscribe.EffectiveSubscriptionKey;
         _pendingSubscribes.TryRemove(subscriptionKey, out _);
+        _acceptedPendingSubscribes.TryRemove(subscriptionKey, out _);
         if (_subscriptionRoutes.TryGetValue(subscriptionKey, out var previousCollectionId) &&
             !string.Equals(previousCollectionId, subscribeCollectionId, StringComparison.Ordinal))
         {
@@ -218,6 +250,9 @@ public sealed class ViewEngine : IViewEngine, IDisposable
         }
 
         var deltas = await subscribeRuntime.EnqueueAsync(new SubscribeRuntimeWork(subscribeRuntime, subscribe), ct);
+        _subscribeSnapshotFollows[subscriptionKey] = deltas.Count > 0 && deltas[0] is SnapshotStartDelta
+            ? SubscribeSnapshotFollows.Immediate
+            : SubscribeSnapshotFollows.None;
         if (subscribeRuntime.ContainsSubscription(subscriptionKey))
         {
             _subscriptionRoutes[subscriptionKey] = subscribeCollectionId;
@@ -235,6 +270,8 @@ public sealed class ViewEngine : IViewEngine, IDisposable
     {
         var key = unsubscribeCommand.EffectiveSubscriptionKey;
         _pendingSubscribes.TryRemove(key, out _);
+        _acceptedPendingSubscribes.TryRemove(key, out _);
+        _subscribeSnapshotFollows.TryRemove(key, out _);
         var collectionId = GetCollectionIdForSubscription(unsubscribeCommand);
         if (collectionId is null || !_collectionRuntimes.TryGetValue(collectionId, out var unsubRuntime))
         {
@@ -254,13 +291,9 @@ public sealed class ViewEngine : IViewEngine, IDisposable
         var collectionId = GetCollectionIdForSubscription(updateCommand);
         if (collectionId is null || !_collectionRuntimes.TryGetValue(collectionId, out var updateRuntime))
         {
-            // The subscription may have been accepted before its collection existed (client is retrying
-            // while waiting for the collection to be created). If we still remember the original
-            // subscribe request and the collection now exists, resume it instead of no-op'ing forever.
-            if (_pendingSubscribes.TryGetValue(updateCommand.EffectiveSubscriptionKey, out var pendingSubscribe)
-                && _collectionRuntimes.ContainsKey(pendingSubscribe.View.CollectionId))
+            if (_pendingSubscribes.TryGetValue(updateCommand.EffectiveSubscriptionKey, out var pendingSubscribe))
             {
-                var resumedSubscribe = new SubscribeCommand
+                var updatedPendingSubscribe = new SubscribeCommand
                 {
                     ConnectionId = pendingSubscribe.ConnectionId,
                     SubscriptionId = pendingSubscribe.SubscriptionId,
@@ -275,13 +308,25 @@ public sealed class ViewEngine : IViewEngine, IDisposable
                     },
                     StartIndex = updateCommand.StartIndex ?? pendingSubscribe.StartIndex,
                     PageSize = updateCommand.PageSize ?? pendingSubscribe.PageSize,
-                    SendSnapshot = pendingSubscribe.SendSnapshot
+                    SendSnapshot = updateCommand.SnapshotMode switch
+                    {
+                        SnapshotMode.No => false,
+                        SnapshotMode.Full => true,
+                        _ => pendingSubscribe.SendSnapshot
+                    },
+                    ResumeAfterAccepted = pendingSubscribe.ResumeAfterAccepted
                 };
+                _pendingSubscribes[updateCommand.EffectiveSubscriptionKey] = updatedPendingSubscribe;
+                _subscribeSnapshotFollows[updateCommand.EffectiveSubscriptionKey] = updatedPendingSubscribe.SendSnapshot
+                    ? SubscribeSnapshotFollows.Pending
+                    : SubscribeSnapshotFollows.None;
 
-                return await HandleSubscribeCommandAsync(resumedSubscribe, ct);
+                if (_collectionRuntimes.ContainsKey(updatedPendingSubscribe.View.CollectionId))
+                {
+                    return await HandleSubscribeCommandAsync(updatedPendingSubscribe, ct);
+                }
             }
 
-            // Still waiting for the collection to be created — treat as a no-op rather than an error.
             return [];
         }
 
@@ -399,6 +444,8 @@ public sealed class ViewEngine : IViewEngine, IDisposable
             if (subscriptionKey.ConnectionId == connectionId)
             {
                 _subscriptionRoutes.TryRemove(subscriptionKey, out _);
+                _subscribeSnapshotFollows.TryRemove(subscriptionKey, out _);
+                _acceptedPendingSubscribes.TryRemove(subscriptionKey, out _);
             }
         }
 
@@ -407,6 +454,8 @@ public sealed class ViewEngine : IViewEngine, IDisposable
             if (subscriptionKey.ConnectionId == connectionId)
             {
                 _pendingSubscribes.TryRemove(subscriptionKey, out _);
+                _subscribeSnapshotFollows.TryRemove(subscriptionKey, out _);
+                _acceptedPendingSubscribes.TryRemove(subscriptionKey, out _);
             }
         }
     }
@@ -429,51 +478,98 @@ public sealed class ViewEngine : IViewEngine, IDisposable
         _logger.LogInformation("Collection '{CollectionId}' created ({FieldCount} fields).",
             command.CollectionId, command.Schema.Fields.Count);
 
-        await ResumePendingSubscribesAsync(command.CollectionId, ct).ConfigureAwait(false);
+        await ResumePendingSubscribesAsync(command.CollectionId, CancellationToken.None).ConfigureAwait(false);
 
         return IngestResult.Ok();
     }
 
     private async Task ResumePendingSubscribesAsync(string collectionId, CancellationToken ct)
     {
-        var toResume = _pendingSubscribes.Values
-            .Where(pending => string.Equals(pending.View.CollectionId, collectionId, StringComparison.Ordinal))
+        var keysToResume = _pendingSubscribes
+            .Where(pending => string.Equals(pending.Value.View.CollectionId, collectionId, StringComparison.Ordinal))
+            .Select(static pending => pending.Key)
             .ToArray();
 
-        foreach (var pendingSubscribe in toResume)
+        var pendingPublishes = new List<PendingResumeResult>();
+        foreach (var subscriptionKey in keysToResume)
         {
-            IReadOnlyList<ViewDelta> deltas;
             try
             {
-                deltas = await ExecuteWithSubscriptionRouteLockAsync(
-                    pendingSubscribe.EffectiveSubscriptionKey,
-                    ct,
-                    () => HandleSubscribeCommandAsync(pendingSubscribe, ct)).ConfigureAwait(false);
+                var resumeResult = await TryResumePendingSubscriptionAsync(subscriptionKey, collectionId, ct)
+                    .ConfigureAwait(false);
+                if (resumeResult is not null)
+                {
+                    pendingPublishes.Add(resumeResult.Value);
+                }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.LogError(ex,
-                    "Error resuming pending subscription for connection {ConnectionId}, subscription {SubscriptionId} on collection '{CollectionId}'.",
-                    pendingSubscribe.ConnectionId, pendingSubscribe.SubscriptionId, collectionId);
+                    "Error resuming pending subscription {SubscriptionKey} on collection '{CollectionId}'.",
+                    subscriptionKey, collectionId);
                 continue;
             }
-
-            if (deltas.Count == 0)
-            {
-                continue;
-            }
-
-            await _publisher.PublishAsync(
-                [new SubscriberTarget(pendingSubscribe.ConnectionId, pendingSubscribe.SubscriptionId)],
-                deltas,
-                ct).ConfigureAwait(false);
         }
 
-        if (toResume.Length > 0)
+        foreach (var resumeResult in pendingPublishes)
         {
-            await _publisher.FlushAsync(ct).ConfigureAwait(false);
+            await _publisher.PublishAsync(
+                [resumeResult.Target],
+                resumeResult.Deltas,
+                CancellationToken.None).ConfigureAwait(false);
+        }
+
+        if (pendingPublishes.Count > 0)
+        {
+            await _publisher.FlushAsync(CancellationToken.None).ConfigureAwait(false);
         }
     }
+
+    private async Task<PendingResumeResult?> TryResumePendingSubscriptionAsync(
+        SubscriptionKey key,
+        string? expectedCollectionId,
+        CancellationToken ct)
+    {
+        return await ExecuteWithSubscriptionRouteLockAsync<PendingResumeResult?>(
+            key,
+            ct,
+            async () =>
+            {
+                if (!_pendingSubscribes.TryGetValue(key, out var pendingSubscribe))
+                {
+                    return null;
+                }
+
+                if (expectedCollectionId is not null &&
+                    !string.Equals(pendingSubscribe.View.CollectionId, expectedCollectionId, StringComparison.Ordinal))
+                {
+                    return null;
+                }
+
+                if (pendingSubscribe.ResumeAfterAccepted && !_acceptedPendingSubscribes.ContainsKey(key))
+                {
+                    return null;
+                }
+
+                if (!_collectionRuntimes.ContainsKey(pendingSubscribe.View.CollectionId))
+                {
+                    return null;
+                }
+
+                var deltas = await HandleSubscribeCommandAsync(pendingSubscribe, CancellationToken.None)
+                    .ConfigureAwait(false);
+                if (deltas.Count == 0)
+                {
+                    return null;
+                }
+
+                return new PendingResumeResult(
+                    new SubscriberTarget(pendingSubscribe.ConnectionId, pendingSubscribe.SubscriptionId),
+                    deltas);
+            }).ConfigureAwait(false);
+    }
+
+    private readonly record struct PendingResumeResult(SubscriberTarget Target, IReadOnlyList<ViewDelta> Deltas);
 
     private void ThrowIfDisposed()
     {

@@ -131,11 +131,13 @@ public sealed class WebSocketSessionManager
                 {
                     var originalEvents = events;
                     var start = TryExtractSnapshotStart(events, out var snapshotEvents);
-                    var snapshotFollows = start is not null
-                        ? SnapshotFollowsKind.Immediate
-                        : ShouldWaitForDeferredSnapshot(subscribeCommand, originalEvents)
-                            ? SnapshotFollowsKind.Pending
-                            : SnapshotFollowsKind.None;
+                    var snapshotFollows = _engine.GetSubscribeSnapshotFollows(subscribeCommand.EffectiveSubscriptionKey)
+                        switch
+                        {
+                            SubscribeSnapshotFollows.Immediate => SnapshotFollowsKind.Immediate,
+                            SubscribeSnapshotFollows.Pending => SnapshotFollowsKind.Pending,
+                            _ => SnapshotFollowsKind.None
+                        };
                     await _publisher.PublishSubscriptionAcceptedAsync(
                         context.ConnectionId,
                         messageFormat,
@@ -151,6 +153,7 @@ public sealed class WebSocketSessionManager
                             TotalCount = start?.TotalCount ?? -1
                         },
                         ct);
+                    await _engine.NotifySubscriptionAcceptedAsync(subscribeCommand.EffectiveSubscriptionKey, ct);
                     events = snapshotEvents ?? events;
                 }
 
@@ -290,6 +293,7 @@ public sealed class WebSocketSessionManager
             StartIndex = msg.StartIndex ?? 0,
             PageSize = msg.PageSize,
             SendSnapshot = msg.SendSnapshot ?? true,
+            ResumeAfterAccepted = true,
             View = new ViewDefinition
             {
                 CollectionId = msg.CollectionId ?? string.Empty,
@@ -334,18 +338,6 @@ public sealed class WebSocketSessionManager
 
         remainingEvents = events.Skip(1).ToArray();
         return start;
-    }
-
-    private bool ShouldWaitForDeferredSnapshot(
-        SubscribeCommand subscribeCommand,
-        IReadOnlyList<ViewDelta> events)
-    {
-        if (!subscribeCommand.SendSnapshot || events.Count > 0)
-        {
-            return false;
-        }
-
-        return !_store.TryGet(subscribeCommand.View.CollectionId, out _);
     }
 
     private IReadOnlyList<string> ResolvePayloadFieldNames(

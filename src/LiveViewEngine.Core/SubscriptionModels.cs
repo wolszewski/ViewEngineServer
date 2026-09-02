@@ -36,6 +36,14 @@ public sealed class SubscribeCommand : SubscriptionCommand
     public int StartIndex { get; init; }
     public int? PageSize { get; init; }
     public bool SendSnapshot { get; init; } = true;
+    public bool ResumeAfterAccepted { get; init; }
+}
+
+public enum SubscribeSnapshotFollows
+{
+    None,
+    Immediate,
+    Pending
 }
 
 public enum SnapshotMode

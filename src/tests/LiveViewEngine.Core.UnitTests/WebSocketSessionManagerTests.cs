@@ -369,6 +369,12 @@ public class WebSocketSessionManagerTests
             return SubscribeAsync(command, ct);
         }
 
+        public SubscribeSnapshotFollows GetSubscribeSnapshotFollows(SubscriptionKey key) =>
+            SubscribeSnapshotFollows.Pending;
+
+        public Task NotifySubscriptionAcceptedAsync(SubscriptionKey key, CancellationToken ct = default) =>
+            Task.CompletedTask;
+
         public Task<IngestResult> IngestAsync(IngestCommand command, CancellationToken ct = default) =>
             Task.FromResult(IngestResult.Ok());
 
