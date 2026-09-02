@@ -54,6 +54,7 @@ interface AppUrlState {
     messageFormat: MessageFormat;
     pageSize: number;
     viewportThresholdPercent: number;
+    fetchOnScroll: boolean;
     filters: AppliedFilter[];
     selectedFields: string[];
 }
@@ -148,6 +149,7 @@ function getInitialUrlState(): AppUrlState {
         messageFormat: params.get('format') === 'json' ? 'json' : defaultMessageFormat,
         pageSize: parsePositiveInteger(params.get('pageSize'), defaultPageSize),
         viewportThresholdPercent: parsePercentInteger(params.get('viewportThreshold'), defaultViewportThresholdPercent),
+        fetchOnScroll: params.get('fetchOnScroll') !== 'false',
         filters,
         selectedFields
     };
@@ -178,6 +180,10 @@ function syncUrlState(state: AppUrlState): void {
 
     if (state.viewportThresholdPercent !== defaultViewportThresholdPercent) {
         params.set('viewportThreshold', String(state.viewportThresholdPercent));
+    }
+
+    if (!state.fetchOnScroll) {
+        params.set('fetchOnScroll', 'false');
     }
 
     for (const filter of state.filters) {
@@ -448,6 +454,7 @@ export function ServerSortedGrid(): React.ReactElement {
     const [viewportThresholdPercent, setViewportThresholdPercent] = useState(
         initialUrlState.viewportThresholdPercent
     );
+    const [fetchOnScroll, setFetchOnScroll] = useState(initialUrlState.fetchOnScroll);
     const [viewportThresholdInput, setViewportThresholdInput] = useState(
         String(initialUrlState.viewportThresholdPercent)
     );
@@ -1067,6 +1074,7 @@ export function ServerSortedGrid(): React.ReactElement {
             messageFormat,
             pageSize,
             viewportThresholdPercent,
+            fetchOnScroll,
             filters: normalisedFilters,
             selectedFields
         });
@@ -1078,7 +1086,8 @@ export function ServerSortedGrid(): React.ReactElement {
         selectedFields,
         sortAscending,
         sortColumn,
-        viewportThresholdPercent
+        viewportThresholdPercent,
+        fetchOnScroll
     ]);
 
     useEffect(() => {
@@ -1191,6 +1200,16 @@ export function ServerSortedGrid(): React.ReactElement {
                     onCommit: commitViewportThreshold,
                     inputMode: 'numeric'
                 })
+            ),
+            React.createElement(
+                'label',
+                { className: 'control-label', style: { flexDirection: 'row', alignItems: 'center', gap: '0.4rem' } },
+                React.createElement('input', {
+                    type: 'checkbox',
+                    checked: fetchOnScroll,
+                    onChange: (e: Event) => setFetchOnScroll((e.target as HTMLInputElement).checked)
+                }),
+                'Fetch on scroll'
             ),
             React.createElement(
                 'label',
@@ -1339,7 +1358,7 @@ export function ServerSortedGrid(): React.ReactElement {
                     onBodyScrollEnd: () => {
                         const api = gridApiRef.current;
                         const client = clientRef.current;
-                        if (!api || !client?.isConnected || isLoadingSnapshot || isReloadingGridRef.current) {
+                        if (!fetchOnScroll || !api || !client?.isConnected || isLoadingSnapshot || isReloadingGridRef.current) {
                             return;
                         }
                         const firstRow = api.getFirstDisplayedRowIndex();
