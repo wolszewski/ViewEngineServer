@@ -160,6 +160,30 @@ public class CompactOutboundProtocolEncoderTests
     }
 
     [Fact]
+    public void EncodeSnapshotRows_LargeBatch_IsSplitAcrossMultiplePayloads()
+    {
+        var largeValue = new string('x', 20_000);
+        var payloads = _encoder.EncodeFrames(
+            new SnapshotRowsDelta
+            {
+                ViewId = "1:1",
+                Schema = Schema,
+                StartRowNumber = 0,
+                VisibleFieldIndexes = [0, 1, 2],
+                Rows =
+                [
+                    ["o1", largeValue, "100"],
+                    ["o2", largeValue, "200"]
+                ]
+            },
+            subscriptionId: 1).Select(ToText).ToArray();
+
+        Assert.Equal(2, payloads.Length);
+        Assert.StartsWith("S|1|0|o1|", payloads[0], StringComparison.Ordinal);
+        Assert.StartsWith("S|1|1|o2|", payloads[1], StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void EncodeUpdate_HandlesNullValues()
     {
         var update = ToText(_encoder.EncodeFrames(

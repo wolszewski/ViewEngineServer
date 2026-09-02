@@ -126,6 +126,52 @@ public class ViewEngineIngestTests
             });
     }
 
+    [Fact]
+    public async Task UpdateView_PendingSubscriptionWithDeltaMode_ResumesWithSnapshot()
+    {
+        var (engine, publisher, _) = CreateEngine();
+
+        await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = 1,
+            SubscriptionId = 1,
+            View = new ViewDefinition { CollectionId = "orders" },
+            StartIndex = 0,
+            PageSize = 50,
+            SendSnapshot = false
+        });
+
+        await engine.SubscribeAsync(new UpdateViewCommand
+        {
+            ConnectionId = 1,
+            SubscriptionId = 1,
+            SnapshotMode = SnapshotMode.Delta
+        });
+
+        await CreateOrders(engine);
+
+        var createPublish = Assert.Single(publisher.DeltaBatchesFor(1));
+        Assert.Collection(
+            createPublish,
+            publishedDelta => Assert.IsType<SnapshotStartDelta>(publishedDelta),
+            publishedDelta => Assert.IsType<EndOfSnapshotDelta>(publishedDelta));
+    }
+
+    [Fact]
+    public async Task UpdateView_MissingPendingSubscription_ThrowsNotFound()
+    {
+        var (engine, _, _) = CreateEngine();
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => engine.SubscribeAsync(new UpdateViewCommand
+        {
+            ConnectionId = 1,
+            SubscriptionId = 999,
+            SnapshotMode = SnapshotMode.Delta
+        }));
+
+        Assert.Equal("Subscription '1:999' was not found.", ex.Message);
+    }
+
     private sealed class UnknownTestCommand : IngestCommand { }
 
     [Fact]

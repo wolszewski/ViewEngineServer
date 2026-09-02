@@ -356,6 +356,10 @@ export class WebHostClient {
             message.fields = request.fields;
         }
 
+        if (request.sendSnapshot !== undefined) {
+            message.sendSnapshot = request.sendSnapshot;
+        }
+
         this.socket.send(JSON.stringify(message));
         this.hasReceivedSnapshot = false;
         this.snapshotRequestStartedAt = performance.now();

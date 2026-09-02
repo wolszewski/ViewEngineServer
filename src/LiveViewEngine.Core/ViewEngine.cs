@@ -311,6 +311,7 @@ public sealed class ViewEngine : IViewEngine, IDisposable
                     SendSnapshot = updateCommand.SnapshotMode switch
                     {
                         SnapshotMode.No => false,
+                        SnapshotMode.Delta => true,
                         SnapshotMode.Full => true,
                         _ => pendingSubscribe.SendSnapshot
                     },
@@ -325,9 +326,12 @@ public sealed class ViewEngine : IViewEngine, IDisposable
                 {
                     return await HandleSubscribeCommandAsync(updatedPendingSubscribe, ct);
                 }
+
+                return [];
             }
 
-            return [];
+            throw new InvalidOperationException(
+                $"Subscription '{updateCommand.EffectiveSubscriptionKey}' was not found.");
         }
 
         return await updateRuntime.EnqueueAsync(

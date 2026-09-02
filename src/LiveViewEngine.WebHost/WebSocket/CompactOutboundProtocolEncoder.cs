@@ -9,6 +9,7 @@ namespace ViewEngineServer.WebApp.WebSocket;
 
 public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
 {
+    private const int MaxSnapshotRowsPayloadBytes = 32 * 1024;
     private const byte SeparatorByte = (byte)'|';
     private const byte EscapeByte = (byte)'\\';
     private const byte SkipMarkerByte = (byte)'^';
@@ -68,12 +69,15 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
                     start.VisibleFieldIndexes);
                 yield break;
             case SnapshotRowsDelta rows:
-                yield return EncodeSnapshotRows(
+                foreach (var payload in EncodeSnapshotRows(
                     subscriptionId,
                     rows.Schema,
                     rows.VisibleFieldIndexes,
                     rows.StartRowNumber,
-                    rows.Rows);
+                    rows.Rows))
+                {
+                    yield return payload;
+                }
                 yield break;
             case EndOfSnapshotDelta:
                 yield return EncodeEndOfSnapshot(subscriptionId);
@@ -86,12 +90,15 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
                     snapshot.IsPartial,
                     schema: snapshot.Schema,
                     visibleFieldIndexes: snapshot.VisibleFieldIndexes);
-                yield return EncodeSnapshotRows(
+                foreach (var payload in EncodeSnapshotRows(
                     subscriptionId,
                     snapshot.Schema,
                     snapshot.VisibleFieldIndexes,
                     snapshot.StartIndex,
-                    snapshot.Rows);
+                    snapshot.Rows))
+                {
+                    yield return payload;
+                }
                 yield return EncodeEndOfSnapshot(subscriptionId);
                 yield break;
             case RowInsertDelta insert:
@@ -170,14 +177,14 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
         return writer.WrittenMemory.ToArray();
     }
 
-    private byte[] EncodeSnapshotRow(
+    private static void WriteSnapshotRow(
+        ArrayBufferWriter<byte> writer,
         int subscriptionId,
         CollectionSchema schema,
         IReadOnlyList<int>? visibleFieldIndexes,
         int rowNumber,
         string?[] row)
     {
-        var writer = new ArrayBufferWriter<byte>();
         writer.Write(SSpan);
         writer.Write(SeparatorSpan);
         WriteInt32(writer, subscriptionId);
@@ -186,33 +193,51 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
         writer.Write(SeparatorSpan);
         WriteKeyField(writer, schema, visibleFieldIndexes, row);
         WriteFullRow(writer, schema, visibleFieldIndexes, row);
-        return writer.WrittenMemory.ToArray();
     }
 
-    private byte[] EncodeSnapshotRows(
+    private IEnumerable<byte[]> EncodeSnapshotRows(
         int subscriptionId,
         CollectionSchema schema,
         IReadOnlyList<int>? visibleFieldIndexes,
         int startRowNumber,
         IReadOnlyList<string?[]> rows)
     {
+        if (rows.Count == 0)
+        {
+            yield break;
+        }
+
         var writer = new ArrayBufferWriter<byte>();
         for (int i = 0; i < rows.Count; i++)
         {
-            if (i > 0)
+            int rowNumber = startRowNumber + i;
+            int rowSize = EstimateSnapshotRowSize(subscriptionId, schema, visibleFieldIndexes, rowNumber, rows[i]);
+            int separatorSize = writer.WrittenCount > 0 ? 1 : 0;
+            if (writer.WrittenCount > 0 &&
+                writer.WrittenCount + separatorSize + rowSize > MaxSnapshotRowsPayloadBytes)
+            {
+                yield return writer.WrittenMemory.ToArray();
+                writer = new ArrayBufferWriter<byte>();
+            }
+
+            if (writer.WrittenCount > 0)
             {
                 writer.Write(NewLineSpan);
             }
 
-            writer.Write(EncodeSnapshotRow(
+            WriteSnapshotRow(
+                writer,
                 subscriptionId,
                 schema,
                 visibleFieldIndexes,
-                startRowNumber + i,
-                rows[i]));
+                rowNumber,
+                rows[i]);
         }
 
-        return writer.WrittenMemory.ToArray();
+        if (writer.WrittenCount > 0)
+        {
+            yield return writer.WrittenMemory.ToArray();
+        }
     }
 
     private byte[] EncodeInsert(
@@ -362,6 +387,73 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
             int rowIndex = OutboundProtocolEncodingHelpers.FindSelectedFieldPosition(fieldIndex, visibleFieldIndexes);
             WriteEscaped(writer, row[rowIndex]);
         }
+    }
+
+    private static int EstimateSnapshotRowSize(
+        int subscriptionId,
+        CollectionSchema schema,
+        IReadOnlyList<int>? visibleFieldIndexes,
+        int rowNumber,
+        string?[] row)
+    {
+        int size = 1 + 1 + CountDigits(subscriptionId) + 1 + CountDigits(rowNumber) + 1;
+        int keyIndex = OutboundProtocolEncodingHelpers.FindSelectedFieldPosition(schema.PrimaryKey.FieldIndex, visibleFieldIndexes);
+        size += GetEscapedTokenSize(row[keyIndex]);
+
+        var fieldIndexes = OutboundProtocolEncodingHelpers.GetPayloadFieldIndexes(schema, visibleFieldIndexes);
+        foreach (int fieldIndex in fieldIndexes)
+        {
+            int rowIndex = OutboundProtocolEncodingHelpers.FindSelectedFieldPosition(fieldIndex, visibleFieldIndexes);
+            size += 1 + GetEscapedTokenSize(row[rowIndex]);
+        }
+
+        return size;
+    }
+
+    private static int GetEscapedTokenSize(string? value)
+    {
+        if (value is null)
+        {
+            return 1;
+        }
+
+        int size = 0;
+        for (int i = 0; i < value.Length; i++)
+        {
+            char ch = value[i];
+            if (ch == '\n')
+            {
+                size += 2;
+                continue;
+            }
+
+            if (ch is '|' or '\\' or '^' or '~')
+            {
+                size += 1;
+            }
+
+            size += Encoding.UTF8.GetByteCount(value.AsSpan(i, 1));
+        }
+
+        return size;
+    }
+
+    private static int CountDigits(int value)
+    {
+        if (value == 0)
+        {
+            return 1;
+        }
+
+        int digits = value < 0 ? 1 : 0;
+        ulong remaining = value < 0 ? (ulong)(-(long)value) : (ulong)value;
+        while (remaining > 0)
+        {
+            remaining /= 10;
+            digits++;
+        }
+
+        return digits;
     }
 
     private static void WriteEscaped(ArrayBufferWriter<byte> writer, string? value)
