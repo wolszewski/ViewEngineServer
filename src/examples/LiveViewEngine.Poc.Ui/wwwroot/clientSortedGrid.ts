@@ -428,7 +428,7 @@ export function ClientSortedGrid(): React.ReactElement {
                     { className: 'grid-loader' },
                     React.createElement('div', { className: 'grid-loader-spinner' }),
                     isWaitingForCollection
-                        ? 'Collection not yet available — retrying…'
+                        ? 'Waiting for collection…'
                         : 'Loading snapshot…',
                     isWaitingForCollection
                         ? React.createElement('button', { type: 'button', onClick: disconnect }, 'Disconnect')
