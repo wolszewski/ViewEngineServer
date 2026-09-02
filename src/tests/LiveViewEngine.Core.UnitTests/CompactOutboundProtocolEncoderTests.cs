@@ -118,6 +118,27 @@ public class CompactOutboundProtocolEncoderTests
     }
 
     [Fact]
+    public void EncodeSnapshotRows_BatchesMultipleRowsIntoOnePayload()
+    {
+        var payload = ToText(_encoder.EncodeFrames(
+            new SnapshotRowsDelta
+            {
+                ViewId = "1:1",
+                Schema = Schema,
+                StartRowNumber = 10,
+                VisibleFieldIndexes = [0, 1, 2],
+                Rows =
+                [
+                    ["o1", "Alice", "100"],
+                    ["o2", "Bob", "200"]
+                ]
+            },
+            subscriptionId: 1).Single());
+
+        Assert.Equal("S|1|10|o1|Alice|100\nS|1|11|o2|Bob|200", payload);
+    }
+
+    [Fact]
     public void EncodeUpdate_HandlesNullValues()
     {
         var update = ToText(_encoder.EncodeFrames(

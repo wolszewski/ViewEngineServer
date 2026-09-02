@@ -11,7 +11,7 @@ internal sealed class WebSocketConnection(
 {
     private readonly Channel<byte[]> _channel = System.Threading.Channels.Channel.CreateBounded<byte[]>(new BoundedChannelOptions(512)
     {
-        FullMode = BoundedChannelFullMode.DropOldest,
+        FullMode = BoundedChannelFullMode.Wait,
         SingleReader = true
     });
 
@@ -32,13 +32,7 @@ internal sealed class WebSocketConnection(
         _channel.Writer.TryComplete();
     }
 
-    public void TryWrite(byte[] payload)
-    {
-        if (!_channel.Writer.TryWrite(payload))
-        {
-            logger.LogDebug("Dropping outbound frame for a slow WebSocket client.");
-        }
-    }
+    public ValueTask WriteAsync(byte[] payload, CancellationToken ct = default) => _channel.Writer.WriteAsync(payload, ct);
 
     private async Task DrainAsync()
     {

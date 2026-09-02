@@ -26,6 +26,7 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
     private static readonly byte[] SkipSpan = [(byte)'^'];
     private static readonly byte[] OneByte = [(byte)'1'];
     private static readonly byte[] TwoByte = [(byte)'2'];
+    private static readonly byte[] NewLineSpan = [(byte)'\n'];
 
     public OutboundMessageFormat Format => OutboundMessageFormat.Compact;
 
@@ -66,15 +67,12 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
                     start.VisibleFieldIndexes);
                 yield break;
             case SnapshotRowsDelta rows:
-                for (int i = 0; i < rows.Rows.Count; i++)
-                {
-                    yield return EncodeSnapshotRow(
-                        subscriptionId,
-                        rows.Schema,
-                        rows.VisibleFieldIndexes,
-                        rows.StartRowNumber + i,
-                        rows.Rows[i]);
-                }
+                yield return EncodeSnapshotRows(
+                    subscriptionId,
+                    rows.Schema,
+                    rows.VisibleFieldIndexes,
+                    rows.StartRowNumber,
+                    rows.Rows);
                 yield break;
             case EndOfSnapshotDelta:
                 yield return EncodeEndOfSnapshot(subscriptionId);
@@ -87,15 +85,12 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
                     snapshot.IsPartial,
                     schema: snapshot.Schema,
                     visibleFieldIndexes: snapshot.VisibleFieldIndexes);
-                for (int i = 0; i < snapshot.Rows.Count; i++)
-                {
-                    yield return EncodeSnapshotRow(
-                        subscriptionId,
-                        snapshot.Schema,
-                        snapshot.VisibleFieldIndexes,
-                        snapshot.StartIndex + i,
-                        snapshot.Rows[i]);
-                }
+                yield return EncodeSnapshotRows(
+                    subscriptionId,
+                    snapshot.Schema,
+                    snapshot.VisibleFieldIndexes,
+                    snapshot.StartIndex,
+                    snapshot.Rows);
                 yield return EncodeEndOfSnapshot(subscriptionId);
                 yield break;
             case RowInsertDelta insert:
@@ -187,6 +182,32 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
         writer.Write(SeparatorSpan);
         WriteKeyField(writer, schema, visibleFieldIndexes, row);
         WriteFullRow(writer, schema, visibleFieldIndexes, row);
+        return writer.WrittenMemory.ToArray();
+    }
+
+    private byte[] EncodeSnapshotRows(
+        int subscriptionId,
+        CollectionSchema schema,
+        IReadOnlyList<int>? visibleFieldIndexes,
+        int startRowNumber,
+        IReadOnlyList<string?[]> rows)
+    {
+        var writer = new ArrayBufferWriter<byte>();
+        for (int i = 0; i < rows.Count; i++)
+        {
+            if (i > 0)
+            {
+                writer.Write(NewLineSpan);
+            }
+
+            writer.Write(EncodeSnapshotRow(
+                subscriptionId,
+                schema,
+                visibleFieldIndexes,
+                startRowNumber + i,
+                rows[i]));
+        }
+
         return writer.WrittenMemory.ToArray();
     }
 

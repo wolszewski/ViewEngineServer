@@ -131,6 +131,36 @@ public class WebSocketOutboundPublisherTests
     }
 
     [Fact]
+    public async Task PublishAsync_BatchesCompactSnapshotRowsIntoSingleWebSocketMessage()
+    {
+        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance);
+        var socket = new CapturingWebSocket();
+        publisher.Register(1, socket);
+        publisher.ConfigureSubscription(1, 7, OutboundMessageFormat.Compact, snapshotActive: true);
+
+        var schema = new LiveViewEngine.Core.Data.CollectionSchema("orders", ["customer", "amount"]);
+        await publisher.PublishAsync(
+            [new LiveViewEngine.Core.SubscriberTarget(1, 7)],
+            [
+                new LiveViewEngine.Core.SnapshotRowsDelta
+                {
+                    ViewId = "1:7",
+                    Schema = schema,
+                    StartRowNumber = 0,
+                    VisibleFieldIndexes = [0, 1, 2],
+                    Rows =
+                    [
+                        ["o1", "Alice", "100"],
+                        ["o2", "Bob", "200"]
+                    ]
+                }
+            ]);
+
+        await socket.WaitForMessagesAsync(1);
+        Assert.Equal("S|7|0|o1|Alice|100\nS|7|1|o2|Bob|200", Assert.Single(socket.Messages));
+    }
+
+    [Fact]
     public async Task PublishAsync_CoalescesConsecutiveRowUpdatesForSameRow()
     {
         var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance);

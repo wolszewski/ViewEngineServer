@@ -115,7 +115,7 @@ public sealed class WebSocketOutboundPublisher(
             subscription.IsSnapshotActive = false;
             while (subscription.BufferedFrames.Count > 0)
             {
-                connection.TryWrite(subscription.BufferedFrames.Dequeue());
+                connection.WriteAsync(subscription.BufferedFrames.Dequeue()).AsTask().GetAwaiter().GetResult();
             }
         }
     }
@@ -167,7 +167,7 @@ public sealed class WebSocketOutboundPublisher(
 
         lock (connection.Gate)
         {
-            connection.TryWrite(message);
+            connection.WriteAsync(message, ct).AsTask().GetAwaiter().GetResult();
         }
 
         return ValueTask.CompletedTask;
@@ -195,7 +195,10 @@ public sealed class WebSocketOutboundPublisher(
 
                 foreach (var delta in deltas)
                 {
-                    PublishDelta(connection, subscription, target.SubscriptionId, delta);
+                    PublishDeltaAsync(connection, subscription, target.SubscriptionId, delta, ct)
+                        .AsTask()
+                        .GetAwaiter()
+                        .GetResult();
                 }
             }
         }
@@ -213,7 +216,10 @@ public sealed class WebSocketOutboundPublisher(
                 {
                     if (!subscription.IsSnapshotActive)
                     {
-                        _flushPolicy.FlushPendingLiveDeltas(connection, subscriptionId, subscription, _encoders);
+                        _flushPolicy.FlushPendingLiveDeltasAsync(connection, subscriptionId, subscription, _encoders, ct)
+                            .AsTask()
+                            .GetAwaiter()
+                            .GetResult();
                     }
                 }
             }
@@ -222,27 +228,28 @@ public sealed class WebSocketOutboundPublisher(
         return ValueTask.CompletedTask;
     }
 
-    private void PublishDelta(
+    private async ValueTask PublishDeltaAsync(
         WebSocketConnection connection,
         SubscriptionState subscription,
         int subscriptionId,
-        ViewDelta delta)
+        ViewDelta delta,
+        CancellationToken ct)
     {
         try
         {
             var encoder = _encoders[subscription.Format];
             if (_flushPolicy.IsSnapshotControlOrData(delta))
             {
-                _flushPolicy.FlushPendingLiveDeltas(connection, subscriptionId, subscription, _encoders);
+                await _flushPolicy.FlushPendingLiveDeltasAsync(connection, subscriptionId, subscription, _encoders, ct);
 
                 foreach (var payload in encoder.EncodeFrames(delta, subscriptionId))
                 {
-                    connection.TryWrite(payload);
+                    await connection.WriteAsync(payload, ct);
                 }
 
                 if (delta is EndOfSnapshotDelta or SnapshotDelta)
                 {
-                    _flushPolicy.CompleteSnapshot(connection, subscription);
+                    await _flushPolicy.CompleteSnapshotAsync(connection, subscription, ct);
                 }
 
                 return;
@@ -262,13 +269,13 @@ public sealed class WebSocketOutboundPublisher(
             {
                 foreach (var payload in encoder.EncodeFrames(delta, subscriptionId))
                 {
-                    connection.TryWrite(payload);
+                    await connection.WriteAsync(payload, ct);
                 }
             }
 
             if (_flushPolicy.ShouldFlushPendingLiveDeltas(subscription))
             {
-                _flushPolicy.FlushPendingLiveDeltas(connection, subscriptionId, subscription, _encoders);
+                await _flushPolicy.FlushPendingLiveDeltasAsync(connection, subscriptionId, subscription, _encoders, ct);
             }
         }
         catch (Exception ex)

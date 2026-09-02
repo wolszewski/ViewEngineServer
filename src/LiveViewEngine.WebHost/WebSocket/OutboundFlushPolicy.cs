@@ -9,11 +9,12 @@ internal sealed class OutboundFlushPolicy
     public bool ShouldFlushPendingLiveDeltas(SubscriptionState subscription) =>
         subscription.PendingLiveDeltas.Count >= MaxPendingLiveDeltasPerSubscription;
 
-    public void FlushPendingLiveDeltas(
+    public async ValueTask FlushPendingLiveDeltasAsync(
         WebSocketConnection connection,
         int subscriptionId,
         SubscriptionState subscription,
-        IReadOnlyDictionary<OutboundMessageFormat, IOutboundProtocolEncoder> encoders)
+        IReadOnlyDictionary<OutboundMessageFormat, IOutboundProtocolEncoder> encoders,
+        CancellationToken ct = default)
     {
         if (subscription.PendingLiveDeltas.Count == 0)
         {
@@ -25,21 +26,22 @@ internal sealed class OutboundFlushPolicy
         {
             foreach (var payload in encoder.EncodeFrames(delta, subscriptionId))
             {
-                connection.TryWrite(payload);
+                await connection.WriteAsync(payload, ct);
             }
         }
 
         subscription.PendingLiveDeltas.Clear();
     }
 
-    public void CompleteSnapshot(
+    public async ValueTask CompleteSnapshotAsync(
         WebSocketConnection connection,
-        SubscriptionState subscription)
+        SubscriptionState subscription,
+        CancellationToken ct = default)
     {
         subscription.IsSnapshotActive = false;
         while (subscription.BufferedFrames.Count > 0)
         {
-            connection.TryWrite(subscription.BufferedFrames.Dequeue());
+            await connection.WriteAsync(subscription.BufferedFrames.Dequeue(), ct);
         }
     }
 

@@ -15,6 +15,13 @@ function parseSnapshotFollows(token: string | undefined): SnapshotFollowsKind {
 }
 
 export function parseCompactFrame(frame: string, currentFields: string[]): ProtocolFrame[] {
+    if (frame.includes('\n')) {
+        return frame
+            .split('\n')
+            .filter((part) => part.length > 0)
+            .flatMap((part) => parseCompactFrame(part, currentFields));
+    }
+
     const tokens = splitTokens(frame);
     const kind = tokens[0];
 
