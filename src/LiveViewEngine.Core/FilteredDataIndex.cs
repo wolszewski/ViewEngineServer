@@ -2,6 +2,14 @@ using LiveViewEngine.Collections;
 
 namespace LiveViewEngine.Core;
 
+// A row index whose membership can change independently of position mutation (used for
+// filtered views layered on top of an IPositionIndex).
+internal interface IMutableRowIndex : IRowIndex
+{
+    int Insert(int rowIndex);
+    int TryDelete(int rowIndex);
+}
+
 internal sealed class FilteredDataIndex<TComparer> : IMutableRowIndex where TComparer : IComparer<int>
 {
     private readonly NodeArrayTree<TComparer> _index;
