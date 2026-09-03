@@ -158,4 +158,39 @@ public class ViewEngineCapabilityTests
         var rejected = Assert.IsType<SubscriptionRejectedDelta>(Assert.Single(updateResult));
         Assert.Equal("sorting_not_enabled", rejected.Reason);
     }
+
+    [Fact]
+    public async Task RequireExplicitCapabilities_RejectsFilterPreset_WhenFilteringNotEnabled()
+    {
+        var (engine, _) = CreateEngine(new LiveViewEngineOptions
+        {
+            EagerIndexing = false,
+            RequireExplicitCapabilities = true,
+            SortingEnabled = false,
+            FilteringEnabled = false
+        });
+        await CreateTrades(engine);
+
+        var presetResult = await engine.IngestAsync(new CreateFilterPresetCommand
+        {
+            CollectionId = "trades",
+            FilterPresetId = "aaplOnly",
+            Filters = [new FilterSpec("symbol", FilterOperator.Eq, "AAPL")]
+        });
+        Assert.True(presetResult.Success, presetResult.Error);
+
+        // A subscribe carrying only a FilterPresetId (no explicit View.Filters) must still be
+        // rejected: CollectionRuntime.ResolveViewKey expands the preset into real server-side
+        // filters, so the effective filter set is non-empty even though View.Filters is [].
+        var result = await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = 1,
+            View = new ViewDefinition { CollectionId = "trades", FilterPresetId = "aaplOnly" },
+            StartIndex = 0,
+            PageSize = 200
+        });
+
+        var rejected2 = Assert.IsType<SubscriptionRejectedDelta>(Assert.Single(result));
+        Assert.Equal("filtering_not_enabled", rejected2.Reason);
+    }
 }
