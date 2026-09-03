@@ -2,13 +2,13 @@ using LiveViewEngine.Collections;
 
 namespace LiveViewEngine.Core;
 
-internal sealed class FilteredDataIndex : IRowIndex
+internal sealed class FilteredDataIndex<TComparer> : IMutableRowIndex where TComparer : IComparer<int>
 {
-    private readonly NodeArrayTree<SortIndex.RowComparer> _index;
+    private readonly NodeArrayTree<TComparer> _index;
 
-    internal FilteredDataIndex(SortIndex.RowComparer comparer, IEnumerable<int> rows)
+    internal FilteredDataIndex(TComparer comparer, IEnumerable<int> rows)
     {
-        _index = new NodeArrayTree<SortIndex.RowComparer>(comparer);
+        _index = new NodeArrayTree<TComparer>(comparer);
         foreach (int rowIndex in rows)
         {
             _index.Insert(rowIndex);
@@ -17,9 +17,9 @@ internal sealed class FilteredDataIndex : IRowIndex
 
     public int Count => _index.Count;
 
-    internal int Insert(int rowIndex) => _index.Insert(rowIndex);
+    public int Insert(int rowIndex) => _index.Insert(rowIndex);
 
-    internal int TryDelete(int rowIndex) => _index.TryDelete(rowIndex);
+    public int TryDelete(int rowIndex) => _index.TryDelete(rowIndex);
 
     public int IndexOf(int rowIndex) => _index.IndexOf(rowIndex);
 

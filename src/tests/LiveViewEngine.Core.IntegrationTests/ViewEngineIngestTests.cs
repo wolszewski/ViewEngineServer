@@ -239,6 +239,112 @@ public class ViewEngineIngestTests
     }
 
     [Fact]
+    public async Task Subscribe_WithoutSortColumn_ReturnsArrivalOrderNotPrimaryKeyOrder()
+    {
+        var (engine, _, _) = CreateEngine();
+        await CreateOrders(engine);
+        // Primary keys are deliberately out of alphabetical/arrival order: if the server still
+        // fell back to sorting by primary key, the snapshot would come back as o1, o2, o3.
+        await Upsert(engine, "o3", "Carol", "300");
+        await Upsert(engine, "o1", "Alice", "100");
+        await Upsert(engine, "o2", "Bob", "200");
+
+        var events = await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = 1,
+            View = new ViewDefinition { CollectionId = "orders" },
+            StartIndex = 0,
+            PageSize = 10
+        });
+
+        var snapshot = events.ToSnapshotDelta();
+        var keys = snapshot.Rows.Select(row => row[CollectionSchema.PrimaryKeyIndex]).ToList();
+        Assert.Equal(["o3", "o1", "o2"], keys);
+    }
+
+    [Fact]
+    public async Task Subscribe_WithoutSortColumn_NewRowIsAppendedAtEnd()
+    {
+        var (engine, publisher, _) = CreateEngine();
+        await CreateOrders(engine);
+        await Upsert(engine, "o3", "Carol", "300");
+        await Upsert(engine, "o1", "Alice", "100");
+        await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = 1,
+            View = new ViewDefinition { CollectionId = "orders" },
+            StartIndex = 0,
+            PageSize = 10
+        });
+
+        await Upsert(engine, "o2", "Bob", "200");
+
+        var insertEvents = publisher.EventsFor(1).OfType<RowInsertEvent>().ToList();
+        var insertEvent = Assert.Single(insertEvents);
+        Assert.Equal("o2", insertEvent.Row["key"]);
+        Assert.Equal(2, insertEvent.Position);
+    }
+
+    [Fact]
+    public async Task Subscribe_WithoutSortColumn_UpdatingNonKeyFieldDoesNotReorderRows()
+    {
+        var (engine, publisher, _) = CreateEngine();
+        await CreateOrders(engine);
+        await Upsert(engine, "o3", "Carol", "300");
+        await Upsert(engine, "o1", "Alice", "100");
+        await Upsert(engine, "o2", "Bob", "200");
+        await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = 1,
+            View = new ViewDefinition { CollectionId = "orders" },
+            StartIndex = 0,
+            PageSize = 10
+        });
+
+        // Changing "amount" (not part of the natural order) must not move "o3" from position 0.
+        await engine.IngestAsync(new UpsertRowCommand
+        {
+            CollectionId = "orders",
+            Key = "o3",
+            Fields = new Dictionary<string, string?> { ["amount"] = "999" }
+        });
+
+        Assert.Empty(publisher.EventsFor(1).OfType<RowInsertEvent>());
+        Assert.Empty(publisher.EventsFor(1).OfType<RowRemoveEvent>());
+        var update = Assert.Single(publisher.EventsFor(1).OfType<RowUpdateEvent>());
+        Assert.Equal("o3", update.RowId);
+        Assert.Equal(0, update.Position);
+    }
+
+    [Fact]
+    public async Task Subscribe_WithoutSortColumn_DeleteThenReinsertGetsFreshPosition()
+    {
+        var (engine, publisher, _) = CreateEngine();
+        await CreateOrders(engine);
+        await Upsert(engine, "o1", "Alice", "100");
+        await Upsert(engine, "o2", "Bob", "200");
+        await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = 1,
+            View = new ViewDefinition { CollectionId = "orders" },
+            StartIndex = 0,
+            PageSize = 10
+        });
+
+        await engine.IngestAsync(new DeleteRowCommand { CollectionId = "orders", Key = "o1" });
+        await Upsert(engine, "o1", "Alice2", "150");
+
+        var removeEvents = publisher.EventsFor(1).OfType<RowRemoveEvent>().ToList();
+        Assert.Single(removeEvents);
+        Assert.Equal(0, removeEvents[0].Position);
+
+        var insertEvents = publisher.EventsFor(1).OfType<RowInsertEvent>().ToList();
+        var insertEvent = Assert.Single(insertEvents);
+        Assert.Equal("o1", insertEvent.Row["key"]);
+        Assert.Equal(1, insertEvent.Position);
+    }
+
+    [Fact]
     public async Task Subscribe_SameSortColumnWithDifferentDirections_ReturnsDifferentOrder()
     {
         var (engine, _, _) = CreateEngine();

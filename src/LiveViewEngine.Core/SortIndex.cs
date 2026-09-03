@@ -4,7 +4,7 @@ using System.Threading;
 
 namespace LiveViewEngine.Core;
 
-public sealed class SortIndex : IRowIndex
+public sealed class SortIndex : IPositionIndex
 {
     private readonly RowCollection _collection;
     private readonly int _fieldIndex;
@@ -57,13 +57,20 @@ public sealed class SortIndex : IRowIndex
     public int SubscriberCount => _subscriberCount;
     public DateTime LastUsedUtc => new DateTime(Interlocked.Read(ref _lastUsedTicks), DateTimeKind.Utc);
 
-    internal void IncrementSubscribers()
+    public void IncrementSubscribers()
     {
         Interlocked.Increment(ref _subscriberCount);
         Interlocked.Exchange(ref _lastUsedTicks, DateTime.UtcNow.Ticks);
     }
 
-    internal void DecrementSubscribers() => Interlocked.Decrement(ref _subscriberCount);
+    public void DecrementSubscribers() => Interlocked.Decrement(ref _subscriberCount);
+
+    public bool AffectsOrder(in FieldMask changedMask) => changedMask[_fieldIndex];
+
+    IMutableRowIndex IPositionIndex.CreateFilteredIndex(FilterSet filters) => CreateFilteredIndex(filters);
+
+    internal IMutableRowIndex CreateFilteredIndex(FilterSet filters) =>
+        new FilteredDataIndex<RowComparer>(GetComparer(), EnumerateFiltered(filters));
 
     public void Take(int startIndex, Span<int> destination) => _tree.Take(startIndex, destination);
 
@@ -88,7 +95,7 @@ public sealed class SortIndex : IRowIndex
         }
     }
 
-    internal void CaptureOldValue(int rowIndex)
+    public void CaptureOldValue(int rowIndex)
     {
         int pos = _tree.IndexOf(rowIndex);
         _pendingWasExisting = pos >= 0;
@@ -99,7 +106,7 @@ public sealed class SortIndex : IRowIndex
         _hasPending = true;
     }
 
-    internal void ResetPending()
+    public void ResetPending()
     {
         _hasPending = false;
         _pendingWasExisting = false;
@@ -107,12 +114,12 @@ public sealed class SortIndex : IRowIndex
         _pendingOldValue = null;
     }
 
-    internal int IndexOfWithPendingOldValue(int rowIndex)
+    public int IndexOfWithPendingOldValue(int rowIndex)
     {
         return WithPendingOldValue(rowIndex, () => _tree.IndexOf(rowIndex));
     }
 
-    internal TResult WithPendingOldValue<TResult>(int rowIndex, Func<TResult> action)
+    public TResult WithPendingOldValue<TResult>(int rowIndex, Func<TResult> action)
     {
         if (!_hasPending || !_pendingWasExisting || _pendingRowIndex != rowIndex)
         {

@@ -171,7 +171,7 @@ public sealed class CollectionRuntime : IDisposable
         var (view, sortIndexKey, sortIndexRegistry) = GetOrCreateSharedView(viewKey);
         sortIndexRegistry.UnflagForRemoval(sortIndexKey);
         view.AddSubscriber(subscriptionKey);
-        view.SortIndex.IncrementSubscribers();
+        view.PositionIndex.IncrementSubscribers();
 
         var normalizedStart = Math.Max(0, command.StartIndex);
         var viewport = new ViewportState
@@ -413,18 +413,22 @@ public sealed class CollectionRuntime : IDisposable
 
         _sortIndexRegistry.Remove(key);
         _sortIndexRegistry.UnflagForRemoval(key);
-        Collection.ReleaseTypedFieldRef(key.FieldIndex);
-        Collection.TryDeactivatePendingTypedColumn(key.FieldIndex);
+        if (key.FieldIndex != SortIndexRegistry.NaturalOrderFieldIndex)
+        {
+            Collection.ReleaseTypedFieldRef(key.FieldIndex);
+            Collection.TryDeactivatePendingTypedColumn(key.FieldIndex);
+        }
+
         return true;
     }
 
     private (SharedView View, SortIndexKey SortIndexKey, SortIndexRegistry Registry) GetOrCreateSharedView(ViewKey viewKey)
     {
         var sortIndexKey = CreateSortIndexKey(Collection, viewKey, viewKey.CollectionId);
-        var sortIndex = _sortIndexRegistry.GetOrCreate(sortIndexKey, Collection);
+        var positionIndex = _sortIndexRegistry.GetOrCreate(sortIndexKey, Collection);
         if (!_sharedViews.TryGetValue(viewKey, out var view))
         {
-            view = new SharedView(viewKey, Collection, sortIndex, _options);
+            view = new SharedView(viewKey, Collection, positionIndex, _options);
             _sharedViews[viewKey] = view;
             IncrementActiveSharedViewCount();
         }
@@ -561,6 +565,7 @@ public sealed class CollectionRuntime : IDisposable
     private void EagerlyInitializeIndexes()
     {
         var collectionId = Collection.Schema.CollectionName;
+        _sortIndexRegistry.GetOrCreate(new SortIndexKey(collectionId, SortIndexRegistry.NaturalOrderFieldIndex), Collection);
         foreach (var field in Collection.Schema.Fields)
         {
             var key = new SortIndexKey(collectionId, field.FieldIndex);
@@ -570,9 +575,15 @@ public sealed class CollectionRuntime : IDisposable
 
     private static SortIndexKey CreateSortIndexKey(RowCollection collection, ViewKey key, string sortCollectionId)
     {
-        int sortFieldIndex = key.SortColumn is not null
-            ? collection.Schema.GetFieldIndex(key.SortColumn)
-            : collection.Schema.PrimaryKey.FieldIndex;
+        if (key.SortColumn is null)
+        {
+            // No sortColumn requested: use the cheap shared natural-order index instead of
+            // falling back to a field-sorted (primary key) index — no tree-comparator field
+            // reads, no reordering on update.
+            return new SortIndexKey(sortCollectionId, SortIndexRegistry.NaturalOrderFieldIndex);
+        }
+
+        int sortFieldIndex = collection.Schema.GetFieldIndex(key.SortColumn);
         if (sortFieldIndex < 0)
         {
             sortFieldIndex = collection.Schema.PrimaryKey.FieldIndex;
@@ -644,8 +655,8 @@ public sealed class CollectionRuntime : IDisposable
         }
 
         view.RemoveSubscriber(viewport.SubscriptionKey);
-        var sortIndex = view.SortIndex;
-        sortIndex.DecrementSubscribers();
+        var positionIndex = view.PositionIndex;
+        positionIndex.DecrementSubscribers();
 
         if (view.IsEmpty)
         {
@@ -656,9 +667,11 @@ public sealed class CollectionRuntime : IDisposable
             }
         }
 
-        if (sortIndex.SubscriberCount == 0)
+        // The shared natural-order index is always cheap and reused across every no-sortColumn
+        // view for the collection — never flag it for removal like a per-field SortIndex.
+        if (positionIndex.SubscriberCount == 0 && positionIndex.FieldIndex != SortIndexRegistry.NaturalOrderFieldIndex)
         {
-            _sortIndexRegistry.FlagForRemoval(new SortIndexKey(viewport.ViewKey.CollectionId, sortIndex.FieldIndex));
+            _sortIndexRegistry.FlagForRemoval(new SortIndexKey(viewport.ViewKey.CollectionId, positionIndex.FieldIndex));
         }
     }
 

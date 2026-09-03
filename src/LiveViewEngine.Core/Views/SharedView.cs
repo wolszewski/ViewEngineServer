@@ -7,31 +7,31 @@ public sealed class SharedView : IDisposable
     public ViewKey Key { get; }
     private readonly bool _sortAscending;
     private readonly RowCollection _collection;
-    private readonly SortIndex _sortIndex;
+    private readonly IPositionIndex _positionIndex;
     private readonly FilterSet _filters;
-    private readonly FilteredDataIndex? _filteredIndex;
+    private readonly IMutableRowIndex? _filteredIndex;
     private readonly IRowIndex _activeIndex;
     private readonly HashSet<SubscriptionKey> _subscribers = new();
 
-    public SharedView(ViewKey key, RowCollection collection, SortIndex sortIndex, LiveViewEngineOptions? options = null)
+    internal SharedView(ViewKey key, RowCollection collection, IPositionIndex positionIndex, LiveViewEngineOptions? options = null)
     {
         Key = key;
         _sortAscending = key.SortAscending;
         _collection = collection;
-        _sortIndex = sortIndex;
+        _positionIndex = positionIndex;
 
         var lifetime = options?.TypedColumnKeepAlive ?? TypedColumnKeepAlive.WhenReferencedByIndexes;
         _filters = FilterSet.Create(key.Filters, collection.Schema, collection, lifetime);
         if (_filters.HasFilters)
         {
-            _filteredIndex = new FilteredDataIndex(_sortIndex.GetComparer(), _sortIndex.EnumerateFiltered(_filters));
+            _filteredIndex = positionIndex.CreateFilteredIndex(_filters);
         }
-        _activeIndex = (IRowIndex?)_filteredIndex ?? sortIndex;
+        _activeIndex = (IRowIndex?)_filteredIndex ?? positionIndex;
     }
 
     public void Dispose() => _filters.Dispose();
 
-    internal SortIndex SortIndex => _sortIndex;
+    internal IPositionIndex PositionIndex => _positionIndex;
 
     public IEnumerable<SubscriptionKey> Subscribers => _subscribers;
 
@@ -127,8 +127,8 @@ public sealed class SharedView : IDisposable
 
         int originalCount = _activeIndex.Count;
         int basePosition = _filteredIndex != null
-            ? _sortIndex.WithPendingOldValue(rowIndex, () => _filteredIndex.TryDelete(rowIndex))
-            : _sortIndex.IndexOfWithPendingOldValue(rowIndex);
+            ? _positionIndex.WithPendingOldValue(rowIndex, () => _filteredIndex.TryDelete(rowIndex))
+            : _positionIndex.IndexOfWithPendingOldValue(rowIndex);
         return ToViewPosition(basePosition, originalCount);
     }
 
@@ -141,21 +141,21 @@ public sealed class SharedView : IDisposable
                 : -1;
         }
 
-        return ToViewPosition(_sortIndex.IndexOf(rowIndex), _activeIndex.Count);
+        return ToViewPosition(_positionIndex.IndexOf(rowIndex), _activeIndex.Count);
     }
 
     internal int PrepareDelete(int rowIndex)
     {
         int originalCount = _activeIndex.Count;
         int basePosition = _filteredIndex != null
-            ? _sortIndex.WithPendingOldValue(rowIndex, () => _filteredIndex.TryDelete(rowIndex))
-            : _sortIndex.IndexOfWithPendingOldValue(rowIndex);
+            ? _positionIndex.WithPendingOldValue(rowIndex, () => _filteredIndex.TryDelete(rowIndex))
+            : _positionIndex.IndexOfWithPendingOldValue(rowIndex);
         return ToViewPosition(basePosition, originalCount);
     }
 
     public (bool SortFieldChanged, bool FilterFieldChanged) TouchedFields(in FieldMask changedMask)
     {
-        bool sortTouched = changedMask[_sortIndex.FieldIndex];
+        bool sortTouched = _positionIndex.AffectsOrder(changedMask);
         bool filterTouched = _filters.Mask.Intersects(changedMask);
         return (sortTouched, filterTouched);
     }

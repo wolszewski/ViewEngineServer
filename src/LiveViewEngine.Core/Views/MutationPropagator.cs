@@ -6,33 +6,33 @@ namespace LiveViewEngine.Core.Views;
 public sealed class MutationPropagator
 {
     // Reusable per-propagation buffers. CollectionRuntime serializes all mutations per collection.
-    private readonly Dictionary<SortIndex, List<SharedView>> _groupBuffer = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<IPositionIndex, List<SharedView>> _groupBuffer = new(ReferenceEqualityComparer.Instance);
     private readonly List<MutationImpact> _impactBuffer = [];
     private readonly List<int> _oldPosBuffer = [];
 
     // Returns groups of (deltas, targets) where all targets in a group share the
     // same viewport and therefore receive the same delta payload — serialize once, fan out.
-    public List<(IReadOnlyList<ViewDelta> Deltas, List<SubscriberTarget> Targets)>? Propagate(
+    internal List<(IReadOnlyList<ViewDelta> Deltas, List<SubscriberTarget> Targets)>? Propagate(
         RowCollection collection,
         Dictionary<ViewKey, SharedView> collectionViews,
         Dictionary<SubscriptionKey, ViewportState> viewports,
-        IEnumerable<SortIndex> sortIndexes,
+        IEnumerable<IPositionIndex> positionIndexes,
         MutationInfo mutation,
         bool isDelete)
     {
         List<(IReadOnlyList<ViewDelta> Deltas, List<SubscriberTarget> Targets)>? pending = null;
         try
         {
-            GroupViewsBySortIndex(collectionViews);
-            foreach (var (sortIndex, views) in _groupBuffer)
+            GroupViewsByPositionIndex(collectionViews);
+            foreach (var (positionIndex, views) in _groupBuffer)
             {
                 AnalyzeImpactsAndCaptureOldPositions(views, mutation, isDelete);
-                ApplySortIndexMutation(sortIndex, mutation, isDelete);
+                ApplyPositionIndexMutation(positionIndex, mutation, isDelete);
                 CollectViewDeltaGroups(collection, views, viewports, mutation, isDelete, ref pending);
                 views.Clear();
             }
 
-            UpdateIdleSortIndexes(sortIndexes, mutation, isDelete);
+            UpdateIdlePositionIndexes(positionIndexes, mutation, isDelete);
 
             return pending;
         }
@@ -44,15 +44,15 @@ public sealed class MutationPropagator
         }
     }
 
-    private void GroupViewsBySortIndex(Dictionary<ViewKey, SharedView> collectionViews)
+    private void GroupViewsByPositionIndex(Dictionary<ViewKey, SharedView> collectionViews)
     {
         foreach (var entry in collectionViews)
         {
-            var sortIndex = entry.Value.SortIndex;
-            if (!_groupBuffer.TryGetValue(sortIndex, out var list))
+            var positionIndex = entry.Value.PositionIndex;
+            if (!_groupBuffer.TryGetValue(positionIndex, out var list))
             {
                 list = [];
-                _groupBuffer[sortIndex] = list;
+                _groupBuffer[positionIndex] = list;
             }
 
             list.Add(entry.Value);
@@ -81,33 +81,33 @@ public sealed class MutationPropagator
         }
     }
 
-    private void ApplySortIndexMutation(SortIndex sortIndex, MutationInfo mutation, bool isDelete)
+    private void ApplyPositionIndexMutation(IPositionIndex positionIndex, MutationInfo mutation, bool isDelete)
     {
         if (isDelete)
         {
-            sortIndex.OnDelete(mutation.RowIndex);
+            positionIndex.OnDelete(mutation.RowIndex);
             return;
         }
 
-        if (mutation.IsNew || mutation.ChangedMask[sortIndex.FieldIndex])
+        if (mutation.IsNew || positionIndex.AffectsOrder(mutation.ChangedMask))
         {
-            sortIndex.OnUpsert(mutation.RowIndex);
+            positionIndex.OnUpsert(mutation.RowIndex);
             return;
         }
 
-        sortIndex.ResetPending();
+        positionIndex.ResetPending();
     }
 
-    private void UpdateIdleSortIndexes(IEnumerable<SortIndex> sortIndexes, MutationInfo mutation, bool isDelete)
+    private void UpdateIdlePositionIndexes(IEnumerable<IPositionIndex> positionIndexes, MutationInfo mutation, bool isDelete)
     {
-        foreach (var sortIndex in sortIndexes)
+        foreach (var positionIndex in positionIndexes)
         {
-            if (_groupBuffer.ContainsKey(sortIndex))
+            if (_groupBuffer.ContainsKey(positionIndex))
             {
                 continue;
             }
 
-            ApplySortIndexMutation(sortIndex, mutation, isDelete);
+            ApplyPositionIndexMutation(positionIndex, mutation, isDelete);
         }
     }
 
