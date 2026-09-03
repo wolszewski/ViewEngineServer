@@ -55,7 +55,7 @@ export interface SubscribeRequest {
     collectionId: string;
     sortColumn: string;
     sortAscending: boolean;
-    pageSize: number;
+    pageSize?: number;
     startIndex: number;
     filters: FilterRequest[];
     fields?: string[];

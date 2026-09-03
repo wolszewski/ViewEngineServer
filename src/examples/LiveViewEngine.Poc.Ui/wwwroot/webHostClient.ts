@@ -301,7 +301,6 @@ export class WebHostClient {
             sortColumn: request.sortColumn,
             sortAscending: request.sortAscending,
             startIndex: request.startIndex,
-            pageSize: request.pageSize,
             sendSnapshot: request.sendSnapshot !== false,
             messageFormat: this.currentMessageFormat,
             filters: (request.filters ?? []).map((filter) => ({
@@ -313,6 +312,10 @@ export class WebHostClient {
 
         if (request.fields !== undefined && request.fields.length > 0) {
             message.fields = request.fields;
+        }
+
+        if (typeof request.pageSize === 'number') {
+            message.pageSize = request.pageSize;
         }
 
         this.socket.send(JSON.stringify(message));
@@ -334,10 +337,9 @@ export class WebHostClient {
             type: 'updateview',
             subscriptionId: this.activeSubscriptionId,
             startIndex: request.startIndex,
-            pageSize: request.pageSize,
             sortColumn: request.sortColumn,
             sortAscending: request.sortAscending
-        }
+        };
 
         if (request.filters !== undefined) {
             message.filters = request.filters.map((filter) => ({
@@ -349,6 +351,10 @@ export class WebHostClient {
 
         if (request.fields !== undefined) {
             message.fields = request.fields;
+        }
+
+        if (typeof request.pageSize === 'number') {
+            message.pageSize = request.pageSize;
         }
 
         this.socket.send(JSON.stringify(message));
