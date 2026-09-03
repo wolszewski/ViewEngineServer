@@ -148,7 +148,14 @@ public sealed class WebSocketSessionManager
                     // A capability check on an already-active subscription (e.g. a viewport update requesting
                     // sortColumn/filters that aren't enabled). Unlike the subscribe-time rejection above, the
                     // subscription itself stays alive with its previous view untouched - only the requested
-                    // change is refused.
+                    // change is refused. onBeforeProcess may already have called BeginViewportSnapshot (it
+                    // runs before the capability check, on the runtime worker) — undo that here, or
+                    // IsSnapshotActive stays stuck true and every later live delta buffers forever unread.
+                    if (snapshotBegan)
+                    {
+                        _publisher.CancelSnapshot(context.ConnectionId, command.SubscriptionId);
+                    }
+
                     await _publisher.PublishSubscriptionRejectedAsync(
                         context.ConnectionId,
                         messageFormat,
