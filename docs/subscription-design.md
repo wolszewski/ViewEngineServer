@@ -69,4 +69,10 @@ On reconnect, clients subscribe again and receive a new server-assigned `subscri
 - `reason` is a stable machine-readable code (currently `collection_not_found`); `message` is a human-readable detail.
 - clients must not send `updateview`/`setviewport` for a rejected subscription id; treat rejection as terminal
   for that subscription attempt and surface a clear failure state (e.g. "Subscription failed") with a way to retry/reconnect.
+- collection existence is checked exactly once, atomically, at the point the engine registers/dispatches the subscribe
+  (`ViewEngine._collectionRuntimes` lookup). There is no separate pre-check against the collection store, so a
+  subscribe racing a concurrent `createcollection` can never be silently accepted while actually missing its runtime -
+  it is either fully accepted against a registered runtime or rejected. Rejection is signalled as data (a
+  `SubscriptionRejectedDelta` returned from the same lookup), not an exception, since a missing collection is an
+  expected, externally-triggerable outcome (bad client input or a benign create/subscribe race), not a programming error.
 

@@ -87,24 +87,6 @@ public sealed class WebSocketSessionManager
                     continue;
                 }
 
-                if (command is SubscribeCommand rejectableSubscribe &&
-                    clientSubscriptionId > 0 &&
-                    !_store.TryGet(rejectableSubscribe.View.CollectionId, out _))
-                {
-                    context.ActiveSubscriptionIds.Remove(clientSubscriptionId);
-                    await _publisher.PublishSubscriptionRejectedAsync(
-                        context.ConnectionId,
-                        messageFormat,
-                        new SubscriptionRejectedPayload
-                        {
-                            SubscriptionId = clientSubscriptionId,
-                            Reason = "collection_not_found",
-                            Message = $"Collection '{rejectableSubscribe.View.CollectionId}' does not exist."
-                        },
-                        ct);
-                    continue;
-                }
-
                 if (command is SubscribeCommand subscribe && clientSubscriptionId > 0)
                 {
                     _publisher.ConfigureSubscription(
@@ -138,6 +120,26 @@ public sealed class WebSocketSessionManager
                     }
 
                     throw;
+                }
+
+                if (command is SubscribeCommand && clientSubscriptionId > 0 &&
+                    events is [SubscriptionRejectedDelta rejected])
+                {
+                    // The engine checks collection existence atomically alongside the runtime lookup it uses to
+                    // actually dispatch the subscribe, so this can't race with a concurrent collection create.
+                    context.ActiveSubscriptionIds.Remove(clientSubscriptionId);
+                    _publisher.RemoveSubscription(context.ConnectionId, clientSubscriptionId);
+                    await _publisher.PublishSubscriptionRejectedAsync(
+                        context.ConnectionId,
+                        messageFormat,
+                        new SubscriptionRejectedPayload
+                        {
+                            SubscriptionId = clientSubscriptionId,
+                            Reason = "collection_not_found",
+                            Message = $"Collection '{rejected.CollectionId}' does not exist."
+                        },
+                        ct);
+                    continue;
                 }
 
                 if (snapshotBegan && events.Count == 0)
