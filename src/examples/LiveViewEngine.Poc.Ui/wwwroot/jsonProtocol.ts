@@ -17,6 +17,8 @@ type JsonFrame = {
     removedRowId?: string;
     changedFields?: RowData;
     rows?: RowData[];
+    reason?: string;
+    message?: string;
 };
 
 export function parseJsonFrame(frame: string): ProtocolFrame[] {
@@ -39,6 +41,14 @@ export function parseJsonFrame(frame: string): ProtocolFrame[] {
                     startIndex: Number(message.startIndex) || 0,
                     totalCount: Number(message.totalCount) || 0,
                     fields: message.fields ?? []
+                });
+                break;
+            case 'subscriptionRejected':
+                frames.push({
+                    kind: 'rejected',
+                    subscriptionId,
+                    reason: message.reason ?? '',
+                    message: message.message ?? ''
                 });
                 break;
             case 'snapshotStart':

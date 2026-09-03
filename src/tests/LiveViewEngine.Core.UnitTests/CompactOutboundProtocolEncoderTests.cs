@@ -25,6 +25,19 @@ public class CompactOutboundProtocolEncoderTests
     }
 
     [Fact]
+    public void EncodeSubscriptionRejected_UsesCompactMetadataFrame()
+    {
+        var payload = _encoder.EncodeSubscriptionRejected(new SubscriptionRejectedPayload
+        {
+            SubscriptionId = 3,
+            Reason = "collection_not_found",
+            Message = "Collection 'trades' does not exist."
+        });
+
+        Assert.Equal("ERR|3|collection_not_found|Collection 'trades' does not exist.", ToText(payload));
+    }
+
+    [Fact]
     public void EncodeFrames_EncodesSnapshotInsertUpdateDeleteAndEos()
     {
         var frames = _encoder.EncodeFrames(

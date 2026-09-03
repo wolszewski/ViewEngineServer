@@ -37,6 +37,24 @@ public class JsonOutboundProtocolEncoderTests
     }
 
     [Fact]
+    public void EncodeSubscriptionRejected_UsesJsonMetadata()
+    {
+        var payload = _encoder.EncodeSubscriptionRejected(new SubscriptionRejectedPayload
+        {
+            SubscriptionId = 4,
+            Reason = "collection_not_found",
+            Message = "Collection 'trades' does not exist."
+        });
+
+        using var document = JsonDocument.Parse(payload);
+        var root = document.RootElement;
+        Assert.Equal("subscriptionRejected", root.GetProperty("type").GetString());
+        Assert.Equal(4, root.GetProperty("subscriptionId").GetInt32());
+        Assert.Equal("collection_not_found", root.GetProperty("reason").GetString());
+        Assert.Equal("Collection 'trades' does not exist.", root.GetProperty("message").GetString());
+    }
+
+    [Fact]
     public void EncodeFrames_StreamsSnapshotRowsAndLiveDeltasAsSingleJsonMessages()
     {
         var frames = _encoder.EncodeFrames(

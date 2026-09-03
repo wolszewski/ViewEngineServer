@@ -50,6 +50,19 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
         return writer.WrittenMemory.ToArray();
     }
 
+    public byte[] EncodeSubscriptionRejected(SubscriptionRejectedPayload payload)
+    {
+        var writer = new ArrayBufferWriter<byte>();
+        WriteBytes(writer, "ERR"u8);
+        writer.Write(SeparatorSpan);
+        WriteInt32(writer, payload.SubscriptionId);
+        writer.Write(SeparatorSpan);
+        WriteEscaped(writer, payload.Reason);
+        writer.Write(SeparatorSpan);
+        WriteEscaped(writer, payload.Message);
+        return writer.WrittenMemory.ToArray();
+    }
+
     public IEnumerable<byte[]> EncodeFrames(ViewDelta delta, int subscriptionId)
     {
         switch (delta)

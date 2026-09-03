@@ -1160,7 +1160,12 @@ function App(): React.ReactElement {
     useEffect(() => {
         clientRef.current = new WebHostClient('ws://127.0.0.1:5100/ws', {
             onStatus: setStatus,
-            onEvent: (event) => handleDeltaEventRef.current(event)
+            onEvent: (event) => handleDeltaEventRef.current(event),
+            onSubscriptionRejected: (reason, message) => {
+                isReloadingGridRef.current = false;
+                setIsLoadingSnapshot(false);
+                appendLog(`subscription rejected (${reason}): ${message}`);
+            }
         });
 
         return () => {

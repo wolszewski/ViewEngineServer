@@ -87,6 +87,24 @@ public sealed class WebSocketSessionManager
                     continue;
                 }
 
+                if (command is SubscribeCommand rejectableSubscribe &&
+                    clientSubscriptionId > 0 &&
+                    !_store.TryGet(rejectableSubscribe.View.CollectionId, out _))
+                {
+                    context.ActiveSubscriptionIds.Remove(clientSubscriptionId);
+                    await _publisher.PublishSubscriptionRejectedAsync(
+                        context.ConnectionId,
+                        messageFormat,
+                        new SubscriptionRejectedPayload
+                        {
+                            SubscriptionId = clientSubscriptionId,
+                            Reason = "collection_not_found",
+                            Message = $"Collection '{rejectableSubscribe.View.CollectionId}' does not exist."
+                        },
+                        ct);
+                    continue;
+                }
+
                 if (command is SubscribeCommand subscribe && clientSubscriptionId > 0)
                 {
                     _publisher.ConfigureSubscription(
@@ -131,8 +149,7 @@ public sealed class WebSocketSessionManager
                 {
                     var originalEvents = events;
                     var start = TryExtractSnapshotStart(events, out var snapshotEvents);
-                    var snapshotFollows = start is not null ||
-                                          ShouldWaitForDeferredSnapshot(subscribeCommand, originalEvents);
+                    var snapshotFollows = start is not null;
                     await _publisher.PublishSubscriptionAcceptedAsync(
                         context.ConnectionId,
                         messageFormat,
@@ -331,18 +348,6 @@ public sealed class WebSocketSessionManager
 
         remainingEvents = events.Skip(1).ToArray();
         return start;
-    }
-
-    private bool ShouldWaitForDeferredSnapshot(
-        SubscribeCommand subscribeCommand,
-        IReadOnlyList<ViewDelta> events)
-    {
-        if (!subscribeCommand.SendSnapshot || events.Count > 0)
-        {
-            return false;
-        }
-
-        return !_store.TryGet(subscribeCommand.View.CollectionId, out _);
     }
 
     private IReadOnlyList<string> ResolvePayloadFieldNames(
