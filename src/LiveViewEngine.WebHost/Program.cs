@@ -33,7 +33,10 @@ services.AddOpenTelemetry()
             });
     });
 
-services.AddLiveViewEngineCore(liveViewEngineOptions);
+services.AddLiveViewEngineCore(liveViewEngineOptions)
+    .AddSorting()
+    .AddFiltering()
+    .AddProjections();
 services.AddLiveViewEnginePublisher<WebSocketOutboundPublisher>();
 services.AddSingleton<WebSocketSessionManager>();
 services.AddSingleton(tcpIngestOptions);

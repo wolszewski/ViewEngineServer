@@ -5,6 +5,13 @@ namespace LiveViewEngine.Core.Views;
 
 public sealed class MutationPropagator
 {
+    private readonly IRowProjector _rowProjector;
+
+    public MutationPropagator(IRowProjector? rowProjector = null)
+    {
+        _rowProjector = rowProjector ?? SelectRowProjector.Instance;
+    }
+
     // Reusable per-propagation buffers. CollectionRuntime serializes all mutations per collection.
     private readonly Dictionary<IPositionIndex, List<SharedView>> _groupBuffer = new(ReferenceEqualityComparer.Instance);
     private readonly List<MutationImpact> _impactBuffer = [];
@@ -230,7 +237,7 @@ public sealed class MutationPropagator
 
     // Full-recompute path: new row, delete, sort-field change, or filter-field change.
     // Subscribers with the same viewport and projection produce the same delta sequence — compute and share.
-    private static void CollectPositionGroups(
+    private void CollectPositionGroups(
         RowCollection collection,
         SharedView view,
         Dictionary<SubscriptionKey, ViewportState> viewports,
@@ -280,7 +287,7 @@ public sealed class MutationPropagator
         }
     }
 
-    private static IReadOnlyList<ViewDelta> ComputePositionDeltas(
+    private IReadOnlyList<ViewDelta> ComputePositionDeltas(
         SharedView view,
         RowCollection collection,
         string viewId,
@@ -546,7 +553,7 @@ public sealed class MutationPropagator
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void AddInsertDelta(
+    private void AddInsertDelta(
         List<ViewDelta> deltas,
         string viewId,
         RowCollection collection,
@@ -554,7 +561,7 @@ public sealed class MutationPropagator
         int rowIndex,
         int position)
     {
-        var row = ProjectRow(collection.GetRowValues(rowIndex), selectedFieldIndexes);
+        var row = _rowProjector.Project(collection.GetRowValues(rowIndex), selectedFieldIndexes);
         deltas.Add(new RowInsertDelta
         {
             ViewId = viewId,
@@ -566,7 +573,7 @@ public sealed class MutationPropagator
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void AddReplaceDelta(
+    private void AddReplaceDelta(
         List<ViewDelta> deltas,
         string viewId,
         RowCollection collection,
@@ -576,7 +583,7 @@ public sealed class MutationPropagator
         int insertRowIndex,
         int insertPosition)
     {
-        var row = ProjectRow(collection.GetRowValues(insertRowIndex), selectedFieldIndexes);
+        var row = _rowProjector.Project(collection.GetRowValues(insertRowIndex), selectedFieldIndexes);
         deltas.Add(new RowReplaceDelta
         {
             ViewId = viewId,
@@ -675,16 +682,6 @@ public sealed class MutationPropagator
         }
 
         return filtered.Count == changedColumns.Count ? changedColumns : filtered;
-    }
-
-    private static string?[] ProjectRow(string?[] source, int[] selectedFieldIndexes)
-    {
-        var copy = new string?[selectedFieldIndexes.Length];
-        for (int i = 0; i < selectedFieldIndexes.Length; i++)
-        {
-            copy[i] = source[selectedFieldIndexes[i]];
-        }
-        return copy;
     }
 
     private readonly record struct FastPathGroupKey(int Start, int? PageSize, FieldMask VisibleColumns);

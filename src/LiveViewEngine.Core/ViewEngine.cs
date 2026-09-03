@@ -206,6 +206,17 @@ public sealed class ViewEngine : IViewEngine, IDisposable
             }];
         }
 
+        if (TryGetCapabilityRejection(subscribeRuntime, subscribe.View.SortColumn, subscribe.View.Filters, out var rejectionReason))
+        {
+            return [new SubscriptionRejectedDelta
+            {
+                ViewId = subscribe.EffectiveSubscriptionKey.ToString(),
+                CollectionId = subscribeCollectionId,
+                Reason = rejectionReason!.Value.Reason,
+                Message = rejectionReason.Value.Message
+            }];
+        }
+
         var subscriptionKey = subscribe.EffectiveSubscriptionKey;
         if (_subscriptionRoutes.TryGetValue(subscriptionKey, out var previousCollectionId) &&
             !string.Equals(previousCollectionId, subscribeCollectionId, StringComparison.Ordinal))
@@ -226,6 +237,29 @@ public sealed class ViewEngine : IViewEngine, IDisposable
         }
 
         return deltas;
+    }
+
+    private static bool TryGetCapabilityRejection(
+        CollectionRuntime runtime,
+        string? sortColumn,
+        IReadOnlyList<FilterSpec>? filters,
+        out (string Reason, string Message)? rejection)
+    {
+        var options = runtime.Options;
+        if (sortColumn is not null && !options.SortingEnabled)
+        {
+            rejection = ("sorting_not_enabled", "Server-side sorting is not enabled for this deployment.");
+            return true;
+        }
+
+        if (filters is { Count: > 0 } && !options.FilteringEnabled)
+        {
+            rejection = ("filtering_not_enabled", "Server-side filtering is not enabled for this deployment.");
+            return true;
+        }
+
+        rejection = null;
+        return false;
     }
 
     private async Task<IReadOnlyList<ViewDelta>> HandleUnsubscribeCommandAsync(UnsubscribeCommand unsubscribeCommand,
@@ -253,6 +287,17 @@ public sealed class ViewEngine : IViewEngine, IDisposable
         {
             throw new InvalidOperationException(
                 $"Subscription '{updateCommand.EffectiveSubscriptionKey}' was not found.");
+        }
+
+        if (TryGetCapabilityRejection(updateRuntime, updateCommand.SortColumn, updateCommand.Filters, out var rejectionReason))
+        {
+            return [new SubscriptionRejectedDelta
+            {
+                ViewId = updateCommand.EffectiveSubscriptionKey.ToString(),
+                CollectionId = collectionId,
+                Reason = rejectionReason!.Value.Reason,
+                Message = rejectionReason.Value.Message
+            }];
         }
 
         return await updateRuntime.EnqueueAsync(

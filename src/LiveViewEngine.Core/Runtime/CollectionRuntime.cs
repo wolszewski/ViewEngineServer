@@ -25,6 +25,7 @@ public sealed class CollectionRuntime : IDisposable
         Collection = collection;
         _metrics = metrics;
         _options = options ?? new LiveViewEngineOptions();
+        _propagator = new MutationPropagator(_options.RowProjector);
         _worker.Start();
         if (_options.EagerIndexing)
         {
@@ -33,7 +34,8 @@ public sealed class CollectionRuntime : IDisposable
     }
 
     public RowCollection Collection { get; }
-    private readonly MutationPropagator _propagator = new();
+    internal LiveViewEngineOptions Options => _options;
+    private readonly MutationPropagator _propagator;
 
     public int ActiveSubscriptionCount => Volatile.Read(ref _activeSubscriptionCount);
     public int ActiveSharedViewCount => Volatile.Read(ref _activeSharedViewCount);
@@ -833,7 +835,7 @@ public sealed class CollectionRuntime : IDisposable
         var globalRowNumber = startIndex;
         foreach (int rowIndex in view.EnumeratePageIndexes(startIndex, pageSize))
         {
-            batch[batchCount++] = ProjectRow(Collection.GetRowValues(rowIndex), selectedFieldIndexes);
+            batch[batchCount++] = _options.RowProjector.Project(Collection.GetRowValues(rowIndex), selectedFieldIndexes);
             globalRowNumber++;
             if (batchCount == _options.SnapshotBatchSize)
             {
@@ -876,14 +878,4 @@ public sealed class CollectionRuntime : IDisposable
         };
     }
 
-    private static string?[] ProjectRow(string?[] source, int[] selectedFieldIndexes)
-    {
-        var copy = new string?[selectedFieldIndexes.Length];
-        for (int i = 0; i < selectedFieldIndexes.Length; i++)
-        {
-            copy[i] = source[selectedFieldIndexes[i]];
-        }
-
-        return copy;
-    }
 }
