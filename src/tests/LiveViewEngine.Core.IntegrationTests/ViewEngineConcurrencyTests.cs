@@ -216,8 +216,8 @@ public class ViewEngineConcurrencyTests
                 PageSize = 10
             });
 
-            await createTask;
-
+            var createResult = await createTask;
+            Assert.True(createResult.Success, createResult.Error);
             if (result is [SubscriptionRejectedDelta rejected])
             {
                 Assert.Equal("trades", rejected.CollectionId);
