@@ -10,14 +10,10 @@ public static class ServiceCollectionExtensions
 {
     public static ILiveViewEngineBuilder AddLiveViewEngineCore(this IServiceCollection services, LiveViewEngineOptions? options = null)
     {
+        // RequireExplicitCapabilities' effect on SortingEnabled/FilteringEnabled's defaults is
+        // enforced directly by LiveViewEngineOptions itself (see its property getters), so it holds
+        // regardless of construction path - no extra handling needed here.
         var resolvedOptions = options ?? new LiveViewEngineOptions();
-        if (resolvedOptions.RequireExplicitCapabilities)
-        {
-            // Fail-fast, physical opt-in: capabilities stay off until .AddSorting()/.AddFiltering()
-            // are called on the returned builder.
-            resolvedOptions.SortingEnabled = false;
-            resolvedOptions.FilteringEnabled = false;
-        }
 
         services.AddSingleton<IViewEngineMetrics, ViewEngineMetrics>();
         services.AddSingleton<ICollectionStore, CollectionStore>();

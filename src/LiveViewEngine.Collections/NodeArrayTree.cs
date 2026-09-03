@@ -32,6 +32,26 @@ public sealed class NodeArrayTree<TComparer> where TComparer : IComparer<int>
     public int Insert(int key)
     {
         var finger = Find(key);
+        return InsertAtFinger(finger, key);
+    }
+
+    // Combines a membership check with insertion in a single tree traversal - avoids the redundant
+    // second Find() that a separate "if (!Contains(key)) Insert(key)" call pattern would incur.
+    // Returns false (no-op) if the key is already present.
+    public bool TryInsert(int key)
+    {
+        var finger = Find(key);
+        if (finger.Found)
+        {
+            return false;
+        }
+
+        InsertAtFinger(finger, key);
+        return true;
+    }
+
+    private int InsertAtFinger(Finger finger, int key)
+    {
         var node = finger.Node;
 
         if (node.IsSentinel)

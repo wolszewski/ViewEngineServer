@@ -35,6 +35,16 @@ public sealed class JsonOutboundProtocolEncoder : IOutboundProtocolEncoder
         }, JsonOptions);
     }
 
+    public byte[] EncodeUpdateRejected(SubscriptionRejectedPayload payload)
+    {
+        return JsonSerializer.SerializeToUtf8Bytes(new JsonUpdateRejectedMessage
+        {
+            SubscriptionId = payload.SubscriptionId,
+            Reason = payload.Reason,
+            Message = payload.Message
+        }, JsonOptions);
+    }
+
     public IEnumerable<byte[]> EncodeFrames(ViewDelta delta, int subscriptionId)
     {
         switch (delta)
@@ -190,6 +200,13 @@ public sealed class JsonOutboundProtocolEncoder : IOutboundProtocolEncoder
     private sealed class JsonSubscriptionRejectedMessage : JsonMessage
     {
         public JsonSubscriptionRejectedMessage() => Type = "subscriptionRejected";
+        public required string Reason { get; init; }
+        public required string Message { get; init; }
+    }
+
+    private sealed class JsonUpdateRejectedMessage : JsonMessage
+    {
+        public JsonUpdateRejectedMessage() => Type = "updateRejected";
         public required string Reason { get; init; }
         public required string Message { get; init; }
     }

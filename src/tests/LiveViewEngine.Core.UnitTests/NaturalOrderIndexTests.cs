@@ -18,6 +18,11 @@ public class NaturalOrderIndexTests
         return mutation.RowIndex;
     }
 
+    // AffectsOrder is an internal IPositionIndex lifecycle operation, not part of NaturalOrderIndex's
+    // own public API (see NaturalOrderIndex.cs) - this test-only helper reaches it via the internal
+    // interface, which the test assembly can see through InternalsVisibleTo.
+    private static bool AffectsOrder(NaturalOrderIndex idx, FieldMask mask) => ((IPositionIndex)idx).AffectsOrder(mask);
+
     [Fact]
     public void FieldIndex_IsNegativeOne()
     {
@@ -30,7 +35,7 @@ public class NaturalOrderIndexTests
     {
         var (_, idx) = CreateEmpty();
         var mask = FieldMask.From([0, 1, 2]);
-        Assert.False(idx.AffectsOrder(mask));
+        Assert.False(AffectsOrder(idx, mask));
     }
 
     [Fact]
@@ -62,6 +67,23 @@ public class NaturalOrderIndexTests
 
         Assert.Equal(0, idx.IndexOf(cRow));
         Assert.Equal(2, idx.Count);
+    }
+
+    [Fact]
+    public void OnUpsert_CalledRepeatedlyForSameExistingRow_StaysIdempotent()
+    {
+        // Membership is tracked via the tree itself (no separate side-table) — repeatedly calling
+        // OnUpsert for a row already present must never attempt a duplicate tree insert.
+        var (col, idx) = CreateEmpty();
+        var aRow = Upsert(col, idx, "a", "A");
+        Upsert(col, idx, "b", "B");
+
+        idx.OnUpsert(aRow);
+        idx.OnUpsert(aRow);
+        idx.OnUpsert(aRow);
+
+        Assert.Equal(2, idx.Count);
+        Assert.Equal(0, idx.IndexOf(aRow));
     }
 
     [Fact]

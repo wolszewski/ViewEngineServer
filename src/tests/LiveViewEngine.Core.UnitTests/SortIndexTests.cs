@@ -25,12 +25,17 @@ public class SortIndexTests
     {
         if (col.TryGetRowIndex(key, out int existingRowIndex))
         {
-            idx.CaptureOldValue(existingRowIndex);
+            CaptureOldValue(idx, existingRowIndex);
         }
 
         var mutation = col.AddOrUpdate(key, new Dictionary<string, string?> { ["score"] = score, ["active"] = active });
         idx.OnUpsert(mutation.RowIndex);
     }
+
+    // CaptureOldValue is an internal IPositionIndex lifecycle operation, not part of SortIndex's own
+    // public API (see SortIndex.cs) - this test-only helper reaches it via the internal interface,
+    // which the test assembly can see through InternalsVisibleTo.
+    private static void CaptureOldValue(SortIndex idx, int rowIndex) => ((IPositionIndex)idx).CaptureOldValue(rowIndex);
 
     // Mirrors the paging logic that now lives in SharedView, for testing SortIndex behaviour.
     private static int[] GetPage(SortIndex idx, int startIndex, int? pageSize, FilterSet? filters = null)
@@ -163,7 +168,7 @@ public class SortIndexTests
         Upsert(col, idx, "b", "4");
 
         Assert.True(col.TryGetRowIndex("b", out int existingRowIndex));
-        idx.CaptureOldValue(existingRowIndex);
+        CaptureOldValue(idx, existingRowIndex);
         var mutation = col.AddOrUpdate("b", new Dictionary<string, string?> { ["score"] = "1" });
         idx.OnUpsert(mutation.RowIndex);
 
@@ -180,7 +185,7 @@ public class SortIndexTests
         Upsert(col, idx, "b", "2");
 
         Assert.True(col.TryGetRowIndex("a", out int existingRowIndex));
-        idx.CaptureOldValue(existingRowIndex);
+        CaptureOldValue(idx, existingRowIndex);
         var deleted = col.Delete("a");
         idx.OnDelete(deleted!.RowIndex);
 
@@ -309,7 +314,7 @@ public class SortIndexTests
 
         // Update "c" from 30 to 5 — must reposition from last to first
         col.TryGetRowIndex("c", out var cIndex);
-        idx.CaptureOldValue(cIndex);
+        CaptureOldValue(idx, cIndex);
         var updated = col.AddOrUpdate("c", new Dictionary<string, string?> { ["score"] = "5" });
         idx.OnUpsert(updated.RowIndex);
 

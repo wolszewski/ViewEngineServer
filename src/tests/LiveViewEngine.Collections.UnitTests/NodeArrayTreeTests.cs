@@ -106,6 +106,56 @@ public class NodeArrayTreeTests
         for (int i = 0; i < list.Count - 1; i++) { Assert.True(list[i] < list[i + 1]); }
     }
 
+    // ── TryInsert ────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void TryInsert_NewKey_ReturnsTrueAndInserts()
+    {
+        var tree = Make(1, 3, 5);
+
+        bool inserted = tree.TryInsert(2);
+
+        Assert.True(inserted);
+        Assert.Equal([1, 2, 3, 5], ToList(tree));
+    }
+
+    [Fact]
+    public void TryInsert_AlreadyPresentKey_ReturnsFalseAndDoesNotDuplicate()
+    {
+        var tree = Make(1, 2, 3);
+
+        bool inserted = tree.TryInsert(2);
+
+        Assert.False(inserted);
+        Assert.Equal(3, tree.Count);
+        Assert.Equal([1, 2, 3], ToList(tree));
+    }
+
+    [Fact]
+    public void TryInsert_EmptyTree_ReturnsTrueAndInserts()
+    {
+        var tree = Make();
+
+        bool inserted = tree.TryInsert(42);
+
+        Assert.True(inserted);
+        Assert.Equal([42], ToList(tree));
+    }
+
+    [Fact]
+    public void TryInsert_BeyondNodeCapacity_StaysOrderedAndRejectsDuplicates()
+    {
+        var tree = new NodeArrayTree<AscIntComparer>(default);
+        for (int i = 1; i <= 200; i++) { Assert.True(tree.TryInsert(i)); }
+
+        // Re-inserting every existing key must be rejected without corrupting order/count.
+        for (int i = 1; i <= 200; i++) { Assert.False(tree.TryInsert(i)); }
+
+        Assert.Equal(200, tree.Count);
+        var list = ToList(tree);
+        for (int i = 0; i < 200; i++) { Assert.Equal(i + 1, list[i]); }
+    }
+
     // ── Delete ───────────────────────────────────────────────────────────────
 
     [Fact]

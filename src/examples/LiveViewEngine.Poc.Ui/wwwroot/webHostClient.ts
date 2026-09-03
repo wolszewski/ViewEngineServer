@@ -29,6 +29,11 @@ interface ClientCallbacks {
     onStatus: (status: string) => void;
     onEvent: (event: DeltaEvent) => void;
     onSubscriptionRejected?: (reason: string, message: string) => void;
+    // Non-terminal: the subscription stays alive server-side with its previous view/viewport
+    // untouched - only the requested updateview/setviewport change was refused. Unlike
+    // onSubscriptionRejected, this must NOT be treated as "the subscription died" - do not stop
+    // listening for further live deltas.
+    onUpdateRejected?: (reason: string, message: string) => void;
 }
 
 interface PendingSnapshot {
@@ -194,6 +199,13 @@ export class WebHostClient {
                 this.snapshotRequestStartedAt = null;
                 this.callbacks.onStatus('Subscription failed');
                 this.callbacks.onSubscriptionRejected?.(frame.reason, frame.message);
+                return;
+            case 'updateRejected':
+                // Deliberately does not touch activeSubscriptionId/hasReceivedSnapshot/
+                // pendingSnapshot/stopSubscribeRetry - the server keeps this subscription alive
+                // with its previous view/viewport, so subsequent live deltas (rowInsert/rowUpdate/
+                // rowRemove/rowReplace) for this subscriptionId must keep being processed normally.
+                this.callbacks.onUpdateRejected?.(frame.reason, frame.message);
                 return;
             case 'snapshotStart':
                 if (!this.isActiveSubscription(frame.subscriptionId)) {

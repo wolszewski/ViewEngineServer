@@ -57,15 +57,20 @@ public sealed class SortIndex : IPositionIndex
     public int SubscriberCount => _subscriberCount;
     public DateTime LastUsedUtc => new DateTime(Interlocked.Read(ref _lastUsedTicks), DateTimeKind.Utc);
 
-    public void IncrementSubscribers()
+    // Explicit IPositionIndex implementations below: these lifecycle operations (subscriber
+    // refcounting, pending-old-value capture/reset for reordering) exist solely to satisfy the
+    // internal runtime contract that SharedView/MutationPropagator drive a position index through -
+    // they are not part of SortIndex's own public API and must not be callable/overridable via a
+    // concrete SortIndex reference, to avoid becoming an accidental compatibility commitment.
+    void IPositionIndex.IncrementSubscribers()
     {
         Interlocked.Increment(ref _subscriberCount);
         Interlocked.Exchange(ref _lastUsedTicks, DateTime.UtcNow.Ticks);
     }
 
-    public void DecrementSubscribers() => Interlocked.Decrement(ref _subscriberCount);
+    void IPositionIndex.DecrementSubscribers() => Interlocked.Decrement(ref _subscriberCount);
 
-    public bool AffectsOrder(in FieldMask changedMask) => changedMask[_fieldIndex];
+    bool IPositionIndex.AffectsOrder(in FieldMask changedMask) => changedMask[_fieldIndex];
 
     IMutableRowIndex IPositionIndex.CreateFilteredIndex(FilterSet filters) => CreateFilteredIndex(filters);
 
@@ -95,7 +100,7 @@ public sealed class SortIndex : IPositionIndex
         }
     }
 
-    public void CaptureOldValue(int rowIndex)
+    void IPositionIndex.CaptureOldValue(int rowIndex)
     {
         int pos = _tree.IndexOf(rowIndex);
         _pendingWasExisting = pos >= 0;
@@ -106,7 +111,7 @@ public sealed class SortIndex : IPositionIndex
         _hasPending = true;
     }
 
-    public void ResetPending()
+    void IPositionIndex.ResetPending()
     {
         _hasPending = false;
         _pendingWasExisting = false;
@@ -114,12 +119,12 @@ public sealed class SortIndex : IPositionIndex
         _pendingOldValue = null;
     }
 
-    public int IndexOfWithPendingOldValue(int rowIndex)
+    int IPositionIndex.IndexOfWithPendingOldValue(int rowIndex)
     {
-        return WithPendingOldValue(rowIndex, () => _tree.IndexOf(rowIndex));
+        return ((IPositionIndex)this).WithPendingOldValue(rowIndex, () => _tree.IndexOf(rowIndex));
     }
 
-    public TResult WithPendingOldValue<TResult>(int rowIndex, Func<TResult> action)
+    TResult IPositionIndex.WithPendingOldValue<TResult>(int rowIndex, Func<TResult> action)
     {
         if (!_hasPending || !_pendingWasExisting || _pendingRowIndex != rowIndex)
         {
@@ -157,14 +162,14 @@ public sealed class SortIndex : IPositionIndex
         }
 
         _tree.Insert(index);
-        ResetPending();
+        ((IPositionIndex)this).ResetPending();
     }
 
     public void OnDelete(int index)
     {
         if (!_hasPending || !_pendingWasExisting)
         {
-            ResetPending();
+            ((IPositionIndex)this).ResetPending();
             return;
         }
 
@@ -178,7 +183,7 @@ public sealed class SortIndex : IPositionIndex
         {
             _overrideRowIndex = -1;
             _overrideValue = null;
-            ResetPending();
+            ((IPositionIndex)this).ResetPending();
         }
     }
 
