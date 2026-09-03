@@ -64,13 +64,11 @@ public sealed class NaturalOrderIndex : IPositionIndex
 
     public void OnUpsert(int rowIndex)
     {
-        if (_tree.Contains(rowIndex))
-        {
-            // Existing row: position never changes in response to field updates.
-            return;
-        }
-
-        _tree.Insert(rowIndex);
+        // TryInsert does the membership check and insertion in one tree traversal (existing rows
+        // are the common case on this hot path - most upserts are updates to already-tracked rows,
+        // whose position never changes), instead of a separate Contains + Insert each re-walking
+        // the tree from the root.
+        _tree.TryInsert(rowIndex);
     }
 
     public void OnDelete(int rowIndex)
