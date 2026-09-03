@@ -163,7 +163,7 @@ public sealed class MutationPropagator
 
     // Fast path: field update that doesn't affect sort order or filter membership.
     // Subscribers with the same viewport see the row at the same position — share one RowUpdateDelta.
-    private static void CollectFastPathGroups(
+    private void CollectFastPathGroups(
         RowCollection collection,
         SharedView view,
         Dictionary<SubscriptionKey, ViewportState> viewports,
@@ -216,6 +216,8 @@ public sealed class MutationPropagator
             {
                 continue;
             }
+
+            projectedColumns = ProjectChangedColumns(collection, mutation.RowIndex, projectedColumns, viewport.SelectedFieldIndexes);
 
             var targets = new List<SubscriberTarget>(groupViewports.Count);
             foreach (var v in groupViewports)
@@ -596,7 +598,7 @@ public sealed class MutationPropagator
         });
     }
 
-    private static void AddUpdateDelta(
+    private void AddUpdateDelta(
         List<ViewDelta> deltas,
         string viewId,
         RowCollection collection,
@@ -616,6 +618,8 @@ public sealed class MutationPropagator
             return;
         }
 
+        projected = ProjectChangedColumns(collection, mutation.RowIndex, projected, selectedFieldIndexes);
+
         deltas.Add(new RowUpdateDelta
         {
             ViewId = viewId,
@@ -627,7 +631,7 @@ public sealed class MutationPropagator
         });
     }
 
-    private static IReadOnlyList<ViewDelta> BuildUpdateDeltaIfVisible(
+    private IReadOnlyList<ViewDelta> BuildUpdateDeltaIfVisible(
         string viewId,
         RowCollection collection,
         MutationInfo mutation,
@@ -652,6 +656,8 @@ public sealed class MutationPropagator
             return [];
         }
 
+        projectedColumns = ProjectChangedColumns(collection, mutation.RowIndex, projectedColumns, selectedFieldIndexes);
+
         return [new RowUpdateDelta
         {
             ViewId = viewId,
@@ -661,6 +667,33 @@ public sealed class MutationPropagator
             ChangedColumns = projectedColumns,
             VisibleFieldIndexes = selectedFieldIndexes
         }];
+    }
+
+    // Filtering only strips columns the viewport can't see; a custom (non-default) IRowProjector may
+    // also transform values (e.g. redaction, computed columns), so re-run it here for parity with the
+    // insert/replace/snapshot paths. Skipped when the default projector is active since plain column
+    // selection can't change values — FilterChangedColumns above already produces the correct result.
+    private IReadOnlyCollection<KeyValuePair<int, string?>> ProjectChangedColumns(
+        RowCollection collection,
+        int rowIndex,
+        IReadOnlyCollection<KeyValuePair<int, string?>> changedColumns,
+        int[] selectedFieldIndexes)
+    {
+        if (changedColumns.Count == 0 || ReferenceEquals(_rowProjector, SelectRowProjector.Instance))
+        {
+            return changedColumns;
+        }
+
+        // TODO: optimize with update buffers
+        var projectedRow = _rowProjector.Project(collection.GetRowValues(rowIndex), selectedFieldIndexes);
+        var result = new List<KeyValuePair<int, string?>>(changedColumns.Count);
+        foreach (var (fieldIndex, _) in changedColumns)
+        {
+            int position = Array.BinarySearch(selectedFieldIndexes, fieldIndex);
+            result.Add(new KeyValuePair<int, string?>(fieldIndex, position >= 0 ? projectedRow[position] : null));
+        }
+
+        return result;
     }
 
     private static IReadOnlyCollection<KeyValuePair<int, string?>> FilterChangedColumns(
