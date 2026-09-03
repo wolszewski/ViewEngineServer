@@ -7,15 +7,15 @@ namespace LiveViewEngine.Core;
 // no pending-old-value bookkeeping (position never depends on field content), and no reordering
 // on update — a row is assigned a position once, on first upsert, and keeps it until deleted.
 //
-// Existing rows already in the RowCollection when this index is constructed are ordered by
-// RowCollection's live-index enumeration order (not necessarily true wall-clock arrival order);
-// rows upserted afterwards are appended in true arrival order.
+// Order (including for rows already in the RowCollection when this index is constructed) always
+// matches true insertion order: sequence numbers are read from RowCollection.GetArrivalSequence,
+// which is assigned once per row at true first-insertion time and is stable across delete+reinsert
+// slot reuse — unlike RowCollection's live-index (dictionary) enumeration order, which is not.
 public sealed class NaturalOrderIndex : IPositionIndex
 {
     private readonly RowCollection _collection;
     private readonly NodeArrayTree<SequenceComparer> _tree;
-    private readonly Dictionary<int, long> _sequenceByRowIndex = new();
-    private long _nextSequence;
+    private readonly HashSet<int> _tracked = new();
     private volatile int _subscriberCount;
     private long _lastUsedTicks = DateTime.UtcNow.Ticks;
 
@@ -26,7 +26,7 @@ public sealed class NaturalOrderIndex : IPositionIndex
 
         foreach (var kv in collection.GetAllLiveIndexes())
         {
-            _sequenceByRowIndex[kv.Value] = _nextSequence++;
+            _tracked.Add(kv.Value);
             _tree.Insert(kv.Value);
         }
     }
@@ -63,25 +63,23 @@ public sealed class NaturalOrderIndex : IPositionIndex
 
     public void OnUpsert(int rowIndex)
     {
-        if (_sequenceByRowIndex.ContainsKey(rowIndex))
+        if (!_tracked.Add(rowIndex))
         {
             // Existing row: position never changes in response to field updates.
             return;
         }
 
-        _sequenceByRowIndex[rowIndex] = _nextSequence++;
         _tree.Insert(rowIndex);
     }
 
     public void OnDelete(int rowIndex)
     {
-        if (!_sequenceByRowIndex.ContainsKey(rowIndex))
+        if (!_tracked.Remove(rowIndex))
         {
             return;
         }
 
         _tree.Delete(rowIndex);
-        _sequenceByRowIndex.Remove(rowIndex);
     }
 
     IMutableRowIndex IPositionIndex.CreateFilteredIndex(FilterSet filters) => CreateFilteredIndex(filters);
@@ -116,6 +114,7 @@ public sealed class NaturalOrderIndex : IPositionIndex
 
         internal SequenceComparer(NaturalOrderIndex owner) => _owner = owner;
 
-        public int Compare(int x, int y) => _owner._sequenceByRowIndex[x].CompareTo(_owner._sequenceByRowIndex[y]);
+        public int Compare(int x, int y) =>
+            _owner._collection.GetArrivalSequence(x).CompareTo(_owner._collection.GetArrivalSequence(y));
     }
 }

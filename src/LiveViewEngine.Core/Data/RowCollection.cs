@@ -5,6 +5,12 @@ public sealed class RowCollection(CollectionSchema schema)
     private readonly Dictionary<string, int> _rowKeyToIndex = new();
     private readonly SlotList<string?[]> _rows = new();
     private readonly TypedColumnsCollection _typedColumns = new(schema);
+    // Stable per-slot arrival sequence, assigned once per true insertion. Unlike _rowKeyToIndex's
+    // enumeration order or the SlotList's reused row indexes, this always reflects true insertion
+    // order even across delete+reinsert churn, so NaturalOrderIndex can rebuild correct arrival
+    // order at construction time instead of relying on incidental dictionary/slot layout.
+    private readonly List<long> _arrivalSequence = new();
+    private long _nextArrivalSequence;
 
     public CollectionSchema Schema { get; } = schema;
 
@@ -44,16 +50,22 @@ public sealed class RowCollection(CollectionSchema schema)
         if (rowIndex >= previousCapacity)
         {
             _typedColumns.AddRow();
+            _arrivalSequence.Add(_nextArrivalSequence++);
         }
         else
         {
             _typedColumns.ClearReusedSlot(rowIndex);
+            _arrivalSequence[rowIndex] = _nextArrivalSequence++;
         }
 
         newRow[0] = rowKey;
         _rowKeyToIndex[rowKey] = rowIndex;
         return newRow;
     }
+
+    // True insertion-order sequence for the row currently occupying rowIndex — stable even if this
+    // slot was previously freed and reused by an unrelated later insertion.
+    public long GetArrivalSequence(int rowIndex) => _arrivalSequence[rowIndex];
 
     public MutationInfo? Delete(string rowId)
     {

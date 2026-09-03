@@ -95,4 +95,31 @@ public class NaturalOrderIndexTests
         Assert.Equal(2, idx.Count);
         Assert.Equal(1, idx.IndexOf(newARow));
     }
+
+    [Fact]
+    public void LazyConstruction_AfterDeleteAndReinsertChurn_ReflectsTrueArrivalOrder()
+    {
+        // Simulates a NaturalOrderIndex built lazily (first no-sortColumn subscribe) after the
+        // collection has already seen delete+reinsert churn — no index observed the mutations as
+        // they happened, so the constructor must not rely on RowCollection's live-index (dictionary)
+        // enumeration order, which is perturbed by slot reuse: deleting "b" frees its row slot, and
+        // inserting "d" afterward can reuse that same slot, which would otherwise place "d" before
+        // "c" (an older, still-live row) instead of after it.
+        var schema = new CollectionSchema("rows", ["label"]);
+        var col = new RowCollection(schema);
+
+        col.AddOrUpdate("a", new Dictionary<string, string?> { ["label"] = "A" });
+        col.AddOrUpdate("b", new Dictionary<string, string?> { ["label"] = "B" });
+        col.AddOrUpdate("c", new Dictionary<string, string?> { ["label"] = "C" });
+        col.Delete("b");
+        col.AddOrUpdate("d", new Dictionary<string, string?> { ["label"] = "D" });
+
+        var idx = new NaturalOrderIndex(col);
+
+        var destination = new int[idx.Count];
+        idx.Take(0, destination);
+        var keys = destination.Select(rowIndex => col.GetValue(rowIndex, 0)).ToList();
+
+        Assert.Equal(["a", "c", "d"], keys);
+    }
 }
