@@ -7,16 +7,21 @@ internal readonly record struct SortIndexKey(string CollectionId, int FieldIndex
 
 internal sealed class SortIndexRegistry
 {
-    private readonly ConcurrentDictionary<SortIndexKey, SortIndex> _indexes = new();
+    // Sentinel FieldIndex identifying the shared natural-order (no sortColumn) index per collection.
+    internal const int NaturalOrderFieldIndex = -1;
+
+    private readonly ConcurrentDictionary<SortIndexKey, IPositionIndex> _indexes = new();
     private readonly ConcurrentDictionary<SortIndexKey, DateTime> _flaggedForRemoval = new();
 
-    internal SortIndex GetOrCreate(SortIndexKey key, RowCollection collection) =>
-        _indexes.GetOrAdd(key, k => new SortIndex(collection, k.FieldIndex));
+    internal IPositionIndex GetOrCreate(SortIndexKey key, RowCollection collection) =>
+        _indexes.GetOrAdd(key, k => k.FieldIndex == NaturalOrderFieldIndex
+            ? new NaturalOrderIndex(collection)
+            : new SortIndex(collection, k.FieldIndex));
 
-    internal bool TryGet(SortIndexKey key, out SortIndex? index) =>
+    internal bool TryGet(SortIndexKey key, out IPositionIndex? index) =>
         _indexes.TryGetValue(key, out index);
 
-    internal IEnumerable<SortIndex> GetAllForCollection(string collectionId)
+    internal IEnumerable<IPositionIndex> GetAllForCollection(string collectionId)
     {
         foreach (var kv in _indexes)
         {
@@ -43,3 +48,4 @@ internal sealed class SortIndexRegistry
 
     internal int Count => _indexes.Count;
 }
+

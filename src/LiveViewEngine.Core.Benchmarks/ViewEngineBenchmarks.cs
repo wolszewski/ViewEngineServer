@@ -70,6 +70,9 @@ public class ViewEngineBenchmarks
         foreach (var command in _commands) { await engine.IngestAsync(command); }
     }
 
+    // "Unfiltered" views omit SortColumn, so these now exercise NaturalOrderIndex (cheap,
+    // no tree-comparator field reads/typed conversions) instead of a PK-sorted SortIndex —
+    // compare against the SortedOnly_* benchmarks below to see the win.
     [Benchmark] public async Task Insert10k_Unfiltered_1Subscriber()
     {
         var engine = CreateEngine([new ViewDefinition { CollectionId = CollectionId }]);

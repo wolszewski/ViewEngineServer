@@ -45,7 +45,8 @@ public class EagerIndexingTests
         var schema = MixedSchema();
         var runtime = MakeRuntime(schema, new LiveViewEngineOptions { EagerIndexing = true });
 
-        Assert.Equal(schema.Fields.Count, runtime.SortIndexCount);
+        // +1 for the shared natural-order index eagerly created alongside the per-field sort indexes.
+        Assert.Equal(schema.Fields.Count + 1, runtime.SortIndexCount);
     }
 
     [Fact]

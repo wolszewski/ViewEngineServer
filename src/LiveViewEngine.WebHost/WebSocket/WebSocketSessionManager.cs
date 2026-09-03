@@ -125,8 +125,9 @@ public sealed class WebSocketSessionManager
                 if (command is SubscribeCommand && clientSubscriptionId > 0 &&
                     events is [SubscriptionRejectedDelta rejected])
                 {
-                    // The engine checks collection existence atomically alongside the runtime lookup it uses to
-                    // actually dispatch the subscribe, so this can't race with a concurrent collection create.
+                    // The engine checks collection existence/capability atomically alongside the runtime lookup
+                    // it uses to actually dispatch the subscribe, so this can't race with a concurrent collection
+                    // create.
                     context.ActiveSubscriptionIds.Remove(clientSubscriptionId);
                     _publisher.RemoveSubscription(context.ConnectionId, clientSubscriptionId);
                     await _publisher.PublishSubscriptionRejectedAsync(
@@ -135,8 +136,34 @@ public sealed class WebSocketSessionManager
                         new SubscriptionRejectedPayload
                         {
                             SubscriptionId = clientSubscriptionId,
-                            Reason = "collection_not_found",
-                            Message = $"Collection '{rejected.CollectionId}' does not exist."
+                            Reason = rejected.Reason,
+                            Message = rejected.Message ?? $"Collection '{rejected.CollectionId}' does not exist."
+                        },
+                        ct);
+                    continue;
+                }
+
+                if (command is UpdateViewCommand && events is [SubscriptionRejectedDelta updateRejected])
+                {
+                    // A capability check on an already-active subscription (e.g. a viewport update requesting
+                    // sortColumn/filters that aren't enabled). Unlike the subscribe-time rejection above, the
+                    // subscription itself stays alive with its previous view untouched - only the requested
+                    // change is refused. onBeforeProcess may already have called BeginViewportSnapshot (it
+                    // runs before the capability check, on the runtime worker) — undo that here, or
+                    // IsSnapshotActive stays stuck true and every later live delta buffers forever unread.
+                    if (snapshotBegan)
+                    {
+                        _publisher.CancelSnapshot(context.ConnectionId, command.SubscriptionId);
+                    }
+
+                    await _publisher.PublishSubscriptionRejectedAsync(
+                        context.ConnectionId,
+                        messageFormat,
+                        new SubscriptionRejectedPayload
+                        {
+                            SubscriptionId = command.SubscriptionId,
+                            Reason = updateRejected.Reason,
+                            Message = updateRejected.Message ?? "The requested view update was rejected."
                         },
                         ct);
                     continue;

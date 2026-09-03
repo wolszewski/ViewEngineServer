@@ -414,6 +414,75 @@ public class WebSocketSessionManagerTests
         await handleTask;
     }
 
+    [Fact]
+    public async Task HandleConnectionAsync_RejectedUpdateView_CancelsStuckSnapshotBuffer_LiveDeltaStillDelivered()
+    {
+        var metrics = new ViewEngineMetrics();
+        var store = new CollectionStore(metrics, new LiveViewEngineOptions
+        {
+            EagerIndexing = false,
+            RequireExplicitCapabilities = true,
+            SortingEnabled = false,
+            FilteringEnabled = false
+        });
+        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance);
+        var engine = new ViewEngine(store, publisher, NullLogger<ViewEngine>.Instance, metrics);
+        var manager = new WebSocketSessionManager(
+            engine,
+            store,
+            publisher,
+            NullLogger<WebSocketSessionManager>.Instance);
+
+        await engine.IngestAsync(new CreateCollectionCommand
+        {
+            CollectionId = "trades",
+            Schema = new CollectionSchema("trades", ["instrument"], [ScalarFieldType.String])
+        });
+        await engine.IngestAsync(new UpsertRowCommand
+        {
+            CollectionId = "trades",
+            Key = "t1",
+            Fields = new Dictionary<string, string?> { ["instrument"] = "AAPL" }
+        });
+
+        // The subscribe succeeds (no sortColumn/filters requested), but the follow-up updateview
+        // requests sortColumn while sorting isn't enabled — this must be rejected. Since its default
+        // SnapshotMode is Delta (not No), onBeforeProcess already called BeginViewportSnapshot before
+        // the capability check runs, so without the fix IsSnapshotActive would be stuck true forever.
+        var socket = new ScriptedWebSocket(
+            [
+                "{\"type\":\"subscribe\",\"collectionId\":\"trades\",\"startIndex\":0,\"pageSize\":50,\"sendSnapshot\":true,\"messageFormat\":\"json\"}",
+                "{\"type\":\"updateview\",\"subscriptionId\":1,\"startIndex\":0,\"pageSize\":50,\"sortColumn\":\"instrument\",\"messageFormat\":\"json\"}"
+            ],
+            closeAfterSentCount: 20);
+
+        var handleTask = manager.HandleConnectionAsync(socket, CancellationToken.None);
+        await socket.WaitForMessageTypeAsync("subscriptionRejected");
+
+        Assert.False(ReadSnapshotActive(publisher, connectionId: 1, subscriptionId: 1));
+
+        // A live mutation after the rejection must still be delivered live, not buffered forever.
+        await engine.IngestAsync(new UpsertRowCommand
+        {
+            CollectionId = "trades",
+            Key = "t2",
+            Fields = new Dictionary<string, string?> { ["instrument"] = "MSFT" }
+        });
+
+        await socket.WaitForMessageTypeAsync("rowInsert");
+        socket.Close();
+        await handleTask;
+
+        var messages = socket.SentMessages
+            .Select(static m => JsonDocument.Parse(m).RootElement)
+            .ToArray();
+
+        var rejected = messages.Single(static m => m.GetProperty("type").GetString() == "subscriptionRejected");
+        Assert.Equal("sorting_not_enabled", rejected.GetProperty("reason").GetString());
+
+        Assert.Contains(messages, static m => m.GetProperty("type").GetString() == "rowInsert");
+    }
+
     private static bool ReadSnapshotActive(WebSocketOutboundPublisher publisher, int connectionId, int subscriptionId)
     {
         var connectionsField = typeof(WebSocketOutboundPublisher)

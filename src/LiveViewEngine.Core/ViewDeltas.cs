@@ -37,12 +37,16 @@ public sealed class EndOfSnapshotDelta : ViewDelta
 {
 }
 
-// Returned instead of a normal snapshot when a subscribe targets a collection that doesn't exist. This is an
-// expected, externally-triggerable outcome (bad client input or a subscribe racing a concurrent create), not an
-// exceptional condition, so it is signalled as data rather than thrown.
+// Returned instead of a normal snapshot when a subscribe targets a collection that doesn't exist,
+// or requests a capability (sortColumn/filters) that isn't enabled. This is an expected,
+// externally-triggerable outcome (bad client input, a subscribe racing a concurrent create, or a
+// deployment that doesn't register sorting/filtering), not an exceptional condition, so it is
+// signalled as data rather than thrown.
 public sealed class SubscriptionRejectedDelta : ViewDelta
 {
     public required string CollectionId { get; init; }
+    public string Reason { get; init; } = "collection_not_found";
+    public string? Message { get; init; }
 }
 
 public sealed class RowUpdateDelta : ViewDelta

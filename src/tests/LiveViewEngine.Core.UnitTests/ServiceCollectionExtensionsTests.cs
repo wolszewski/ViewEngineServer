@@ -39,6 +39,33 @@ public class ServiceCollectionExtensionsTests
         Assert.Same(publisher, outbound);
     }
 
+    [Fact]
+    public void AddLiveViewEngineCore_DefaultOptions_SortingAndFilteringEnabledByDefault()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        var builder = services.AddLiveViewEngineCore();
+
+        Assert.True(builder.Options.SortingEnabled);
+        Assert.True(builder.Options.FilteringEnabled);
+    }
+
+    [Fact]
+    public void AddLiveViewEngineCore_RequireExplicitCapabilities_DisablesSortingAndFilteringUntilOptedIn()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        var builder = services.AddLiveViewEngineCore(new LiveViewEngineOptions { RequireExplicitCapabilities = true });
+
+        Assert.False(builder.Options.SortingEnabled);
+        Assert.False(builder.Options.FilteringEnabled);
+
+        builder.AddSorting().AddFiltering();
+
+        Assert.True(builder.Options.SortingEnabled);
+        Assert.True(builder.Options.FilteringEnabled);
+    }
+
     private sealed class TestPublisher : IOutboundPublisher
     {
         public ValueTask PublishAsync(

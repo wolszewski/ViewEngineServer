@@ -2,13 +2,21 @@ using LiveViewEngine.Collections;
 
 namespace LiveViewEngine.Core;
 
-internal sealed class FilteredDataIndex : IRowIndex
+// A row index whose membership can change independently of position mutation (used for
+// filtered views layered on top of an IPositionIndex).
+internal interface IMutableRowIndex : IRowIndex
 {
-    private readonly NodeArrayTree<SortIndex.RowComparer> _index;
+    int Insert(int rowIndex);
+    int TryDelete(int rowIndex);
+}
 
-    internal FilteredDataIndex(SortIndex.RowComparer comparer, IEnumerable<int> rows)
+internal sealed class FilteredDataIndex<TComparer> : IMutableRowIndex where TComparer : IComparer<int>
+{
+    private readonly NodeArrayTree<TComparer> _index;
+
+    internal FilteredDataIndex(TComparer comparer, IEnumerable<int> rows)
     {
-        _index = new NodeArrayTree<SortIndex.RowComparer>(comparer);
+        _index = new NodeArrayTree<TComparer>(comparer);
         foreach (int rowIndex in rows)
         {
             _index.Insert(rowIndex);
@@ -17,9 +25,9 @@ internal sealed class FilteredDataIndex : IRowIndex
 
     public int Count => _index.Count;
 
-    internal int Insert(int rowIndex) => _index.Insert(rowIndex);
+    public int Insert(int rowIndex) => _index.Insert(rowIndex);
 
-    internal int TryDelete(int rowIndex) => _index.TryDelete(rowIndex);
+    public int TryDelete(int rowIndex) => _index.TryDelete(rowIndex);
 
     public int IndexOf(int rowIndex) => _index.IndexOf(rowIndex);
 

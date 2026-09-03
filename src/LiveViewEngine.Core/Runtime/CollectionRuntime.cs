@@ -14,7 +14,11 @@ public sealed class CollectionRuntime : IDisposable
     private readonly Lock _subscriptionsByConnectionLock = new();
     private readonly Dictionary<int, HashSet<int>> _subscriptionsByConnection = [];
     private readonly SortIndexRegistry _sortIndexRegistry = new();
-    private readonly Dictionary<string, IReadOnlyList<FilterSpec>> _filterPresets = new();
+    // Both capabilities are only ever touched from this runtime's single-threaded worker
+    // (HandleSubscribe, RegisterFilterPreset) - never from ViewEngine's calling thread directly -
+    // so their internal state (e.g. FilteringCapability's preset registry) needs no extra locking.
+    private readonly ISortingCapability _sortingCapability;
+    private readonly IFilteringCapability _filteringCapability;
     private readonly IViewEngineMetrics? _metrics;
     private readonly LiveViewEngineOptions _options;
     private int _activeSubscriptionCount;
@@ -25,6 +29,9 @@ public sealed class CollectionRuntime : IDisposable
         Collection = collection;
         _metrics = metrics;
         _options = options ?? new LiveViewEngineOptions();
+        _sortingCapability = new SortingCapability(_options.SortingEnabled);
+        _filteringCapability = new FilteringCapability(_options.FilteringEnabled);
+        _propagator = new MutationPropagator();
         _worker.Start();
         if (_options.EagerIndexing)
         {
@@ -33,7 +40,7 @@ public sealed class CollectionRuntime : IDisposable
     }
 
     public RowCollection Collection { get; }
-    private readonly MutationPropagator _propagator = new();
+    private readonly MutationPropagator _propagator;
 
     public int ActiveSubscriptionCount => Volatile.Read(ref _activeSubscriptionCount);
     public int ActiveSharedViewCount => Volatile.Read(ref _activeSharedViewCount);
@@ -147,9 +154,22 @@ public sealed class CollectionRuntime : IDisposable
     {
         var subscriptionKey = command.EffectiveSubscriptionKey;
 
-        if (command.View.FilterPresetId is not null && !_filterPresets.ContainsKey(command.View.FilterPresetId))
+        var (effectiveFilters, unknownPreset) = _filteringCapability.ResolveEffectiveFilters(command.View);
+        if (unknownPreset)
         {
             return [];
+        }
+
+        var rejection = _sortingCapability.Validate(command.View) ?? _filteringCapability.Validate(effectiveFilters);
+        if (rejection is not null)
+        {
+            return [new SubscriptionRejectedDelta
+            {
+                ViewId = subscriptionKey.ToString(),
+                CollectionId = command.View.CollectionId,
+                Reason = rejection.Value.Reason,
+                Message = rejection.Value.Message
+            }];
         }
 
         var selectedFieldIndexes = command.View.Fields is { Count: 0 }
@@ -167,11 +187,16 @@ public sealed class CollectionRuntime : IDisposable
             RemoveConnectionSubscription(existingViewport);
         }
 
-        var viewKey = ResolveViewKey(command.View);
+        var viewKey = new ViewKey(
+            command.View.CollectionId,
+            command.View.FilterPresetId,
+            command.View.SortColumn,
+            command.View.SortAscending,
+            effectiveFilters);
         var (view, sortIndexKey, sortIndexRegistry) = GetOrCreateSharedView(viewKey);
         sortIndexRegistry.UnflagForRemoval(sortIndexKey);
         view.AddSubscriber(subscriptionKey);
-        view.SortIndex.IncrementSubscribers();
+        view.PositionIndex.IncrementSubscribers();
 
         var normalizedStart = Math.Max(0, command.StartIndex);
         var viewport = new ViewportState
@@ -413,18 +438,22 @@ public sealed class CollectionRuntime : IDisposable
 
         _sortIndexRegistry.Remove(key);
         _sortIndexRegistry.UnflagForRemoval(key);
-        Collection.ReleaseTypedFieldRef(key.FieldIndex);
-        Collection.TryDeactivatePendingTypedColumn(key.FieldIndex);
+        if (key.FieldIndex != SortIndexRegistry.NaturalOrderFieldIndex)
+        {
+            Collection.ReleaseTypedFieldRef(key.FieldIndex);
+            Collection.TryDeactivatePendingTypedColumn(key.FieldIndex);
+        }
+
         return true;
     }
 
     private (SharedView View, SortIndexKey SortIndexKey, SortIndexRegistry Registry) GetOrCreateSharedView(ViewKey viewKey)
     {
         var sortIndexKey = CreateSortIndexKey(Collection, viewKey, viewKey.CollectionId);
-        var sortIndex = _sortIndexRegistry.GetOrCreate(sortIndexKey, Collection);
+        var positionIndex = _sortIndexRegistry.GetOrCreate(sortIndexKey, Collection);
         if (!_sharedViews.TryGetValue(viewKey, out var view))
         {
-            view = new SharedView(viewKey, Collection, sortIndex, _options);
+            view = new SharedView(viewKey, Collection, positionIndex, _options);
             _sharedViews[viewKey] = view;
             IncrementActiveSharedViewCount();
         }
@@ -444,45 +473,8 @@ public sealed class CollectionRuntime : IDisposable
         return false;
     }
 
-    public IngestResult RegisterFilterPreset(string filterPresetId, IReadOnlyList<FilterSpec> filters)
-    {
-        if (_filterPresets.ContainsKey(filterPresetId))
-        {
-            return IngestResult.Fail(
-                $"Filter preset '{filterPresetId}' is already registered and cannot be overwritten.");
-        }
-
-        foreach (var filter in filters)
-        {
-            if (Collection.Schema.GetFieldIndex(filter.FieldName) < 0)
-            {
-                return IngestResult.Fail(
-                    $"Unknown field '{filter.FieldName}' for collection '{Collection.Schema.CollectionName}'.");
-            }
-        }
-
-        _filterPresets[filterPresetId] = filters;
-        return IngestResult.Ok();
-    }
-
-    private ViewKey ResolveViewKey(ViewDefinition def)
-    {
-        if (def.FilterPresetId is null)
-        {
-            return ViewKey.From(def);
-        }
-
-        var baseFilters = _filterPresets[def.FilterPresetId];
-        if (baseFilters.Count == 0)
-        {
-            return ViewKey.From(def);
-        }
-
-        var combined = def.Filters.Count > 0
-            ? [.. baseFilters, .. def.Filters]
-            : baseFilters;
-        return new ViewKey(def.CollectionId, def.FilterPresetId, def.SortColumn, def.SortAscending, combined);
-    }
+    public IngestResult RegisterFilterPreset(string filterPresetId, IReadOnlyList<FilterSpec> filters) =>
+        _filteringCapability.RegisterPreset(filterPresetId, filters, Collection.Schema);
 
     private static bool TryBuildUpdatedView(
         ViewDefinition current,
@@ -561,6 +553,7 @@ public sealed class CollectionRuntime : IDisposable
     private void EagerlyInitializeIndexes()
     {
         var collectionId = Collection.Schema.CollectionName;
+        _sortIndexRegistry.GetOrCreate(new SortIndexKey(collectionId, SortIndexRegistry.NaturalOrderFieldIndex), Collection);
         foreach (var field in Collection.Schema.Fields)
         {
             var key = new SortIndexKey(collectionId, field.FieldIndex);
@@ -570,9 +563,15 @@ public sealed class CollectionRuntime : IDisposable
 
     private static SortIndexKey CreateSortIndexKey(RowCollection collection, ViewKey key, string sortCollectionId)
     {
-        int sortFieldIndex = key.SortColumn is not null
-            ? collection.Schema.GetFieldIndex(key.SortColumn)
-            : collection.Schema.PrimaryKey.FieldIndex;
+        if (key.SortColumn is null)
+        {
+            // No sortColumn requested: use the cheap shared natural-order index instead of
+            // falling back to a field-sorted (primary key) index — no tree-comparator field
+            // reads, no reordering on update.
+            return new SortIndexKey(sortCollectionId, SortIndexRegistry.NaturalOrderFieldIndex);
+        }
+
+        int sortFieldIndex = collection.Schema.GetFieldIndex(key.SortColumn);
         if (sortFieldIndex < 0)
         {
             sortFieldIndex = collection.Schema.PrimaryKey.FieldIndex;
@@ -644,8 +643,8 @@ public sealed class CollectionRuntime : IDisposable
         }
 
         view.RemoveSubscriber(viewport.SubscriptionKey);
-        var sortIndex = view.SortIndex;
-        sortIndex.DecrementSubscribers();
+        var positionIndex = view.PositionIndex;
+        positionIndex.DecrementSubscribers();
 
         if (view.IsEmpty)
         {
@@ -656,9 +655,11 @@ public sealed class CollectionRuntime : IDisposable
             }
         }
 
-        if (sortIndex.SubscriberCount == 0)
+        // The shared natural-order index is always cheap and reused across every no-sortColumn
+        // view for the collection — never flag it for removal like a per-field SortIndex.
+        if (positionIndex.SubscriberCount == 0 && positionIndex.FieldIndex != SortIndexRegistry.NaturalOrderFieldIndex)
         {
-            _sortIndexRegistry.FlagForRemoval(new SortIndexKey(viewport.ViewKey.CollectionId, sortIndex.FieldIndex));
+            _sortIndexRegistry.FlagForRemoval(new SortIndexKey(viewport.ViewKey.CollectionId, positionIndex.FieldIndex));
         }
     }
 
@@ -820,7 +821,7 @@ public sealed class CollectionRuntime : IDisposable
         var globalRowNumber = startIndex;
         foreach (int rowIndex in view.EnumeratePageIndexes(startIndex, pageSize))
         {
-            batch[batchCount++] = ProjectRow(Collection.GetRowValues(rowIndex), selectedFieldIndexes);
+            batch[batchCount++] = Collection.SelectRowValues(rowIndex, selectedFieldIndexes);
             globalRowNumber++;
             if (batchCount == _options.SnapshotBatchSize)
             {
@@ -863,14 +864,4 @@ public sealed class CollectionRuntime : IDisposable
         };
     }
 
-    private static string?[] ProjectRow(string?[] source, int[] selectedFieldIndexes)
-    {
-        var copy = new string?[selectedFieldIndexes.Length];
-        for (int i = 0; i < selectedFieldIndexes.Length; i++)
-        {
-            copy[i] = source[selectedFieldIndexes[i]];
-        }
-
-        return copy;
-    }
 }
