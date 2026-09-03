@@ -11,8 +11,8 @@ public interface ILiveViewEngineBuilder
     IServiceCollection Services { get; }
 
     // The LiveViewEngineOptions instance registered by AddLiveViewEngineCore. Builder-scoped
-    // extension methods mutate SortingEnabled/FilteringEnabled/RowProjector on this shared
-    // instance rather than re-registering a new options object.
+    // extension methods mutate SortingEnabled/FilteringEnabled on this shared instance rather than
+    // re-registering a new options object.
     LiveViewEngineOptions Options { get; }
 }
 

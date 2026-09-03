@@ -66,24 +66,6 @@ public class ServiceCollectionExtensionsTests
         Assert.True(builder.Options.FilteringEnabled);
     }
 
-    [Fact]
-    public void AddProjections_WithCustomProjector_ReplacesDefault()
-    {
-        var services = new ServiceCollection();
-        services.AddLogging();
-        var builder = services.AddLiveViewEngineCore();
-        var customProjector = new TestRowProjector();
-
-        builder.AddProjections(customProjector);
-
-        Assert.Same(customProjector, builder.Options.RowProjector);
-    }
-
-    private sealed class TestRowProjector : IRowProjector
-    {
-        public string?[] Project(string?[] source, int[] selectedFieldIndexes) => source;
-    }
-
     private sealed class TestPublisher : IOutboundPublisher
     {
         public ValueTask PublishAsync(

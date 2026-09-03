@@ -28,19 +28,6 @@ public static class ServiceCollectionExtensions
         return new LiveViewEngineBuilder(services, resolvedOptions);
     }
 
-    // Registers a custom IRowProjector (e.g. computed/derived columns, per-connection field
-    // redaction). Projection has no "reject if missing" case — the default SelectRowProjector is
-    // always active even without calling this, so this is purely an extension hook.
-    public static ILiveViewEngineBuilder AddProjections(this ILiveViewEngineBuilder builder, IRowProjector? projector = null)
-    {
-        if (projector is not null)
-        {
-            builder.Options.RowProjector = projector;
-        }
-
-        return builder;
-    }
-
     // TODO(plugin-assembly-split): move AddSorting()/AddFiltering() to a separate
     // LiveViewEngine.SortFilter project once SortIndex/FilterSet are physically extracted from
     // Core (see plan.md Phase 2). For now they just flip the capability flags checked by

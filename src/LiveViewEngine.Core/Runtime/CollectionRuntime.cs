@@ -31,7 +31,7 @@ public sealed class CollectionRuntime : IDisposable
         _options = options ?? new LiveViewEngineOptions();
         _sortingCapability = new SortingCapability(_options.SortingEnabled);
         _filteringCapability = new FilteringCapability(_options.FilteringEnabled);
-        _propagator = new MutationPropagator(_options.RowProjector);
+        _propagator = new MutationPropagator();
         _worker.Start();
         if (_options.EagerIndexing)
         {
@@ -821,7 +821,7 @@ public sealed class CollectionRuntime : IDisposable
         var globalRowNumber = startIndex;
         foreach (int rowIndex in view.EnumeratePageIndexes(startIndex, pageSize))
         {
-            batch[batchCount++] = _options.RowProjector.Project(Collection.GetRowValues(rowIndex), selectedFieldIndexes);
+            batch[batchCount++] = Collection.SelectRowValues(rowIndex, selectedFieldIndexes);
             globalRowNumber++;
             if (batchCount == _options.SnapshotBatchSize)
             {

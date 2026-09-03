@@ -184,6 +184,21 @@ public sealed class RowCollection(CollectionSchema schema)
         return source ?? throw new InvalidOperationException($"Row at index {index} is deleted.");
     }
 
+    // Copies only the selected fields (verbatim, no transformation) from the row at index into a
+    // new array positionally matching selectedFieldIndexes — used for outgoing snapshot/insert/
+    // replace payloads.
+    public string?[] SelectRowValues(int index, int[] selectedFieldIndexes)
+    {
+        var source = GetRowValues(index);
+        var copy = new string?[selectedFieldIndexes.Length];
+        for (var i = 0; i < selectedFieldIndexes.Length; i++)
+        {
+            copy[i] = source[selectedFieldIndexes[i]];
+        }
+
+        return copy;
+    }
+
     private void UpdateTypedValueForField(int rowIndex, int fieldIndex, string? value)
     {
         if (!_typedColumns.IsActivated(fieldIndex))

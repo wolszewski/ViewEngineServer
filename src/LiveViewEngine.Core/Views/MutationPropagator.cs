@@ -5,13 +5,6 @@ namespace LiveViewEngine.Core.Views;
 
 public sealed class MutationPropagator
 {
-    private readonly IRowProjector _rowProjector;
-
-    public MutationPropagator(IRowProjector? rowProjector = null)
-    {
-        _rowProjector = rowProjector ?? SelectRowProjector.Instance;
-    }
-
     // Reusable per-propagation buffers. CollectionRuntime serializes all mutations per collection.
     private readonly Dictionary<IPositionIndex, List<SharedView>> _groupBuffer = new(ReferenceEqualityComparer.Instance);
     private readonly List<MutationImpact> _impactBuffer = [];
@@ -163,7 +156,7 @@ public sealed class MutationPropagator
 
     // Fast path: field update that doesn't affect sort order or filter membership.
     // Subscribers with the same viewport see the row at the same position — share one RowUpdateDelta.
-    private void CollectFastPathGroups(
+    private static void CollectFastPathGroups(
         RowCollection collection,
         SharedView view,
         Dictionary<SubscriptionKey, ViewportState> viewports,
@@ -217,8 +210,6 @@ public sealed class MutationPropagator
                 continue;
             }
 
-            projectedColumns = ProjectChangedColumns(collection, mutation.RowIndex, projectedColumns, viewport.SelectedFieldIndexes);
-
             var targets = new List<SubscriberTarget>(groupViewports.Count);
             foreach (var v in groupViewports)
             {
@@ -239,7 +230,7 @@ public sealed class MutationPropagator
 
     // Full-recompute path: new row, delete, sort-field change, or filter-field change.
     // Subscribers with the same viewport and projection produce the same delta sequence — compute and share.
-    private void CollectPositionGroups(
+    private static void CollectPositionGroups(
         RowCollection collection,
         SharedView view,
         Dictionary<SubscriptionKey, ViewportState> viewports,
@@ -289,7 +280,7 @@ public sealed class MutationPropagator
         }
     }
 
-    private IReadOnlyList<ViewDelta> ComputePositionDeltas(
+    private static IReadOnlyList<ViewDelta> ComputePositionDeltas(
         SharedView view,
         RowCollection collection,
         string viewId,
@@ -555,7 +546,7 @@ public sealed class MutationPropagator
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private void AddInsertDelta(
+    private static void AddInsertDelta(
         List<ViewDelta> deltas,
         string viewId,
         RowCollection collection,
@@ -563,7 +554,7 @@ public sealed class MutationPropagator
         int rowIndex,
         int position)
     {
-        var row = _rowProjector.Project(collection.GetRowValues(rowIndex), selectedFieldIndexes);
+        var row = collection.SelectRowValues(rowIndex, selectedFieldIndexes);
         deltas.Add(new RowInsertDelta
         {
             ViewId = viewId,
@@ -575,7 +566,7 @@ public sealed class MutationPropagator
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private void AddReplaceDelta(
+    private static void AddReplaceDelta(
         List<ViewDelta> deltas,
         string viewId,
         RowCollection collection,
@@ -585,7 +576,7 @@ public sealed class MutationPropagator
         int insertRowIndex,
         int insertPosition)
     {
-        var row = _rowProjector.Project(collection.GetRowValues(insertRowIndex), selectedFieldIndexes);
+        var row = collection.SelectRowValues(insertRowIndex, selectedFieldIndexes);
         deltas.Add(new RowReplaceDelta
         {
             ViewId = viewId,
@@ -598,7 +589,7 @@ public sealed class MutationPropagator
         });
     }
 
-    private void AddUpdateDelta(
+    private static void AddUpdateDelta(
         List<ViewDelta> deltas,
         string viewId,
         RowCollection collection,
@@ -618,8 +609,6 @@ public sealed class MutationPropagator
             return;
         }
 
-        projected = ProjectChangedColumns(collection, mutation.RowIndex, projected, selectedFieldIndexes);
-
         deltas.Add(new RowUpdateDelta
         {
             ViewId = viewId,
@@ -631,7 +620,7 @@ public sealed class MutationPropagator
         });
     }
 
-    private IReadOnlyList<ViewDelta> BuildUpdateDeltaIfVisible(
+    private static IReadOnlyList<ViewDelta> BuildUpdateDeltaIfVisible(
         string viewId,
         RowCollection collection,
         MutationInfo mutation,
@@ -656,8 +645,6 @@ public sealed class MutationPropagator
             return [];
         }
 
-        projectedColumns = ProjectChangedColumns(collection, mutation.RowIndex, projectedColumns, selectedFieldIndexes);
-
         return [new RowUpdateDelta
         {
             ViewId = viewId,
@@ -667,33 +654,6 @@ public sealed class MutationPropagator
             ChangedColumns = projectedColumns,
             VisibleFieldIndexes = selectedFieldIndexes
         }];
-    }
-
-    // Filtering only strips columns the viewport can't see; a custom (non-default) IRowProjector may
-    // also transform values (e.g. redaction, computed columns), so re-run it here for parity with the
-    // insert/replace/snapshot paths. Skipped when the default projector is active since plain column
-    // selection can't change values — FilterChangedColumns above already produces the correct result.
-    private IReadOnlyCollection<KeyValuePair<int, string?>> ProjectChangedColumns(
-        RowCollection collection,
-        int rowIndex,
-        IReadOnlyCollection<KeyValuePair<int, string?>> changedColumns,
-        int[] selectedFieldIndexes)
-    {
-        if (changedColumns.Count == 0 || ReferenceEquals(_rowProjector, SelectRowProjector.Instance))
-        {
-            return changedColumns;
-        }
-
-        // TODO: optimize with update buffers
-        var projectedRow = _rowProjector.Project(collection.GetRowValues(rowIndex), selectedFieldIndexes);
-        var result = new List<KeyValuePair<int, string?>>(changedColumns.Count);
-        foreach (var (fieldIndex, _) in changedColumns)
-        {
-            int position = Array.BinarySearch(selectedFieldIndexes, fieldIndex);
-            result.Add(new KeyValuePair<int, string?>(fieldIndex, position >= 0 ? projectedRow[position] : null));
-        }
-
-        return result;
     }
 
     private static IReadOnlyCollection<KeyValuePair<int, string?>> FilterChangedColumns(

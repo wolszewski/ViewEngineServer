@@ -35,8 +35,7 @@ services.AddOpenTelemetry()
 
 services.AddLiveViewEngineCore(liveViewEngineOptions)
     .AddSorting()
-    .AddFiltering()
-    .AddProjections();
+    .AddFiltering();
 services.AddLiveViewEnginePublisher<WebSocketOutboundPublisher>();
 services.AddSingleton<WebSocketSessionManager>();
 services.AddSingleton(tcpIngestOptions);
