@@ -28,6 +28,7 @@ export type {
 interface ClientCallbacks {
     onStatus: (status: string) => void;
     onEvent: (event: DeltaEvent) => void;
+    onSubscriptionRejected?: (reason: string, message: string) => void;
 }
 
 interface PendingSnapshot {
@@ -184,6 +185,15 @@ export class WebHostClient {
                     isPartial: false,
                     firstMessageAt: null
                 };
+                return;
+            case 'rejected':
+                this.stopSubscribeRetry();
+                this.hasReceivedSnapshot = false;
+                this.activeSubscriptionId = null;
+                this.pendingSnapshot = null;
+                this.snapshotRequestStartedAt = null;
+                this.callbacks.onStatus('Subscription failed');
+                this.callbacks.onSubscriptionRejected?.(frame.reason, frame.message);
                 return;
             case 'snapshotStart':
                 if (!this.isActiveSubscription(frame.subscriptionId)) {

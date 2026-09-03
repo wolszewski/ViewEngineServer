@@ -199,7 +199,11 @@ public sealed class ViewEngine : IViewEngine, IDisposable
         var subscribeCollectionId = subscribe.View.CollectionId;
         if (!_collectionRuntimes.TryGetValue(subscribeCollectionId, out var subscribeRuntime))
         {
-            return [];
+            return [new SubscriptionRejectedDelta
+            {
+                ViewId = subscribe.EffectiveSubscriptionKey.ToString(),
+                CollectionId = subscribeCollectionId
+            }];
         }
 
         var subscriptionKey = subscribe.EffectiveSubscriptionKey;

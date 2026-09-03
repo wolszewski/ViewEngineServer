@@ -37,6 +37,14 @@ public sealed class EndOfSnapshotDelta : ViewDelta
 {
 }
 
+// Returned instead of a normal snapshot when a subscribe targets a collection that doesn't exist. This is an
+// expected, externally-triggerable outcome (bad client input or a subscribe racing a concurrent create), not an
+// exceptional condition, so it is signalled as data rather than thrown.
+public sealed class SubscriptionRejectedDelta : ViewDelta
+{
+    public required string CollectionId { get; init; }
+}
+
 public sealed class RowUpdateDelta : ViewDelta
 {
     public required CollectionSchema Schema { get; init; }

@@ -12,7 +12,7 @@ namespace LiveViewEngine.Core.UnitTests;
 public class WebSocketSessionManagerTests
 {
     [Fact]
-    public async Task HandleConnectionAsync_SubscribeBeforeCollectionExists_ReportsSnapshotPending()
+    public async Task HandleConnectionAsync_SubscribeForMissingCollection_SendsSubscriptionRejected()
     {
         var metrics = new ViewEngineMetrics();
         var store = new CollectionStore(metrics, new LiveViewEngineOptions { EagerIndexing = false });
@@ -30,11 +30,90 @@ public class WebSocketSessionManagerTests
         await manager.HandleConnectionAsync(socket, CancellationToken.None);
         await socket.WaitForMessagesAsync(1);
 
-        var accepted = socket.SentMessages
+        var rejected = socket.SentMessages
             .Select(static message => JsonDocument.Parse(message))
             .Select(static document => document.RootElement)
-            .First(static root => root.GetProperty("type").GetString() == "subscriptionAccepted");
+            .First(static root => root.GetProperty("type").GetString() == "subscriptionRejected");
+        Assert.Equal("collection_not_found", rejected.GetProperty("reason").GetString());
+        Assert.Contains("trades", rejected.GetProperty("message").GetString());
+        Assert.DoesNotContain(socket.SentMessages,
+            message => message.Contains("subscriptionAccepted", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task HandleConnectionAsync_SubscribeForMissingCollection_CompactFormat_SendsRejectionFrame()
+    {
+        var metrics = new ViewEngineMetrics();
+        var store = new CollectionStore(metrics, new LiveViewEngineOptions { EagerIndexing = false });
+        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance);
+        var engine = new ViewEngine(store, publisher, NullLogger<ViewEngine>.Instance, metrics);
+        var manager = new WebSocketSessionManager(
+            engine,
+            store,
+            publisher,
+            NullLogger<WebSocketSessionManager>.Instance);
+        var socket = new ScriptedWebSocket([
+            "{\"type\":\"subscribe\",\"collectionId\":\"trades\",\"startIndex\":0,\"pageSize\":50,\"sendSnapshot\":true,\"messageFormat\":\"compact\"}"
+        ]);
+
+        await manager.HandleConnectionAsync(socket, CancellationToken.None);
+        await socket.WaitForMessagesAsync(1);
+
+        Assert.Equal("ERR|1|collection_not_found|Collection 'trades' does not exist.", socket.SentMessages.Single());
+    }
+
+    [Fact]
+    public async Task HandleConnectionAsync_SubscribeAfterCollectionCreatedFollowingRejection_SendsSubscriptionAccepted()
+    {
+        var metrics = new ViewEngineMetrics();
+        var store = new CollectionStore(metrics, new LiveViewEngineOptions { EagerIndexing = false });
+        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance);
+        var engine = new ViewEngine(store, publisher, NullLogger<ViewEngine>.Instance, metrics);
+        var manager = new WebSocketSessionManager(
+            engine,
+            store,
+            publisher,
+            NullLogger<WebSocketSessionManager>.Instance);
+
+        var socket = new ScriptedWebSocket(
+            [
+                "{\"type\":\"subscribe\",\"collectionId\":\"trades\",\"startIndex\":0,\"pageSize\":50,\"sendSnapshot\":true,\"messageFormat\":\"json\"}"
+            ],
+            closeAfterSentCount: 4); // subscriptionRejected + subscriptionAccepted + snapshotStart + eos
+
+        var handleTask = manager.HandleConnectionAsync(socket, CancellationToken.None);
+        await socket.WaitForMessageTypeAsync("subscriptionRejected");
+
+        await engine.IngestAsync(new CreateCollectionCommand
+        {
+            CollectionId = "trades",
+            Schema = new CollectionSchema("trades", ["instrument"], [ScalarFieldType.String])
+        });
+        await engine.IngestAsync(new UpsertRowCommand
+        {
+            CollectionId = "trades",
+            Key = "t1",
+            Fields = new Dictionary<string, string?> { ["instrument"] = "AAPL" }
+        });
+
+        socket.EnqueueInboundMessage(
+            "{\"type\":\"subscribe\",\"collectionId\":\"trades\",\"startIndex\":0,\"pageSize\":50,\"sendSnapshot\":true,\"messageFormat\":\"json\"}");
+
+        await socket.WaitForMessageTypeAsync("subscriptionAccepted");
+        socket.Close();
+        await handleTask;
+
+        var messages = socket.SentMessages
+            .Select(static m => JsonDocument.Parse(m).RootElement)
+            .ToArray();
+
+        var rejected = messages.Single(static m => m.GetProperty("type").GetString() == "subscriptionRejected");
+        Assert.Equal(1, rejected.GetProperty("subscriptionId").GetInt32());
+
+        var accepted = messages.Single(static m => m.GetProperty("type").GetString() == "subscriptionAccepted");
+        Assert.Equal(2, accepted.GetProperty("subscriptionId").GetInt32());
         Assert.True(accepted.GetProperty("snapshotFollows").GetBoolean());
+        Assert.Equal(1, accepted.GetProperty("totalCount").GetInt32());
     }
 
     [Fact]
@@ -312,9 +391,11 @@ public class WebSocketSessionManagerTests
     {
         var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance);
         var engine = new BlockingViewEngine();
+        var store = new CollectionStore(new ViewEngineMetrics(), new LiveViewEngineOptions { EagerIndexing = false });
+        store.TryCreateCollection(new CollectionSchema("trades", ["instrument"], [ScalarFieldType.String]));
         var manager = new WebSocketSessionManager(
             engine,
-            new CollectionStore(new ViewEngineMetrics(), new LiveViewEngineOptions { EagerIndexing = false }),
+            store,
             publisher,
             NullLogger<WebSocketSessionManager>.Instance);
 
@@ -445,6 +526,7 @@ public class WebSocketSessionManagerTests
     private sealed class ScriptedWebSocket : WebSocket
     {
         private readonly Queue<string> _inboundMessages;
+        private readonly object _inboundLock = new();
         private readonly List<string> _sentMessages = [];
         private readonly int _closeAfterSentCount;
         private WebSocketState _state = WebSocketState.Open;
@@ -453,6 +535,16 @@ public class WebSocketSessionManagerTests
         {
             _inboundMessages = new Queue<string>(inboundMessages);
             _closeAfterSentCount = closeAfterSentCount;
+        }
+
+        // Allows tests to feed additional inbound messages after the connection has already
+        // started processing, e.g. to simulate a client resubscribing once server-side state changes.
+        public void EnqueueInboundMessage(string message)
+        {
+            lock (_inboundLock)
+            {
+                _inboundMessages.Enqueue(message);
+            }
         }
 
         public IReadOnlyList<string> SentMessages
@@ -532,23 +624,35 @@ public class WebSocketSessionManagerTests
             ArraySegment<byte> buffer,
             CancellationToken cancellationToken)
         {
-            if (_inboundMessages.Count == 0)
+            var timeoutAt = DateTime.UtcNow.AddSeconds(5);
+            while (true)
             {
-                var timeoutAt = DateTime.UtcNow.AddSeconds(5);
-                while (SentMessages.Count < _closeAfterSentCount
-                    && _state != WebSocketState.CloseReceived
-                    && DateTime.UtcNow < timeoutAt)
+                string? message = null;
+                lock (_inboundLock)
                 {
-                    await Task.Delay(10, cancellationToken);
+                    if (_inboundMessages.Count > 0)
+                    {
+                        message = _inboundMessages.Dequeue();
+                    }
                 }
 
-                _state = WebSocketState.CloseReceived;
-                return new WebSocketReceiveResult(0, WebSocketMessageType.Close, true);
-            }
+                if (message is not null)
+                {
+                    var payload = Encoding.UTF8.GetBytes(message);
+                    Array.Copy(payload, 0, buffer.Array!, buffer.Offset, payload.Length);
+                    return new WebSocketReceiveResult(payload.Length, WebSocketMessageType.Text, true);
+                }
 
-            var payload = Encoding.UTF8.GetBytes(_inboundMessages.Dequeue());
-            Array.Copy(payload, 0, buffer.Array!, buffer.Offset, payload.Length);
-            return new WebSocketReceiveResult(payload.Length, WebSocketMessageType.Text, true);
+                if (_state == WebSocketState.CloseReceived ||
+                    SentMessages.Count >= _closeAfterSentCount ||
+                    DateTime.UtcNow >= timeoutAt)
+                {
+                    _state = WebSocketState.CloseReceived;
+                    return new WebSocketReceiveResult(0, WebSocketMessageType.Close, true);
+                }
+
+                await Task.Delay(10, cancellationToken);
+            }
         }
 
         public override ValueTask<ValueWebSocketReceiveResult> ReceiveAsync(

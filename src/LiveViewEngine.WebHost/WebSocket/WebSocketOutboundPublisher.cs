@@ -173,6 +173,36 @@ public sealed class WebSocketOutboundPublisher(
         return ValueTask.CompletedTask;
     }
 
+    public ValueTask PublishSubscriptionRejectedAsync(
+        int connectionId,
+        OutboundMessageFormat format,
+        SubscriptionRejectedPayload payload,
+        CancellationToken ct = default)
+    {
+        if (!_connections.TryGetValue(connectionId, out var connection))
+        {
+            return ValueTask.CompletedTask;
+        }
+
+        byte[] message;
+        try
+        {
+            message = _encoders[format].EncodeSubscriptionRejected(payload);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to encode subscription rejection for client '{ConnectionId}'.", connectionId);
+            return ValueTask.CompletedTask;
+        }
+
+        lock (connection.Gate)
+        {
+            connection.TryWrite(message);
+        }
+
+        return ValueTask.CompletedTask;
+    }
+
     public ValueTask PublishAsync(
         IReadOnlyList<SubscriberTarget> targets,
         IReadOnlyList<ViewDelta> deltas,

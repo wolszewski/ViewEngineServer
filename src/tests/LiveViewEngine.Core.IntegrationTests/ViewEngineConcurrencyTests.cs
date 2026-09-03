@@ -172,6 +172,65 @@ public class ViewEngineConcurrencyTests
     }
 
     [Fact]
+    public async Task SubscribeToMissingCollection_ReturnsRejectionDelta()
+    {
+        var (engine, _) = CreateEngine();
+
+        var result = await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = 1,
+            View = new ViewDefinition { CollectionId = "trades" },
+            StartIndex = 0,
+            PageSize = 200
+        });
+
+        var rejected = Assert.Single(result);
+        var delta = Assert.IsType<SubscriptionRejectedDelta>(rejected);
+        Assert.Equal("trades", delta.CollectionId);
+    }
+
+    [Fact]
+    public async Task ConcurrentCreateCollectionAndSubscribe_NeverSilentlyAccepted()
+    {
+        // Regression guard for the race where a subscribe landing between CollectionStore creation and
+        // ViewEngine runtime registration could be silently accepted instead of rejected. The runtime
+        // dictionary lookup in HandleSubscribeCommandAsync is now the single atomic source of truth: every
+        // subscribe either observes a fully registered runtime (accepted) or a rejection delta - never both,
+        // and never a silent empty "accepted" result.
+        const int iterations = 200;
+
+        for (int i = 0; i < iterations; i++)
+        {
+            var metrics = new ViewEngineMetrics();
+            var store = new CollectionStore(metrics, new LiveViewEngineOptions { EagerIndexing = false });
+            var publisher = new ThreadSafeCapturingPublisher();
+            var engine = new ViewEngine(store, publisher, NullLogger<ViewEngine>.Instance, metrics);
+
+            var createTask = CreateTrades(engine);
+
+            var result = await engine.SubscribeAsync(new SubscribeCommand
+            {
+                ConnectionId = 1,
+                View = new ViewDefinition { CollectionId = "trades" },
+                StartIndex = 0,
+                PageSize = 10
+            });
+
+            var createResult = await createTask;
+            Assert.True(createResult.Success, createResult.Error);
+            if (result is [SubscriptionRejectedDelta rejected])
+            {
+                Assert.Equal("trades", rejected.CollectionId);
+            }
+            else
+            {
+                Assert.NotEmpty(result);
+                Assert.IsType<SnapshotStartDelta>(result[0]);
+            }
+        }
+    }
+
+    [Fact]
     public async Task ConcurrentIngestAndSubscribe_NoExceptions()
     {
         var (engine, _) = CreateEngine();

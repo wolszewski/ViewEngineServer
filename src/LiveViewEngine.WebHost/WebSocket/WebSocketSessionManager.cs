@@ -122,6 +122,26 @@ public sealed class WebSocketSessionManager
                     throw;
                 }
 
+                if (command is SubscribeCommand && clientSubscriptionId > 0 &&
+                    events is [SubscriptionRejectedDelta rejected])
+                {
+                    // The engine checks collection existence atomically alongside the runtime lookup it uses to
+                    // actually dispatch the subscribe, so this can't race with a concurrent collection create.
+                    context.ActiveSubscriptionIds.Remove(clientSubscriptionId);
+                    _publisher.RemoveSubscription(context.ConnectionId, clientSubscriptionId);
+                    await _publisher.PublishSubscriptionRejectedAsync(
+                        context.ConnectionId,
+                        messageFormat,
+                        new SubscriptionRejectedPayload
+                        {
+                            SubscriptionId = clientSubscriptionId,
+                            Reason = "collection_not_found",
+                            Message = $"Collection '{rejected.CollectionId}' does not exist."
+                        },
+                        ct);
+                    continue;
+                }
+
                 if (snapshotBegan && events.Count == 0)
                 {
                     _publisher.CancelSnapshot(context.ConnectionId, command.SubscriptionId);
@@ -131,8 +151,7 @@ public sealed class WebSocketSessionManager
                 {
                     var originalEvents = events;
                     var start = TryExtractSnapshotStart(events, out var snapshotEvents);
-                    var snapshotFollows = start is not null ||
-                                          ShouldWaitForDeferredSnapshot(subscribeCommand, originalEvents);
+                    var snapshotFollows = start is not null;
                     await _publisher.PublishSubscriptionAcceptedAsync(
                         context.ConnectionId,
                         messageFormat,
@@ -331,18 +350,6 @@ public sealed class WebSocketSessionManager
 
         remainingEvents = events.Skip(1).ToArray();
         return start;
-    }
-
-    private bool ShouldWaitForDeferredSnapshot(
-        SubscribeCommand subscribeCommand,
-        IReadOnlyList<ViewDelta> events)
-    {
-        if (!subscribeCommand.SendSnapshot || events.Count > 0)
-        {
-            return false;
-        }
-
-        return !_store.TryGet(subscribeCommand.View.CollectionId, out _);
     }
 
     private IReadOnlyList<string> ResolvePayloadFieldNames(
