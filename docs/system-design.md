@@ -254,6 +254,10 @@ TCP connect
 
 WebSocket output supports both compact and JSON encodings. Compact is the default; clients can request JSON with `messageFormat: "json"` in the subscribe message. Snapshot delivery is streamed as `snapshotStart`, `snapshotRow...`, `eos` rather than a single aggregate snapshot payload.
 
+For compact snapshots, multiple `snapshotRow` frames may be grouped into one WebSocket payload. Outbound sending uses a
+bounded per-connection queue with async backpressure, so very large snapshots (including 100k+ rows) are streamed over
+time instead of requiring the full snapshot to be buffered in memory at once.
+
 ### JSON snapshot stream
 
 ```json

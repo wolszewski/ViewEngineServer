@@ -67,6 +67,9 @@ On reconnect, clients subscribe again and receive a new server-assigned `subscri
 - every `snapshotRow` includes an explicit row number so clients can place rows correctly during partial viewport expansion.
 - compact snapshot rows are `S|subscriptionId|rowNumber|key|...`
 - JSON snapshot rows include `rowNumber` next to `row`
+- compact encoding may batch multiple `snapshotRow` frames into one WebSocket message, separated by `\n`.
+- outbound delivery is backpressured per connection (`Channel.WriteAsync` on a bounded queue) so large snapshots stream progressively instead of being dropped when frame count spikes.
+- slow-client protection is byte-based as well as count-based: each connection has a maximum queued outbound payload budget, and the server disconnects only when that byte budget is exceeded.
 
 ### `snapshotStart` flags: `isPartial` and `noChanges`
 

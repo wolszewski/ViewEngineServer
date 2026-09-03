@@ -9,7 +9,7 @@ internal sealed class WebSocketConnection(
     System.Net.WebSockets.WebSocket socket,
     ILogger<WebSocketOutboundPublisher> logger)
 {
-    private const int MaxQueuedBytes = 4 * 1024 * 1024;
+    private const int MaxQueuedBytes = 16 * 1024 * 1024;
     private int _completionRequested;
     private int _queuedBytes;
     private readonly Channel<byte[]> _channel = System.Threading.Channels.Channel.CreateBounded<byte[]>(new BoundedChannelOptions(512)
@@ -53,9 +53,7 @@ internal sealed class WebSocketConnection(
             return ValueTask.CompletedTask;
         }
 
-        Interlocked.Add(ref _queuedBytes, -payload.Length);
-        DisconnectSlowClientForFrameLimit();
-        return ValueTask.CompletedTask;
+        return WriteInternalAsync(payload, ct);
     }
 
     private void DisconnectSlowClientForByteLimit(int queuedBytes)
@@ -73,15 +71,19 @@ internal sealed class WebSocketConnection(
         }
     }
 
-    private void DisconnectSlowClientForFrameLimit()
+    private async ValueTask WriteInternalAsync(byte[] payload, CancellationToken ct)
     {
-        if (Interlocked.Exchange(ref _completionRequested, 1) == 0)
+        try
         {
-            logger.LogWarning(
-                "Disconnecting slow WebSocket client '{ConnectionId}' after outbound queue reached frame capacity.",
-                ConnectionId);
-            Socket.Abort();
-            _channel.Writer.TryComplete();
+            await _channel.Writer.WriteAsync(payload, ct);
+        }
+        catch (ChannelClosedException)
+        {
+            Interlocked.Add(ref _queuedBytes, -payload.Length);
+        }
+        catch (OperationCanceledException)
+        {
+            Interlocked.Add(ref _queuedBytes, -payload.Length);
         }
     }
 
