@@ -62,11 +62,23 @@ On reconnect, clients subscribe again and receive a new server-assigned `subscri
 
 ## Subscription rejection contract
 
-- if `subscribe` targets a `collectionId` that does not exist, the server sends a rejection instead of
-  `subscriptionAccepted` and does not process the subscribe further (no snapshot, no viewport state).
+Two distinct rejection kinds exist, with different wire messages and different client-side handling.
+Conflating them (sending the terminal message for a non-terminal failure) desynchronizes clients: a
+compliant client discards all further live deltas for a subscription id after any terminal rejection,
+even though the server may still consider that subscription fully active.
+
+### Subscribe rejection (terminal)
+
+- if `subscribe` targets a `collectionId` that does not exist, or requests a capability
+  (`sortColumn`/`filters`) the deployment hasn't enabled (see `RequireExplicitCapabilities` /
+  `ILiveViewEngineBuilder.AddSorting()`/`.AddFiltering()`), the server sends a rejection instead of
+  `subscriptionAccepted` and does not process the subscribe further (no snapshot, no viewport state
+  is created).
 - compact: `ERR|subscriptionId|reason|message`
 - JSON: `{"type":"subscriptionRejected","subscriptionId":...,"reason":"collection_not_found","message":"..."}`
-- `reason` is a stable machine-readable code (currently `collection_not_found`); `message` is a human-readable detail.
+- `reason` is a stable machine-readable code: `collection_not_found`, `sorting_not_enabled`, or
+  `filtering_not_enabled`; `message` is a human-readable detail. New reason codes may be added over
+  time; clients should not assume this list is exhaustive.
 - clients must not send `updateview`/`setviewport` for a rejected subscription id; treat rejection as terminal
   for that subscription attempt and surface a clear failure state (e.g. "Subscription failed") with a way to retry/reconnect.
 - collection existence is checked exactly once, atomically, at the point the engine registers/dispatches the subscribe
@@ -75,4 +87,19 @@ On reconnect, clients subscribe again and receive a new server-assigned `subscri
   it is either fully accepted against a registered runtime or rejected. Rejection is signalled as data (a
   `SubscriptionRejectedDelta` returned from the same lookup), not an exception, since a missing collection is an
   expected, externally-triggerable outcome (bad client input or a benign create/subscribe race), not a programming error.
+
+### Update rejection (non-terminal)
+
+- if `updateview`/`setviewport` requests a capability (`sortColumn`/`filters`) the deployment hasn't
+  enabled, the server rejects only the requested change - the subscription itself, and its previously
+  accepted view/viewport, remain fully active. The server continues delivering live deltas for that
+  subscription exactly as before the rejected request.
+- compact: `UERR|subscriptionId|reason|message` - note the distinct `UERR` prefix, not `ERR`.
+- JSON: `{"type":"updateRejected","subscriptionId":...,"reason":"sorting_not_enabled","message":"..."}` -
+  note the distinct `updateRejected` type, not `subscriptionRejected`.
+- `reason`/`message` use the same machine-readable codes as subscribe rejection.
+- clients must *not* treat this as terminal: do not clear local subscription state, do not stop
+  listening for live deltas on this subscription id, and do not require a new `subscribe`. Typically
+  surfaced as a transient notification (e.g. a toast/log line) rather than a connection-level failure
+  state.
 

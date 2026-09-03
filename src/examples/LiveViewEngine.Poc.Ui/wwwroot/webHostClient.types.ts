@@ -79,6 +79,12 @@ export type ProtocolFrame =
         message: string;
     }
     | {
+        kind: 'updateRejected';
+        subscriptionId: number;
+        reason: string;
+        message: string;
+    }
+    | {
         kind: 'snapshotStart';
         subscriptionId: number;
         startIndex: number;

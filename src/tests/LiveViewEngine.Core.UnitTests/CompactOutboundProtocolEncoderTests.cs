@@ -38,6 +38,24 @@ public class CompactOutboundProtocolEncoderTests
     }
 
     [Fact]
+    public void EncodeUpdateRejected_UsesDistinctCompactPrefix_FromSubscriptionRejected()
+    {
+        // Must be a distinct frame kind (not ERR) so clients can tell a non-terminal update
+        // rejection (subscription stays alive with its previous view) apart from a terminal
+        // subscribe rejection (subscription is torn down) without ambiguity.
+        var payload = _encoder.EncodeUpdateRejected(new SubscriptionRejectedPayload
+        {
+            SubscriptionId = 5,
+            Reason = "sorting_not_enabled",
+            Message = "Server-side sorting is not enabled for this deployment."
+        });
+
+        Assert.Equal(
+            "UERR|5|sorting_not_enabled|Server-side sorting is not enabled for this deployment.",
+            ToText(payload));
+    }
+
+    [Fact]
     public void EncodeFrames_EncodesSnapshotInsertUpdateDeleteAndEos()
     {
         var frames = _encoder.EncodeFrames(

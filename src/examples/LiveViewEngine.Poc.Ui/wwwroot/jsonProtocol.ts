@@ -51,6 +51,14 @@ export function parseJsonFrame(frame: string): ProtocolFrame[] {
                     message: message.message ?? ''
                 });
                 break;
+            case 'updateRejected':
+                frames.push({
+                    kind: 'updateRejected',
+                    subscriptionId,
+                    reason: message.reason ?? '',
+                    message: message.message ?? ''
+                });
+                break;
             case 'snapshotStart':
                 frames.push({
                     kind: 'snapshotStart',

@@ -55,6 +55,27 @@ public class JsonOutboundProtocolEncoderTests
     }
 
     [Fact]
+    public void EncodeUpdateRejected_UsesDistinctJsonType_FromSubscriptionRejected()
+    {
+        // Must be a distinct "type" discriminator (not subscriptionRejected) so clients can tell a
+        // non-terminal update rejection (subscription stays alive) apart from a terminal subscribe
+        // rejection (subscription is torn down) without ambiguity.
+        var payload = _encoder.EncodeUpdateRejected(new SubscriptionRejectedPayload
+        {
+            SubscriptionId = 6,
+            Reason = "filtering_not_enabled",
+            Message = "Server-side filtering is not enabled for this deployment."
+        });
+
+        using var document = JsonDocument.Parse(payload);
+        var root = document.RootElement;
+        Assert.Equal("updateRejected", root.GetProperty("type").GetString());
+        Assert.Equal(6, root.GetProperty("subscriptionId").GetInt32());
+        Assert.Equal("filtering_not_enabled", root.GetProperty("reason").GetString());
+        Assert.Equal("Server-side filtering is not enabled for this deployment.", root.GetProperty("message").GetString());
+    }
+
+    [Fact]
     public void EncodeFrames_StreamsSnapshotRowsAndLiveDeltasAsSingleJsonMessages()
     {
         var frames = _encoder.EncodeFrames(

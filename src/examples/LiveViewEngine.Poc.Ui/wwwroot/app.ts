@@ -1165,6 +1165,11 @@ function App(): React.ReactElement {
                 isReloadingGridRef.current = false;
                 setIsLoadingSnapshot(false);
                 appendLog(`subscription rejected (${reason}): ${message}`);
+            },
+            onUpdateRejected: (reason, message) => {
+                // Non-terminal: the previous view/viewport is still active server-side, so this
+                // only needs a log entry - no grid/connection state to unwind.
+                appendLog(`view update rejected (${reason}): ${message}`);
             }
         });
 

@@ -203,6 +203,42 @@ public sealed class WebSocketOutboundPublisher(
         return ValueTask.CompletedTask;
     }
 
+    // Non-terminal counterpart to PublishSubscriptionRejectedAsync - used when an
+    // updateview/setviewport request is rejected (e.g. a disabled capability) but the subscription
+    // itself stays alive with its previous view untouched. Deliberately does not touch
+    // SubscriptionState (IsSnapshotActive/PendingLiveDeltas/BufferedFrames) - the caller
+    // (WebSocketSessionManager) is responsible for reconciling any snapshot buffer state that was
+    // already started before the rejection was known.
+    public ValueTask PublishUpdateRejectedAsync(
+        int connectionId,
+        OutboundMessageFormat format,
+        SubscriptionRejectedPayload payload,
+        CancellationToken ct = default)
+    {
+        if (!_connections.TryGetValue(connectionId, out var connection))
+        {
+            return ValueTask.CompletedTask;
+        }
+
+        byte[] message;
+        try
+        {
+            message = _encoders[format].EncodeUpdateRejected(payload);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to encode update rejection for client '{ConnectionId}'.", connectionId);
+            return ValueTask.CompletedTask;
+        }
+
+        lock (connection.Gate)
+        {
+            connection.TryWrite(message);
+        }
+
+        return ValueTask.CompletedTask;
+    }
+
     public ValueTask PublishAsync(
         IReadOnlyList<SubscriberTarget> targets,
         IReadOnlyList<ViewDelta> deltas,

@@ -14,8 +14,27 @@ public sealed class LiveViewEngineOptions
     // keeps today's fully-permissive behavior (sorting/filtering always available).
     public bool RequireExplicitCapabilities { get; init; } = false;
 
-    // Mutated by ILiveViewEngineBuilder.AddSorting()/.AddFiltering() when RequireExplicitCapabilities
-    // is set; otherwise always true. Not meant to be set directly by hosts — use the builder.
-    public bool SortingEnabled { get; set; } = true;
-    public bool FilteringEnabled { get; set; } = true;
+    // Backing fields are nullable so "never explicitly set" can be distinguished from "explicitly
+    // set to true/false" - the effective value then depends on RequireExplicitCapabilities. This
+    // makes RequireExplicitCapabilities self-enforcing directly on LiveViewEngineOptions, regardless
+    // of construction path (DI via ServiceCollectionExtensions, or a host constructing
+    // CollectionStore/CollectionRuntime directly) - a host is never required to separately remember
+    // to also set SortingEnabled/FilteringEnabled = false.
+    private bool? _sortingEnabled;
+    private bool? _filteringEnabled;
+
+    // Not meant to be set directly by hosts under RequireExplicitCapabilities - use
+    // ILiveViewEngineBuilder.AddSorting()/.AddFiltering() instead. Defaults to true unless
+    // RequireExplicitCapabilities is true and this hasn't been explicitly set.
+    public bool SortingEnabled
+    {
+        get => _sortingEnabled ?? !RequireExplicitCapabilities;
+        set => _sortingEnabled = value;
+    }
+
+    public bool FilteringEnabled
+    {
+        get => _filteringEnabled ?? !RequireExplicitCapabilities;
+        set => _filteringEnabled = value;
+    }
 }

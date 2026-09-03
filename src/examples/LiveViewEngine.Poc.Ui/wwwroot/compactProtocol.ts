@@ -37,6 +37,20 @@ export function parseCompactFrame(frame: string, currentFields: string[]): Proto
         }];
     }
 
+    if (kind === 'UERR') {
+        const subscriptionId = parseInt(tokens[1] ?? '', 10);
+        if (!Number.isInteger(subscriptionId)) {
+            return [];
+        }
+
+        return [{
+            kind: 'updateRejected',
+            subscriptionId,
+            reason: decodeToken(tokens[2] ?? '') ?? '',
+            message: decodeToken(tokens[3] ?? '') ?? ''
+        }];
+    }
+
     if (kind === 'P') {
         const subscriptionId = parseInt(tokens[1] ?? '', 10);
         if (!Number.isInteger(subscriptionId)) {

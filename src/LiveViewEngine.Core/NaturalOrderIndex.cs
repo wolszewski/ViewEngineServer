@@ -15,7 +15,6 @@ public sealed class NaturalOrderIndex : IPositionIndex
 {
     private readonly RowCollection _collection;
     private readonly NodeArrayTree<SequenceComparer> _tree;
-    private readonly HashSet<int> _tracked = new();
     private volatile int _subscriberCount;
     private long _lastUsedTicks = DateTime.UtcNow.Ticks;
 
@@ -26,7 +25,6 @@ public sealed class NaturalOrderIndex : IPositionIndex
 
         foreach (var kv in collection.GetAllLiveIndexes())
         {
-            _tracked.Add(kv.Value);
             _tree.Insert(kv.Value);
         }
     }
@@ -39,31 +37,34 @@ public sealed class NaturalOrderIndex : IPositionIndex
     public int SubscriberCount => _subscriberCount;
     public DateTime LastUsedUtc => new DateTime(Interlocked.Read(ref _lastUsedTicks), DateTimeKind.Utc);
 
-    public void IncrementSubscribers()
+    // Explicit IPositionIndex implementations below: same rationale as SortIndex - these lifecycle
+    // operations exist solely to satisfy the internal runtime contract, not as NaturalOrderIndex's
+    // own public API.
+    void IPositionIndex.IncrementSubscribers()
     {
         Interlocked.Increment(ref _subscriberCount);
         Interlocked.Exchange(ref _lastUsedTicks, DateTime.UtcNow.Ticks);
     }
 
-    public void DecrementSubscribers() => Interlocked.Decrement(ref _subscriberCount);
+    void IPositionIndex.DecrementSubscribers() => Interlocked.Decrement(ref _subscriberCount);
 
-    public bool AffectsOrder(in FieldMask changedMask) => false;
+    bool IPositionIndex.AffectsOrder(in FieldMask changedMask) => false;
 
-    public void CaptureOldValue(int rowIndex)
+    void IPositionIndex.CaptureOldValue(int rowIndex)
     {
     }
 
-    public void ResetPending()
+    void IPositionIndex.ResetPending()
     {
     }
 
-    public int IndexOfWithPendingOldValue(int rowIndex) => _tree.IndexOf(rowIndex);
+    int IPositionIndex.IndexOfWithPendingOldValue(int rowIndex) => _tree.IndexOf(rowIndex);
 
-    public TResult WithPendingOldValue<TResult>(int rowIndex, Func<TResult> action) => action();
+    TResult IPositionIndex.WithPendingOldValue<TResult>(int rowIndex, Func<TResult> action) => action();
 
     public void OnUpsert(int rowIndex)
     {
-        if (!_tracked.Add(rowIndex))
+        if (_tree.Contains(rowIndex))
         {
             // Existing row: position never changes in response to field updates.
             return;
@@ -74,12 +75,7 @@ public sealed class NaturalOrderIndex : IPositionIndex
 
     public void OnDelete(int rowIndex)
     {
-        if (!_tracked.Remove(rowIndex))
-        {
-            return;
-        }
-
-        _tree.Delete(rowIndex);
+        _tree.TryDelete(rowIndex);
     }
 
     IMutableRowIndex IPositionIndex.CreateFilteredIndex(FilterSet filters) => CreateFilteredIndex(filters);

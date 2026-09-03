@@ -103,6 +103,46 @@ public class ViewEngineCapabilityTests
     }
 
     [Fact]
+    public async Task RequireExplicitCapabilities_RejectsSortAndFilters_WithoutManuallySettingEnabledFlags()
+    {
+        // Enforcement must come from RequireExplicitCapabilities alone, not from a host (or DI
+        // extension) separately remembering to also set SortingEnabled/FilteringEnabled = false.
+        // This constructs CollectionStore directly (bypassing ServiceCollectionExtensions/DI
+        // entirely) with only RequireExplicitCapabilities set, to prove enforcement doesn't depend
+        // on the construction path.
+        var (engine, _) = CreateEngine(new LiveViewEngineOptions
+        {
+            EagerIndexing = false,
+            RequireExplicitCapabilities = true
+        });
+        await CreateTrades(engine);
+
+        var sortResult = await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = 1,
+            View = new ViewDefinition { CollectionId = "trades", SortColumn = "price" },
+            StartIndex = 0,
+            PageSize = 200
+        });
+        var sortRejected = Assert.IsType<SubscriptionRejectedDelta>(Assert.Single(sortResult));
+        Assert.Equal("sorting_not_enabled", sortRejected.Reason);
+
+        var filterResult = await engine.SubscribeAsync(new SubscribeCommand
+        {
+            ConnectionId = 2,
+            View = new ViewDefinition
+            {
+                CollectionId = "trades",
+                Filters = [new FilterSpec("symbol", FilterOperator.Eq, "AAPL")]
+            },
+            StartIndex = 0,
+            PageSize = 200
+        });
+        var filterRejected = Assert.IsType<SubscriptionRejectedDelta>(Assert.Single(filterResult));
+        Assert.Equal("filtering_not_enabled", filterRejected.Reason);
+    }
+
+    [Fact]
     public async Task RequireExplicitCapabilities_AllowsPlainSubscribe_WithNoSortOrFilters()
     {
         var (engine, _) = CreateEngine(new LiveViewEngineOptions

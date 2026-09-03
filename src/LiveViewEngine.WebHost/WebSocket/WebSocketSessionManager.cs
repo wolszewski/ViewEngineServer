@@ -156,7 +156,11 @@ public sealed class WebSocketSessionManager
                         _publisher.CancelSnapshot(context.ConnectionId, command.SubscriptionId);
                     }
 
-                    await _publisher.PublishSubscriptionRejectedAsync(
+                    // Uses a distinct, non-terminal wire message (updateRejected/UERR) rather than
+                    // PublishSubscriptionRejectedAsync's subscriptionRejected/ERR - clients treat the
+                    // latter as terminal (clearing their local subscription state), which would
+                    // desynchronize them from this still-alive server-side subscription.
+                    await _publisher.PublishUpdateRejectedAsync(
                         context.ConnectionId,
                         messageFormat,
                         new SubscriptionRejectedPayload

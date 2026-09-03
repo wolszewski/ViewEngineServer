@@ -415,7 +415,7 @@ public class WebSocketSessionManagerTests
     }
 
     [Fact]
-    public async Task HandleConnectionAsync_RejectedUpdateView_CancelsStuckSnapshotBuffer_LiveDeltaStillDelivered()
+    public async Task HandleConnectionAsync_RejectedUpdateView_SendsNonTerminalUpdateRejected_CancelsStuckSnapshotBuffer_LiveDeltaStillDelivered()
     {
         var metrics = new ViewEngineMetrics();
         var store = new CollectionStore(metrics, new LiveViewEngineOptions
@@ -457,7 +457,7 @@ public class WebSocketSessionManagerTests
             closeAfterSentCount: 20);
 
         var handleTask = manager.HandleConnectionAsync(socket, CancellationToken.None);
-        await socket.WaitForMessageTypeAsync("subscriptionRejected");
+        await socket.WaitForMessageTypeAsync("updateRejected");
 
         Assert.False(ReadSnapshotActive(publisher, connectionId: 1, subscriptionId: 1));
 
@@ -477,8 +477,13 @@ public class WebSocketSessionManagerTests
             .Select(static m => JsonDocument.Parse(m).RootElement)
             .ToArray();
 
-        var rejected = messages.Single(static m => m.GetProperty("type").GetString() == "subscriptionRejected");
+        // Must use the distinct, non-terminal "updateRejected" type — never "subscriptionRejected",
+        // which a compliant client treats as terminal and would desynchronize from this still-alive
+        // subscription (see webHostClient.ts's 'rejected' handling).
+        var rejected = messages.Single(static m => m.GetProperty("type").GetString() == "updateRejected");
+        Assert.Equal(1, rejected.GetProperty("subscriptionId").GetInt32());
         Assert.Equal("sorting_not_enabled", rejected.GetProperty("reason").GetString());
+        Assert.DoesNotContain(messages, static m => m.GetProperty("type").GetString() == "subscriptionRejected");
 
         Assert.Contains(messages, static m => m.GetProperty("type").GetString() == "rowInsert");
     }
