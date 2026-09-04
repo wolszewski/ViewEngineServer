@@ -1269,12 +1269,17 @@ export function useCollectionData(
         if (window) {
             rowsByPositionRef.current.delete(window.end + 1);
         }
-        if (unboundedViewport && gridApiRef.current && removedRow) {
-            gridApiRef.current.applyTransaction({
-                remove: [removedRow],
-                add: [insertedRow],
-                addIndex: replace.insertPosition
-            });
+        if (unboundedViewport && gridApiRef.current) {
+            gridApiRef.current.applyTransaction(removedRow
+                ? {
+                    remove: [removedRow],
+                    add: [insertedRow],
+                    addIndex: replace.insertPosition
+                }
+                : {
+                    add: [insertedRow],
+                    addIndex: replace.insertPosition
+                });
             return;
         }
         publishRowsFromWindow();
