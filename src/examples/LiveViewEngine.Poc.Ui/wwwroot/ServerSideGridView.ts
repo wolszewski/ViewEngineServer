@@ -592,7 +592,7 @@ export default function ServerSideGridView(): React.ReactElement {
                         scrollViewportDebounceRef.current = window.setTimeout(() => {
                             scrollViewportDebounceRef.current = null;
                             const innerApi = data.gridApiRef.current;
-                            if (!innerApi) {
+                            if (!innerApi || data.isReloadingGridRef.current) {
                                 return;
                             }
                             const firstRowInner = innerApi.getFirstDisplayedRowIndex();
