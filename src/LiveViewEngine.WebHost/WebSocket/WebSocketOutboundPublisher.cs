@@ -4,7 +4,8 @@ using LiveViewEngine.Core;
 namespace ViewEngineServer.WebApp.WebSocket;
 
 public sealed class WebSocketOutboundPublisher(
-    ILogger<WebSocketOutboundPublisher> logger) : IOutboundPublisher
+    ILogger<WebSocketOutboundPublisher> logger,
+    WebSocketOutboundOptions options) : IOutboundPublisher
 {
     private readonly IReadOnlyDictionary<OutboundMessageFormat, IOutboundProtocolEncoder> _encoders =
         new Dictionary<OutboundMessageFormat, IOutboundProtocolEncoder>
@@ -18,7 +19,8 @@ public sealed class WebSocketOutboundPublisher(
 
     public void Register(int connectionId, System.Net.WebSockets.WebSocket socket)
     {
-        var connection = new WebSocketConnection(connectionId, socket, logger);
+        var connection = new WebSocketConnection(
+            connectionId, socket, logger, options.OutboundQueueCapacity, options.SendStallTimeout);
         _connections[connectionId] = connection;
         connection.StartDrain();
     }
@@ -167,6 +169,19 @@ public sealed class WebSocketOutboundPublisher(
 
         lock (connection.Gate)
         {
+            // The initial subscribe's SnapshotStartDelta is stripped from the events list before
+            // reaching PublishDelta (its totalCount/fields are folded into this accepted payload
+            // instead - see WebSocketSessionManager.TryExtractSnapshotStart), so PublishDelta's
+            // SnapshotStartDelta case never runs for it. Seed the streamed-row continuity state here
+            // so the first SnapshotRowsDelta batch is checked against the correct start index.
+            if (payload.SnapshotFollows && connection.Subscriptions.TryGetValue(payload.SubscriptionId, out var subscription))
+            {
+                subscription.SnapshotExpectedNextRowNumber = payload.StartIndex;
+                subscription.SnapshotRowsSeen = 0;
+                subscription.SnapshotIsPartial = false;
+                subscription.SnapshotHasRowNumberDiscontinuity = false;
+            }
+
             connection.TryWrite(message);
         }
 
@@ -300,6 +315,57 @@ public sealed class WebSocketOutboundPublisher(
             if (_flushPolicy.IsSnapshotControlOrData(delta))
             {
                 _flushPolicy.FlushPendingLiveDeltas(connection, subscriptionId, subscription, _encoders);
+
+                switch (delta)
+                {
+                    case SnapshotStartDelta start:
+                        subscription.SnapshotExpectedNextRowNumber = start.StartIndex;
+                        subscription.SnapshotRowsSeen = 0;
+                        subscription.SnapshotIsPartial = start.IsPartial;
+                        subscription.SnapshotHasRowNumberDiscontinuity = false;
+                        logger.LogInformation(
+                            "Snapshot for connection '{ConnectionId}' subscription '{SubscriptionId}' starting: " +
+                            "startIndex={StartIndex} totalCount={TotalCount} isPartial={IsPartial}.",
+                            connection.ConnectionId, subscriptionId, start.StartIndex, start.TotalCount, start.IsPartial);
+                        break;
+                    case SnapshotRowsDelta rows:
+                        if (rows.StartRowNumber != subscription.SnapshotExpectedNextRowNumber)
+                        {
+                            subscription.SnapshotHasRowNumberDiscontinuity = true;
+                            logger.LogWarning(
+                                "Snapshot for connection '{ConnectionId}' subscription '{SubscriptionId}' row-number " +
+                                "discontinuity: expectedStartRowNumber={ExpectedStartRowNumber} actualStartRowNumber={ActualStartRowNumber}.",
+                                connection.ConnectionId, subscriptionId, subscription.SnapshotExpectedNextRowNumber,
+                                rows.StartRowNumber);
+                        }
+
+                        subscription.SnapshotRowsSeen += rows.Rows.Count;
+                        subscription.SnapshotExpectedNextRowNumber = rows.StartRowNumber + rows.Rows.Count;
+                        logger.LogDebug(
+                            "Snapshot for connection '{ConnectionId}' subscription '{SubscriptionId}' sending rows batch: " +
+                            "startRowNumber={StartRowNumber} count={Count} cumulativeRowsSeen={CumulativeRowsSeen}.",
+                            connection.ConnectionId, subscriptionId, rows.StartRowNumber, rows.Rows.Count,
+                            subscription.SnapshotRowsSeen);
+                        break;
+                    case EndOfSnapshotDelta:
+                        if (subscription.SnapshotHasRowNumberDiscontinuity)
+                        {
+                            logger.LogWarning(
+                                "Snapshot for connection '{ConnectionId}' subscription '{SubscriptionId}' complete " +
+                                "after a row-number discontinuity was observed: rowsSeen={RowsSeen} isPartial={IsPartial}.",
+                                connection.ConnectionId, subscriptionId, subscription.SnapshotRowsSeen,
+                                subscription.SnapshotIsPartial);
+                        }
+                        else
+                        {
+                            logger.LogInformation(
+                                "Snapshot for connection '{ConnectionId}' subscription '{SubscriptionId}' complete " +
+                                "(eos enqueued): rowsSeen={RowsSeen} isPartial={IsPartial}.",
+                                connection.ConnectionId, subscriptionId, subscription.SnapshotRowsSeen,
+                                subscription.SnapshotIsPartial);
+                        }
+                        break;
+                }
 
                 foreach (var payload in encoder.EncodeFrames(delta, subscriptionId))
                 {

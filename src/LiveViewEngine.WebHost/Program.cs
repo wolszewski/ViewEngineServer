@@ -7,10 +7,24 @@ using ViewEngineServer.WebApp.WebSocket;
 
 var builder = WebApplication.CreateBuilder(args);
 var services = builder.Services;
+
+AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+{
+    Console.Error.WriteLine(
+        $"[FATAL] Unhandled exception (isTerminating={e.IsTerminating}): {e.ExceptionObject}");
+};
+TaskScheduler.UnobservedTaskException += (_, e) =>
+{
+    Console.Error.WriteLine($"[UNOBSERVED] Task exception: {e.Exception}");
+    e.SetObserved();
+};
+
 var liveViewEngineOptions =
     builder.Configuration.GetSection("LiveViewEngine").Get<LiveViewEngineOptions>() ?? new LiveViewEngineOptions();
 var tcpIngestOptions =
     builder.Configuration.GetSection("TcpIngest").Get<TcpIngestOptions>() ?? new TcpIngestOptions();
+var webSocketOutboundOptions =
+    builder.Configuration.GetSection("WebSocketOutbound").Get<WebSocketOutboundOptions>() ?? new WebSocketOutboundOptions();
 var otlpEndpoint =
     builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"]
     ?? builder.Configuration["ASPIRE_DASHBOARD_OTLP_ENDPOINT_URL"];
@@ -39,6 +53,7 @@ services.AddLiveViewEngineCore(liveViewEngineOptions)
 services.AddLiveViewEnginePublisher<WebSocketOutboundPublisher>();
 services.AddSingleton<WebSocketSessionManager>();
 services.AddSingleton(tcpIngestOptions);
+services.AddSingleton(webSocketOutboundOptions);
 services.AddSingleton<TcpIngestRequestDispatcher>();
 services.AddSingleton<TcpIngestConnectionHandler>();
 services.AddHostedService<TcpIngestListenerService>();

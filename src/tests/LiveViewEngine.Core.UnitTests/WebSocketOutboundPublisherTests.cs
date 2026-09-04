@@ -12,7 +12,7 @@ public class WebSocketOutboundPublisherTests
     [Fact]
     public async Task PublishAsync_BuffersCompactLiveUpdatesUntilEos()
     {
-        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance);
+        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance, new WebSocketOutboundOptions());
         var socket = new CapturingWebSocket();
         publisher.Register(1, socket);
         publisher.ConfigureSubscription(1, 7, OutboundMessageFormat.Compact, snapshotActive: true);
@@ -72,7 +72,7 @@ public class WebSocketOutboundPublisherTests
     [Fact]
     public async Task PublishAsync_BuffersJsonLiveUpdatesUntilEos()
     {
-        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance);
+        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance, new WebSocketOutboundOptions());
         var socket = new CapturingWebSocket();
         publisher.Register(1, socket);
         publisher.ConfigureSubscription(1, 7, OutboundMessageFormat.Json, snapshotActive: true);
@@ -133,7 +133,7 @@ public class WebSocketOutboundPublisherTests
     [Fact]
     public async Task PublishAsync_CoalescesConsecutiveRowUpdatesForSameRow()
     {
-        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance);
+        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance, new WebSocketOutboundOptions());
         var socket = new CapturingWebSocket();
         publisher.Register(1, socket);
         publisher.ConfigureSubscription(1, 7, OutboundMessageFormat.Compact, snapshotActive: false);
@@ -174,7 +174,7 @@ public class WebSocketOutboundPublisherTests
     [Fact]
     public async Task PublishAsync_DropsInsertRemovePairForSameRow()
     {
-        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance);
+        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance, new WebSocketOutboundOptions());
         var socket = new CapturingWebSocket();
         publisher.Register(1, socket);
         publisher.ConfigureSubscription(1, 7, OutboundMessageFormat.Compact, snapshotActive: false);

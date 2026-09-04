@@ -11,6 +11,7 @@ public class ServiceCollectionExtensionsTests
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddLiveViewEngineCore(new LiveViewEngineOptions { EagerIndexing = false });
+        services.AddSingleton(new WebSocketOutboundOptions());
         services.AddLiveViewEnginePublisher<WebSocketOutboundPublisher>();
 
         using var provider = services.BuildServiceProvider();
