@@ -16,7 +16,7 @@ public class WebSocketSessionManagerTests
     {
         var metrics = new ViewEngineMetrics();
         var store = new CollectionStore(metrics, new LiveViewEngineOptions { EagerIndexing = false });
-        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance);
+        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance, new WebSocketOutboundOptions());
         var engine = new ViewEngine(store, publisher, NullLogger<ViewEngine>.Instance, metrics);
         var manager = new WebSocketSessionManager(
             engine,
@@ -45,7 +45,7 @@ public class WebSocketSessionManagerTests
     {
         var metrics = new ViewEngineMetrics();
         var store = new CollectionStore(metrics, new LiveViewEngineOptions { EagerIndexing = false });
-        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance);
+        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance, new WebSocketOutboundOptions());
         var engine = new ViewEngine(store, publisher, NullLogger<ViewEngine>.Instance, metrics);
         var manager = new WebSocketSessionManager(
             engine,
@@ -67,7 +67,7 @@ public class WebSocketSessionManagerTests
     {
         var metrics = new ViewEngineMetrics();
         var store = new CollectionStore(metrics, new LiveViewEngineOptions { EagerIndexing = false });
-        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance);
+        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance, new WebSocketOutboundOptions());
         var engine = new ViewEngine(store, publisher, NullLogger<ViewEngine>.Instance, metrics);
         var manager = new WebSocketSessionManager(
             engine,
@@ -121,7 +121,7 @@ public class WebSocketSessionManagerTests
     {
         var metrics = new ViewEngineMetrics();
         var store = new CollectionStore(metrics, new LiveViewEngineOptions { EagerIndexing = false });
-        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance);
+        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance, new WebSocketOutboundOptions());
         var engine = new ViewEngine(store, publisher, NullLogger<ViewEngine>.Instance, metrics);
         var manager = new WebSocketSessionManager(
             engine,
@@ -168,7 +168,7 @@ public class WebSocketSessionManagerTests
     {
         var metrics = new ViewEngineMetrics();
         var store = new CollectionStore(metrics, new LiveViewEngineOptions { EagerIndexing = false });
-        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance);
+        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance, new WebSocketOutboundOptions());
         var engine = new ViewEngine(store, publisher, NullLogger<ViewEngine>.Instance, metrics);
         var manager = new WebSocketSessionManager(
             engine,
@@ -242,7 +242,7 @@ public class WebSocketSessionManagerTests
     {
         var metrics = new ViewEngineMetrics();
         var store = new CollectionStore(metrics, new LiveViewEngineOptions { EagerIndexing = false });
-        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance);
+        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance, new WebSocketOutboundOptions());
         var engine = new ViewEngine(store, publisher, NullLogger<ViewEngine>.Instance, metrics);
         var manager = new WebSocketSessionManager(
             engine,
@@ -287,7 +287,7 @@ public class WebSocketSessionManagerTests
     {
         var metrics = new ViewEngineMetrics();
         var store = new CollectionStore(metrics, new LiveViewEngineOptions { EagerIndexing = false });
-        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance);
+        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance, new WebSocketOutboundOptions());
         var engine = new ViewEngine(store, publisher, NullLogger<ViewEngine>.Instance, metrics);
         var manager = new WebSocketSessionManager(
             engine,
@@ -331,7 +331,7 @@ public class WebSocketSessionManagerTests
     {
         var metrics = new ViewEngineMetrics();
         var store = new CollectionStore(metrics, new LiveViewEngineOptions { EagerIndexing = false });
-        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance);
+        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance, new WebSocketOutboundOptions());
         var engine = new ViewEngine(store, publisher, NullLogger<ViewEngine>.Instance, metrics);
         var manager = new WebSocketSessionManager(
             engine,
@@ -389,7 +389,7 @@ public class WebSocketSessionManagerTests
     [Fact]
     public async Task HandleConnectionAsync_SetViewportActivatesBufferBeforeDispatch()
     {
-        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance);
+        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance, new WebSocketOutboundOptions());
         var engine = new BlockingViewEngine();
         var store = new CollectionStore(new ViewEngineMetrics(), new LiveViewEngineOptions { EagerIndexing = false });
         store.TryCreateCollection(new CollectionSchema("trades", ["instrument"], [ScalarFieldType.String]));
@@ -425,7 +425,7 @@ public class WebSocketSessionManagerTests
             SortingEnabled = false,
             FilteringEnabled = false
         });
-        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance);
+        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance, new WebSocketOutboundOptions());
         var engine = new ViewEngine(store, publisher, NullLogger<ViewEngine>.Instance, metrics);
         var manager = new WebSocketSessionManager(
             engine,
@@ -537,7 +537,7 @@ public class WebSocketSessionManagerTests
     {
         var metrics = new ViewEngineMetrics();
         var store = new CollectionStore(metrics, new LiveViewEngineOptions { EagerIndexing = false });
-        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance);
+        var publisher = new WebSocketOutboundPublisher(NullLogger<WebSocketOutboundPublisher>.Instance, new WebSocketOutboundOptions());
         var engine = new ViewEngine(store, publisher, NullLogger<ViewEngine>.Instance, metrics);
         var manager = new WebSocketSessionManager(
             engine,

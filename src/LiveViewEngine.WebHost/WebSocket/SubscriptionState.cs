@@ -9,10 +9,11 @@ internal sealed class SubscriptionState(OutboundMessageFormat format)
     public List<ViewDelta> PendingLiveDeltas { get; } = [];
     public Queue<byte[]> BufferedFrames { get; } = new();
 
-    // Diagnostics for the in-flight snapshot delivery: rows actually seen across SnapshotRowsDelta
-    // batches vs. the totalCount announced by SnapshotStartDelta, compared at EndOfSnapshotDelta to
-    // surface any row loss between computing the snapshot and finishing its delivery.
-    public int SnapshotExpectedTotalCount { get; set; }
+    // Diagnostics for the in-flight snapshot delivery: how many rows have streamed so far and
+    // whether this is a partial (viewport-expansion) batch - logged at EndOfSnapshotDelta. Not
+    // compared against the collection's totalCount here, because a bounded/paged subscription
+    // legitimately streams fewer rows than totalCount without being "partial" (see
+    // WebSocketOutboundPublisher.PublishDelta's EndOfSnapshotDelta case for why).
     public int SnapshotRowsSeen { get; set; }
     public bool SnapshotIsPartial { get; set; }
 }

@@ -48,8 +48,12 @@ public sealed class WebSocketSessionManager
                 {
                     result = await socket.ReceiveAsync(context.Buffer, ct);
                 }
-                catch (WebSocketException ex)
+                catch (Exception ex) when (ex is WebSocketException or OperationCanceledException or ObjectDisposedException)
                 {
+                    // WebSocketException: normal abrupt-close/reset. OperationCanceledException/
+                    // ObjectDisposedException: can surface here when WebSocketOutboundPublisher's
+                    // slow-client Fault() path calls Socket.Abort() to force this receive loop to
+                    // unblock and run the cleanup below - not just from `ct` cancellation.
                     _logger.LogDebug(ex, "Receive error for client '{ConnectionId}'.", context.ConnectionId);
                     break;
                 }

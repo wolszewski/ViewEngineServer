@@ -4,7 +4,8 @@ using LiveViewEngine.Core;
 namespace ViewEngineServer.WebApp.WebSocket;
 
 public sealed class WebSocketOutboundPublisher(
-    ILogger<WebSocketOutboundPublisher> logger) : IOutboundPublisher
+    ILogger<WebSocketOutboundPublisher> logger,
+    WebSocketOutboundOptions options) : IOutboundPublisher
 {
     private readonly IReadOnlyDictionary<OutboundMessageFormat, IOutboundProtocolEncoder> _encoders =
         new Dictionary<OutboundMessageFormat, IOutboundProtocolEncoder>
@@ -18,7 +19,8 @@ public sealed class WebSocketOutboundPublisher(
 
     public void Register(int connectionId, System.Net.WebSockets.WebSocket socket)
     {
-        var connection = new WebSocketConnection(connectionId, socket, logger);
+        var connection = new WebSocketConnection(
+            connectionId, socket, logger, options.OutboundQueueCapacity, options.SendStallTimeout);
         _connections[connectionId] = connection;
         connection.StartDrain();
     }
@@ -168,14 +170,12 @@ public sealed class WebSocketOutboundPublisher(
         lock (connection.Gate)
         {
             // The initial subscribe's SnapshotStartDelta is stripped from the events list before
-            // reaching PublishDelta (its totalCount/fields are folded into this accepted payload
-            // instead - see WebSocketSessionManager.TryExtractSnapshotStart), so PublishDelta's
-            // SnapshotStartDelta case never runs for it. Seed the row-count diagnostic state here
-            // instead, or the first snapshot's completion check spuriously compares rowsSeen against
-            // the stale default of 0.
+            // reaching PublishDelta (see WebSocketSessionManager.TryExtractSnapshotStart), so
+            // PublishDelta's SnapshotStartDelta case never runs for it. Reset the rows-seen counter
+            // here instead, or the first snapshot's completion log would report a stale count left
+            // over from a previous subscription that reused this same subscription id slot.
             if (payload.SnapshotFollows && connection.Subscriptions.TryGetValue(payload.SubscriptionId, out var subscription))
             {
-                subscription.SnapshotExpectedTotalCount = payload.TotalCount;
                 subscription.SnapshotRowsSeen = 0;
                 subscription.SnapshotIsPartial = false;
             }
@@ -317,7 +317,6 @@ public sealed class WebSocketOutboundPublisher(
                 switch (delta)
                 {
                     case SnapshotStartDelta start:
-                        subscription.SnapshotExpectedTotalCount = start.TotalCount;
                         subscription.SnapshotRowsSeen = 0;
                         subscription.SnapshotIsPartial = start.IsPartial;
                         logger.LogInformation(
@@ -334,26 +333,20 @@ public sealed class WebSocketOutboundPublisher(
                             subscription.SnapshotRowsSeen);
                         break;
                     case EndOfSnapshotDelta:
-                        // A partial snapshot (isPartial=true) is an intentionally incomplete viewport-expansion
-                        // batch - it only streams rows outside the client's previously-cached overlap range, so
-                        // rowsSeen is expected to be less than the collection's totalCount. Only a non-partial
-                        // (full) snapshot's rowsSeen must equal totalCount.
-                        if (!subscription.SnapshotIsPartial && subscription.SnapshotRowsSeen != subscription.SnapshotExpectedTotalCount)
-                        {
-                            logger.LogWarning(
-                                "Snapshot for connection '{ConnectionId}' subscription '{SubscriptionId}' row count " +
-                                "mismatch at completion: rowsSeen={RowsSeen} expectedTotalCount={ExpectedTotalCount}.",
-                                connection.ConnectionId, subscriptionId, subscription.SnapshotRowsSeen,
-                                subscription.SnapshotExpectedTotalCount);
-                        }
-                        else
-                        {
-                            logger.LogInformation(
-                                "Snapshot for connection '{ConnectionId}' subscription '{SubscriptionId}' complete " +
-                                "(eos enqueued): rowsSeen={RowsSeen} isPartial={IsPartial}.",
-                                connection.ConnectionId, subscriptionId, subscription.SnapshotRowsSeen,
-                                subscription.SnapshotIsPartial);
-                        }
+                        // rowsSeen legitimately differs from totalCount whenever this is a bounded/
+                        // paged subscription (e.g. a Server Side Filter/Sort tab's pageSize window) -
+                        // only a genuinely unbounded/full-collection subscribe expects the two to
+                        // match, and the publisher has no reliable way to distinguish that here, so
+                        // no equality assertion is made. Silent frame loss is instead caught
+                        // structurally: WebSocketConnection's bounded outbound queue now aborts the
+                        // connection (see its Fault method) rather than ever dropping a frame quietly,
+                        // so an incomplete delivery always surfaces as an explicit "Aborting
+                        // connection" warning instead of as a row-count mismatch here.
+                        logger.LogInformation(
+                            "Snapshot for connection '{ConnectionId}' subscription '{SubscriptionId}' complete " +
+                            "(eos enqueued): rowsSeen={RowsSeen} isPartial={IsPartial}.",
+                            connection.ConnectionId, subscriptionId, subscription.SnapshotRowsSeen,
+                            subscription.SnapshotIsPartial);
                         break;
                 }
 
