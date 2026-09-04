@@ -1157,8 +1157,12 @@ export function useCollectionData(
         const updated: RowData = { ...existing, ...changedFields };
         rowsByIdRef.current.set(rowId, updated);
         rowsByPositionRef.current.set(update.position, updated);
+        if (unboundedViewport && gridApiRef.current) {
+            gridApiRef.current.applyTransaction({ update: [updated] });
+            return;
+        }
         publishRowsFromWindow();
-    }, [publishRowsFromWindow]);
+    }, [publishRowsFromWindow, unboundedViewport]);
 
     const applyInsert = useCallback((insert: RowInsertEvent) => {
         if (columnDefs.length === 0 && insert.row) {
@@ -1173,18 +1177,23 @@ export function useCollectionData(
                 }
             }
         }
-        rowsByPositionRef.current.set(insert.position, { ...insert.row });
+        const insertedRow: RowData = { ...insert.row };
+        rowsByPositionRef.current.set(insert.position, insertedRow);
         const insertedRowId = insert.row.key ?? insert.row.id;
         if (insertedRowId) {
-            rowsByIdRef.current.set(insertedRowId, { ...insert.row });
+            rowsByIdRef.current.set(insertedRowId, insertedRow);
         }
         adjustTotalCount(1);
         const window = subscribedViewportRef.current;
         if (window) {
             rowsByPositionRef.current.delete(window.end + 1);
         }
+        if (unboundedViewport && gridApiRef.current) {
+            gridApiRef.current.applyTransaction({ add: [insertedRow], addIndex: insert.position });
+            return;
+        }
         publishRowsFromWindow();
-    }, [adjustTotalCount, columnDefs.length, publishRowsFromWindow, setColumnsFromRow]);
+    }, [adjustTotalCount, columnDefs.length, publishRowsFromWindow, setColumnsFromRow, unboundedViewport]);
 
     const applyRemove = useCallback((remove: RowRemoveEvent) => {
         const removedRow = rowsByPositionRef.current.get(remove.position);
@@ -1206,8 +1215,12 @@ export function useCollectionData(
             }
         }
         adjustTotalCount(-1);
+        if (unboundedViewport && gridApiRef.current && removedRow) {
+            gridApiRef.current.applyTransaction({ remove: [removedRow] });
+            return;
+        }
         publishRowsFromWindow();
-    }, [adjustTotalCount, publishRowsFromWindow]);
+    }, [adjustTotalCount, publishRowsFromWindow, unboundedViewport]);
 
     const applyReplace = useCallback((replace: RowReplaceEvent) => {
         if (columnDefs.length === 0 && replace.row) {
@@ -1245,18 +1258,24 @@ export function useCollectionData(
                 }
             }
         }
-        rowsByPositionRef.current.set(replace.insertPosition, { ...replace.row });
+        const insertedRow: RowData = { ...replace.row };
+        rowsByPositionRef.current.set(replace.insertPosition, insertedRow);
         const insertedRowId = replace.row.key ?? replace.row.id;
         if (insertedRowId) {
-            rowsByIdRef.current.set(insertedRowId, { ...replace.row });
+            rowsByIdRef.current.set(insertedRowId, insertedRow);
         }
 
         const window = subscribedViewportRef.current;
         if (window) {
             rowsByPositionRef.current.delete(window.end + 1);
         }
+        if (unboundedViewport && gridApiRef.current && removedRow) {
+            gridApiRef.current.applyTransaction({ remove: [removedRow] });
+            gridApiRef.current.applyTransaction({ add: [insertedRow], addIndex: replace.insertPosition });
+            return;
+        }
         publishRowsFromWindow();
-    }, [columnDefs.length, publishRowsFromWindow, setColumnsFromRow]);
+    }, [columnDefs.length, publishRowsFromWindow, setColumnsFromRow, unboundedViewport]);
 
     const handleDeltaEvent = useCallback((event: DeltaEvent) => {
         if (event.type === 'snapshot') {
