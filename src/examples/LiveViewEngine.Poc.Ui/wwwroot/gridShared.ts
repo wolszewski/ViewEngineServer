@@ -1270,8 +1270,11 @@ export function useCollectionData(
             rowsByPositionRef.current.delete(window.end + 1);
         }
         if (unboundedViewport && gridApiRef.current && removedRow) {
-            gridApiRef.current.applyTransaction({ remove: [removedRow] });
-            gridApiRef.current.applyTransaction({ add: [insertedRow], addIndex: replace.insertPosition });
+            gridApiRef.current.applyTransaction({
+                remove: [removedRow],
+                add: [insertedRow],
+                addIndex: replace.insertPosition
+            });
             return;
         }
         publishRowsFromWindow();
