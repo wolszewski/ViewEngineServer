@@ -918,6 +918,16 @@ export function useCollectionData(
 
     const columnFieldsRef = useRef<string[] | null>(null);
 
+    const adjustTotalCount = useCallback((delta: number) => {
+        if (totalCountRef.current === null) {
+            return;
+        }
+
+        const nextTotalCount = totalCountRef.current + delta;
+        totalCountRef.current = nextTotalCount;
+        setTotalCount(nextTotalCount);
+    }, []);
+
     const clearState = useCallback(() => {
         rowsByIdRef.current.clear();
         rowsByPositionRef.current.clear();
@@ -1028,12 +1038,12 @@ export function useCollectionData(
                     ? currentViewport
                     : { start: snapshot.startIndex, end: snapshot.startIndex });
         } else if (!snapshot.isPartial && unboundedViewport) {
-            // A retry-timer resend of an unchanged subscribe/updateview request can legitimately come
-            // back as a non-partial snapshot with zero rows and the same totalCount as before - the
-            // server's way of saying "you already have this view, nothing to resend". Unlike the
-            // bounded-viewport branch above, there's no viewport window to compare positions against
-            // here, so treat "0 rows + matching totalCount + we already have the full set cached" as
-            // that same no-op signal instead of unconditionally wiping an otherwise-complete cache.
+            // An unchanged subscribe/updateview request can legitimately come back as a non-partial
+            // snapshot with zero rows and the same totalCount as before - the server's way of saying
+            // "you already have this view, nothing to resend". Unlike the bounded-viewport branch
+            // above, there's no viewport window to compare positions against here, so treat
+            // "0 rows + matching totalCount + we already have the full set cached" as that same
+            // no-op signal instead of unconditionally wiping an otherwise-complete cache.
             isNoOpFullSnapshot = rows.length === 0
                 && snapshot.totalCount === totalCountRef.current
                 && rowsByPositionRef.current.size === totalCountRef.current;
@@ -1168,12 +1178,13 @@ export function useCollectionData(
         if (insertedRowId) {
             rowsByIdRef.current.set(insertedRowId, { ...insert.row });
         }
+        adjustTotalCount(1);
         const window = subscribedViewportRef.current;
         if (window) {
             rowsByPositionRef.current.delete(window.end + 1);
         }
         publishRowsFromWindow();
-    }, [columnDefs.length, publishRowsFromWindow, setColumnsFromRow]);
+    }, [adjustTotalCount, columnDefs.length, publishRowsFromWindow, setColumnsFromRow]);
 
     const applyRemove = useCallback((remove: RowRemoveEvent) => {
         const removedRow = rowsByPositionRef.current.get(remove.position);
@@ -1194,8 +1205,9 @@ export function useCollectionData(
                 }
             }
         }
+        adjustTotalCount(-1);
         publishRowsFromWindow();
-    }, [publishRowsFromWindow]);
+    }, [adjustTotalCount, publishRowsFromWindow]);
 
     const applyReplace = useCallback((replace: RowReplaceEvent) => {
         if (columnDefs.length === 0 && replace.row) {

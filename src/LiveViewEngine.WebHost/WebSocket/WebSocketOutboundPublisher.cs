@@ -170,14 +170,16 @@ public sealed class WebSocketOutboundPublisher(
         lock (connection.Gate)
         {
             // The initial subscribe's SnapshotStartDelta is stripped from the events list before
-            // reaching PublishDelta (see WebSocketSessionManager.TryExtractSnapshotStart), so
-            // PublishDelta's SnapshotStartDelta case never runs for it. Reset the rows-seen counter
-            // here instead, or the first snapshot's completion log would report a stale count left
-            // over from a previous subscription that reused this same subscription id slot.
+            // reaching PublishDelta (its totalCount/fields are folded into this accepted payload
+            // instead - see WebSocketSessionManager.TryExtractSnapshotStart), so PublishDelta's
+            // SnapshotStartDelta case never runs for it. Seed the streamed-row continuity state here
+            // so the first SnapshotRowsDelta batch is checked against the correct start index.
             if (payload.SnapshotFollows && connection.Subscriptions.TryGetValue(payload.SubscriptionId, out var subscription))
             {
+                subscription.SnapshotExpectedNextRowNumber = payload.StartIndex;
                 subscription.SnapshotRowsSeen = 0;
                 subscription.SnapshotIsPartial = false;
+                subscription.SnapshotHasRowNumberDiscontinuity = false;
             }
 
             connection.TryWrite(message);
@@ -317,15 +319,28 @@ public sealed class WebSocketOutboundPublisher(
                 switch (delta)
                 {
                     case SnapshotStartDelta start:
+                        subscription.SnapshotExpectedNextRowNumber = start.StartIndex;
                         subscription.SnapshotRowsSeen = 0;
                         subscription.SnapshotIsPartial = start.IsPartial;
+                        subscription.SnapshotHasRowNumberDiscontinuity = false;
                         logger.LogInformation(
                             "Snapshot for connection '{ConnectionId}' subscription '{SubscriptionId}' starting: " +
                             "startIndex={StartIndex} totalCount={TotalCount} isPartial={IsPartial}.",
                             connection.ConnectionId, subscriptionId, start.StartIndex, start.TotalCount, start.IsPartial);
                         break;
                     case SnapshotRowsDelta rows:
+                        if (rows.StartRowNumber != subscription.SnapshotExpectedNextRowNumber)
+                        {
+                            subscription.SnapshotHasRowNumberDiscontinuity = true;
+                            logger.LogWarning(
+                                "Snapshot for connection '{ConnectionId}' subscription '{SubscriptionId}' row-number " +
+                                "discontinuity: expectedStartRowNumber={ExpectedStartRowNumber} actualStartRowNumber={ActualStartRowNumber}.",
+                                connection.ConnectionId, subscriptionId, subscription.SnapshotExpectedNextRowNumber,
+                                rows.StartRowNumber);
+                        }
+
                         subscription.SnapshotRowsSeen += rows.Rows.Count;
+                        subscription.SnapshotExpectedNextRowNumber = rows.StartRowNumber + rows.Rows.Count;
                         logger.LogInformation(
                             "Snapshot for connection '{ConnectionId}' subscription '{SubscriptionId}' sending rows batch: " +
                             "startRowNumber={StartRowNumber} count={Count} cumulativeRowsSeen={CumulativeRowsSeen}.",
@@ -333,20 +348,22 @@ public sealed class WebSocketOutboundPublisher(
                             subscription.SnapshotRowsSeen);
                         break;
                     case EndOfSnapshotDelta:
-                        // rowsSeen legitimately differs from totalCount whenever this is a bounded/
-                        // paged subscription (e.g. a Server Side Filter/Sort tab's pageSize window) -
-                        // only a genuinely unbounded/full-collection subscribe expects the two to
-                        // match, and the publisher has no reliable way to distinguish that here, so
-                        // no equality assertion is made. Silent frame loss is instead caught
-                        // structurally: WebSocketConnection's bounded outbound queue now aborts the
-                        // connection (see its Fault method) rather than ever dropping a frame quietly,
-                        // so an incomplete delivery always surfaces as an explicit "Aborting
-                        // connection" warning instead of as a row-count mismatch here.
-                        logger.LogInformation(
-                            "Snapshot for connection '{ConnectionId}' subscription '{SubscriptionId}' complete " +
-                            "(eos enqueued): rowsSeen={RowsSeen} isPartial={IsPartial}.",
-                            connection.ConnectionId, subscriptionId, subscription.SnapshotRowsSeen,
-                            subscription.SnapshotIsPartial);
+                        if (subscription.SnapshotHasRowNumberDiscontinuity)
+                        {
+                            logger.LogWarning(
+                                "Snapshot for connection '{ConnectionId}' subscription '{SubscriptionId}' complete " +
+                                "after a row-number discontinuity was observed: rowsSeen={RowsSeen} isPartial={IsPartial}.",
+                                connection.ConnectionId, subscriptionId, subscription.SnapshotRowsSeen,
+                                subscription.SnapshotIsPartial);
+                        }
+                        else
+                        {
+                            logger.LogInformation(
+                                "Snapshot for connection '{ConnectionId}' subscription '{SubscriptionId}' complete " +
+                                "(eos enqueued): rowsSeen={RowsSeen} isPartial={IsPartial}.",
+                                connection.ConnectionId, subscriptionId, subscription.SnapshotRowsSeen,
+                                subscription.SnapshotIsPartial);
+                        }
                         break;
                 }
 
