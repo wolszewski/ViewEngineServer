@@ -341,7 +341,7 @@ public sealed class WebSocketOutboundPublisher(
 
                         subscription.SnapshotRowsSeen += rows.Rows.Count;
                         subscription.SnapshotExpectedNextRowNumber = rows.StartRowNumber + rows.Rows.Count;
-                        logger.LogInformation(
+                        logger.LogDebug(
                             "Snapshot for connection '{ConnectionId}' subscription '{SubscriptionId}' sending rows batch: " +
                             "startRowNumber={StartRowNumber} count={Count} cumulativeRowsSeen={CumulativeRowsSeen}.",
                             connection.ConnectionId, subscriptionId, rows.StartRowNumber, rows.Rows.Count,
