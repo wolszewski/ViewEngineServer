@@ -167,6 +167,19 @@ public sealed class WebSocketOutboundPublisher(
 
         lock (connection.Gate)
         {
+            // The initial subscribe's SnapshotStartDelta is stripped from the events list before
+            // reaching PublishDelta (its totalCount/fields are folded into this accepted payload
+            // instead - see WebSocketSessionManager.TryExtractSnapshotStart), so PublishDelta's
+            // SnapshotStartDelta case never runs for it. Seed the row-count diagnostic state here
+            // instead, or the first snapshot's completion check spuriously compares rowsSeen against
+            // the stale default of 0.
+            if (payload.SnapshotFollows && connection.Subscriptions.TryGetValue(payload.SubscriptionId, out var subscription))
+            {
+                subscription.SnapshotExpectedTotalCount = payload.TotalCount;
+                subscription.SnapshotRowsSeen = 0;
+                subscription.SnapshotIsPartial = false;
+            }
+
             connection.TryWrite(message);
         }
 
