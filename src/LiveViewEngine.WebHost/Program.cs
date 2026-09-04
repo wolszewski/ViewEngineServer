@@ -7,6 +7,18 @@ using ViewEngineServer.WebApp.WebSocket;
 
 var builder = WebApplication.CreateBuilder(args);
 var services = builder.Services;
+
+AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+{
+    Console.Error.WriteLine(
+        $"[FATAL] Unhandled exception (isTerminating={e.IsTerminating}): {e.ExceptionObject}");
+};
+TaskScheduler.UnobservedTaskException += (_, e) =>
+{
+    Console.Error.WriteLine($"[UNOBSERVED] Task exception: {e.Exception}");
+    e.SetObserved();
+};
+
 var liveViewEngineOptions =
     builder.Configuration.GetSection("LiveViewEngine").Get<LiveViewEngineOptions>() ?? new LiveViewEngineOptions();
 var tcpIngestOptions =

@@ -301,6 +301,49 @@ public sealed class WebSocketOutboundPublisher(
             {
                 _flushPolicy.FlushPendingLiveDeltas(connection, subscriptionId, subscription, _encoders);
 
+                switch (delta)
+                {
+                    case SnapshotStartDelta start:
+                        subscription.SnapshotExpectedTotalCount = start.TotalCount;
+                        subscription.SnapshotRowsSeen = 0;
+                        subscription.SnapshotIsPartial = start.IsPartial;
+                        logger.LogInformation(
+                            "Snapshot for connection '{ConnectionId}' subscription '{SubscriptionId}' starting: " +
+                            "startIndex={StartIndex} totalCount={TotalCount} isPartial={IsPartial}.",
+                            connection.ConnectionId, subscriptionId, start.StartIndex, start.TotalCount, start.IsPartial);
+                        break;
+                    case SnapshotRowsDelta rows:
+                        subscription.SnapshotRowsSeen += rows.Rows.Count;
+                        logger.LogInformation(
+                            "Snapshot for connection '{ConnectionId}' subscription '{SubscriptionId}' sending rows batch: " +
+                            "startRowNumber={StartRowNumber} count={Count} cumulativeRowsSeen={CumulativeRowsSeen}.",
+                            connection.ConnectionId, subscriptionId, rows.StartRowNumber, rows.Rows.Count,
+                            subscription.SnapshotRowsSeen);
+                        break;
+                    case EndOfSnapshotDelta:
+                        // A partial snapshot (isPartial=true) is an intentionally incomplete viewport-expansion
+                        // batch - it only streams rows outside the client's previously-cached overlap range, so
+                        // rowsSeen is expected to be less than the collection's totalCount. Only a non-partial
+                        // (full) snapshot's rowsSeen must equal totalCount.
+                        if (!subscription.SnapshotIsPartial && subscription.SnapshotRowsSeen != subscription.SnapshotExpectedTotalCount)
+                        {
+                            logger.LogWarning(
+                                "Snapshot for connection '{ConnectionId}' subscription '{SubscriptionId}' row count " +
+                                "mismatch at completion: rowsSeen={RowsSeen} expectedTotalCount={ExpectedTotalCount}.",
+                                connection.ConnectionId, subscriptionId, subscription.SnapshotRowsSeen,
+                                subscription.SnapshotExpectedTotalCount);
+                        }
+                        else
+                        {
+                            logger.LogInformation(
+                                "Snapshot for connection '{ConnectionId}' subscription '{SubscriptionId}' complete " +
+                                "(eos enqueued): rowsSeen={RowsSeen} isPartial={IsPartial}.",
+                                connection.ConnectionId, subscriptionId, subscription.SnapshotRowsSeen,
+                                subscription.SnapshotIsPartial);
+                        }
+                        break;
+                }
+
                 foreach (var payload in encoder.EncodeFrames(delta, subscriptionId))
                 {
                     connection.TryWrite(payload);

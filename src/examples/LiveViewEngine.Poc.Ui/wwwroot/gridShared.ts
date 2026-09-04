@@ -996,11 +996,8 @@ export function useCollectionData(
 
         const snapshotStart = snapshot.startIndex;
         const snapshotEnd = Math.max(snapshotStart, snapshotStart + rows.length - 1);
-        appendLog(snapshot.isPartial
-            ? `partial snapshot received: ${snapshotStart.toLocaleString()} - ${snapshotEnd.toLocaleString()} `
-                + `(${snapshot.waitMs.toFixed(0)}ms wait, ${snapshot.transferMs.toFixed(0)}ms transfer)`
-            : `snapshot received: ${snapshotStart.toLocaleString()} - ${snapshotEnd.toLocaleString()} `
-                + `(${snapshot.waitMs.toFixed(0)}ms wait, ${snapshot.transferMs.toFixed(0)}ms transfer)`);
+
+        let isNoOpFullSnapshot = false;
 
         if (!snapshot.isPartial && !unboundedViewport) {
             const currentViewport = subscribedViewportRef.current;
@@ -1015,7 +1012,7 @@ export function useCollectionData(
                 }
             }
 
-            const isNoOpFullSnapshot = rows.length === 0
+            isNoOpFullSnapshot = rows.length === 0
                 && snapshot.totalCount === totalCountRef.current
                 && currentViewport !== null
                 && snapshot.startIndex === currentViewport.start
@@ -1031,8 +1028,31 @@ export function useCollectionData(
                     ? currentViewport
                     : { start: snapshot.startIndex, end: snapshot.startIndex });
         } else if (!snapshot.isPartial && unboundedViewport) {
-            rowsByPositionRef.current.clear();
-            rowsByIdRef.current.clear();
+            // A retry-timer resend of an unchanged subscribe/updateview request can legitimately come
+            // back as a non-partial snapshot with zero rows and the same totalCount as before - the
+            // server's way of saying "you already have this view, nothing to resend". Unlike the
+            // bounded-viewport branch above, there's no viewport window to compare positions against
+            // here, so treat "0 rows + matching totalCount + we already have the full set cached" as
+            // that same no-op signal instead of unconditionally wiping an otherwise-complete cache.
+            isNoOpFullSnapshot = rows.length === 0
+                && snapshot.totalCount === totalCountRef.current
+                && rowsByPositionRef.current.size === totalCountRef.current;
+
+            if (!isNoOpFullSnapshot) {
+                rowsByPositionRef.current.clear();
+                rowsByIdRef.current.clear();
+            }
+        }
+
+        if (isNoOpFullSnapshot) {
+            appendLog(`snapshot resend acknowledged: already up to date `
+                + `(${snapshot.waitMs.toFixed(0)}ms wait, ${snapshot.transferMs.toFixed(0)}ms transfer)`);
+        } else {
+            appendLog(snapshot.isPartial
+                ? `partial snapshot received: ${snapshotStart.toLocaleString()} - ${snapshotEnd.toLocaleString()} `
+                    + `(${snapshot.waitMs.toFixed(0)}ms wait, ${snapshot.transferMs.toFixed(0)}ms transfer)`
+                : `snapshot received: ${snapshotStart.toLocaleString()} - ${snapshotEnd.toLocaleString()} `
+                    + `(${snapshot.waitMs.toFixed(0)}ms wait, ${snapshot.transferMs.toFixed(0)}ms transfer)`);
         }
 
         for (let i = 0; i < rows.length; i++) {
@@ -1045,7 +1065,7 @@ export function useCollectionData(
 
         totalCountRef.current = snapshot.totalCount;
         setTotalCount(snapshot.totalCount);
-        if (!snapshot.isPartial) {
+        if (!snapshot.isPartial && !isNoOpFullSnapshot) {
             pendingSnapshotRenderMeasureRef.current = {
                 rowCount: rows.length,
                 waitMs: snapshot.waitMs,

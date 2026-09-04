@@ -50,8 +50,6 @@ export class WebHostClient {
     private readonly callbacks: ClientCallbacks;
 
     private socket: WebSocket | null = null;
-    private subscribeRetryHandle: number | null = null;
-    private hasReceivedSnapshot = false;
     private lastSubscribe: SubscribeRequest | null = null;
     private activeSubscriptionId: number | null = null;
     private currentFields: string[] = [];
@@ -86,7 +84,6 @@ export class WebHostClient {
 
         this.disconnect();
         this.lastSubscribe = request;
-        this.hasReceivedSnapshot = false;
         this.activeSubscriptionId = null;
         this.currentFields = [];
         this.currentMessageFormat = request.messageFormat ?? 'compact';
@@ -101,9 +98,6 @@ export class WebHostClient {
             this.callbacks.onStatus('Connected');
             const subscribe = this.lastSubscribe ?? request;
             this.sendSubscribe(subscribe);
-            if (subscribe.sendSnapshot !== false) {
-                this.startSubscribeRetry();
-            }
         });
 
         socket.addEventListener('message', (event) => {
@@ -117,8 +111,6 @@ export class WebHostClient {
         });
 
         socket.addEventListener('close', () => {
-            this.stopSubscribeRetry();
-            this.hasReceivedSnapshot = false;
             this.currentFields = [];
             this.pendingSnapshot = null;
             this.snapshotRequestStartedAt = null;
@@ -155,10 +147,8 @@ export class WebHostClient {
     }
 
     public disconnect(): void {
-        this.stopSubscribeRetry();
         const socket = this.socket;
         this.socket = null;
-        this.hasReceivedSnapshot = false;
         this.activeSubscriptionId = null;
         this.currentFields = [];
         this.pendingSnapshot = null;
@@ -174,8 +164,6 @@ export class WebHostClient {
                 this.activeSubscriptionId = frame.subscriptionId;
                 this.currentFields = frame.fields;
                 if (!frame.snapshotFollows) {
-                    this.hasReceivedSnapshot = true;
-                    this.stopSubscribeRetry();
                     this.callbacks.onStatus('Connected');
                     this.pendingSnapshot = null;
                     this.snapshotRequestStartedAt = null;
@@ -192,8 +180,6 @@ export class WebHostClient {
                 };
                 return;
             case 'rejected':
-                this.stopSubscribeRetry();
-                this.hasReceivedSnapshot = false;
                 this.activeSubscriptionId = null;
                 this.pendingSnapshot = null;
                 this.snapshotRequestStartedAt = null;
@@ -201,10 +187,10 @@ export class WebHostClient {
                 this.callbacks.onSubscriptionRejected?.(frame.reason, frame.message);
                 return;
             case 'updateRejected':
-                // Deliberately does not touch activeSubscriptionId/hasReceivedSnapshot/
-                // pendingSnapshot/stopSubscribeRetry - the server keeps this subscription alive
-                // with its previous view/viewport, so subsequent live deltas (rowInsert/rowUpdate/
-                // rowRemove/rowReplace) for this subscriptionId must keep being processed normally.
+                // Deliberately does not touch activeSubscriptionId/pendingSnapshot - the server keeps
+                // this subscription alive with its previous view/viewport, so subsequent live deltas
+                // (rowInsert/rowUpdate/rowRemove/rowReplace) for this subscriptionId must keep being
+                // processed normally.
                 this.callbacks.onUpdateRejected?.(frame.reason, frame.message);
                 return;
             case 'snapshotStart':
@@ -224,9 +210,6 @@ export class WebHostClient {
                     isPartial: frame.isPartial === true,
                     firstMessageAt: performance.now()
                 };
-                if (!frame.isPartial) {
-                    this.hasReceivedSnapshot = false;
-                }
                 return;
             case 'snapshotRow':
                 if (!this.isActiveSubscription(frame.subscriptionId) || !this.pendingSnapshot) {
@@ -263,8 +246,6 @@ export class WebHostClient {
 
                     this.pendingSnapshot = null;
                     if (!isPartial) {
-                        this.hasReceivedSnapshot = true;
-                        this.stopSubscribeRetry();
                         this.callbacks.onStatus('Connected');
                     }
                     this.callbacks.onEvent(snapshot);
@@ -319,11 +300,10 @@ export class WebHostClient {
         }
 
         this.socket.send(JSON.stringify(message));
-        if (request.sendSnapshot === false) {
-            this.hasReceivedSnapshot = true;
-            this.snapshotRequestStartedAt = null;
-        } else {
+        if (request.sendSnapshot !== false) {
             this.snapshotRequestStartedAt ??= performance.now();
+        } else {
+            this.snapshotRequestStartedAt = null;
         }
     }
 
@@ -358,9 +338,7 @@ export class WebHostClient {
         }
 
         this.socket.send(JSON.stringify(message));
-        this.hasReceivedSnapshot = false;
         this.snapshotRequestStartedAt = performance.now();
-        this.startSubscribeRetry();
     }
 
     private sendUnsubscribe(subscriptionId: number): void {
@@ -372,38 +350,5 @@ export class WebHostClient {
             type: 'unsubscribe',
             subscriptionId
         }));
-    }
-
-    private startSubscribeRetry(): void {
-        this.stopSubscribeRetry();
-        this.subscribeRetryHandle = window.setInterval(() => {
-            if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-                this.stopSubscribeRetry();
-                return;
-            }
-
-            if (this.hasReceivedSnapshot) {
-                this.stopSubscribeRetry();
-                return;
-            }
-
-            if (!this.lastSubscribe) {
-                return;
-            }
-
-            this.callbacks.onStatus('Connected (waiting for collection/snapshot)');
-            if (this.activeSubscriptionId !== null) {
-                this.sendUpdateView(this.lastSubscribe);
-            } else {
-                this.sendSubscribe(this.lastSubscribe);
-            }
-        }, 1_000);
-    }
-
-    private stopSubscribeRetry(): void {
-        if (this.subscribeRetryHandle !== null) {
-            clearInterval(this.subscribeRetryHandle);
-            this.subscribeRetryHandle = null;
-        }
     }
 }
