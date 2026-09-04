@@ -29,10 +29,16 @@ internal sealed class WebSocketConnection
         // WebSocketOutboundOptions.OutboundQueueCapacity for why this should rarely trip in
         // practice) - the actual slow-client detection is the per-send timeout in DrainAsync below,
         // which reflects whether the client is still making progress rather than how much data is
-        // queued.
+        // queued. FullMode must be Wait, not DropWrite/DropOldest/DropNewest: TryWrite() is called
+        // synchronously (never awaited) here, so Wait mode never blocks it - but critically, Wait is
+        // the only mode where a full channel makes TryWrite() return false. DropWrite silently
+        // discards the new item while still reporting success (TryWrite returns true), which would
+        // make TryWrite's overflow branch below unreachable and let a snapshot reach the client with
+        // missing rows/EOS with no fault raised - exactly the silent-data-loss bug this class exists
+        // to prevent.
         _channel = System.Threading.Channels.Channel.CreateBounded<byte[]>(new BoundedChannelOptions(queueCapacity)
         {
-            FullMode = BoundedChannelFullMode.DropWrite,
+            FullMode = BoundedChannelFullMode.Wait,
             SingleReader = true
         });
     }
