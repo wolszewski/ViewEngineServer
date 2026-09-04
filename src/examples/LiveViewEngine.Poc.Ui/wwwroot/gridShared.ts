@@ -19,7 +19,6 @@ export const defaultPageSize = 200;
 export const defaultViewportThresholdPercents = [25, 50, 75];
 export const defaultViewportThresholdPercent = 50;
 export const defaultMessageFormat: MessageFormat = 'compact';
-export const latencyWindowSize = 500;
 export const impliedFields = new Set(['key']);
 
 export const knownTradeColumns = [
@@ -292,12 +291,6 @@ export interface SnapshotStats {
     waitMs: number;
     transferMs: number;
     renderMs: number;
-}
-
-export interface LatencySummary {
-    maxMs: number;
-    avgMs: number;
-    sampleCount: number;
 }
 
 export function parsePositiveInteger(value: string | null, fallback: number): number {
@@ -846,7 +839,6 @@ export interface CollectionDataApi {
     isLoadingSnapshot: boolean;
     setIsLoadingSnapshot: (value: boolean) => void;
     snapshotStats: SnapshotStats | null;
-    latencySummary: LatencySummary;
     eventLog: string[];
     appendLog: (entry: string) => void;
     clearState: () => void;
@@ -876,8 +868,6 @@ export function useCollectionData(
     const [rowData, setRowData] = useState<RowData[]>([]);
     const [totalCount, setTotalCount] = useState<number | null>(null);
     const [columnDefs, setColumnDefs] = useState<ColDef<RowData>[]>([]);
-    const [latencySummary, setLatencySummary] = useState<LatencySummary>({ maxMs: 0, avgMs: 0, sampleCount: 0 });
-    const latencyAccRef = useRef({ maxMs: 0, avgMs: 0, sampleCount: 0, recentLatencies: [] as number[], recentTotalMs: 0 });
     const [isLoadingSnapshot, setIsLoadingSnapshot] = useState(false);
     const [snapshotStats, setSnapshotStats] = useState<SnapshotStats | null>(null);
 
@@ -938,8 +928,6 @@ export function useCollectionData(
         setRowData([]);
         setTotalCount(null);
         setSnapshotStats(null);
-        latencyAccRef.current = { maxMs: 0, avgMs: 0, sampleCount: 0, recentLatencies: [], recentTotalMs: 0 };
-        setLatencySummary({ maxMs: 0, avgMs: 0, sampleCount: 0 });
     }, []);
 
     /**
@@ -971,35 +959,6 @@ export function useCollectionData(
         columnFieldsRef.current = fields;
         setColumnDefs(fields.map((field) => buildColDef(field)));
     }, [buildColDef]);
-
-    const recordLatency = useCallback((row: RowData) => {
-        const updatedDate = typeof row.updatedDate === 'string' ? row.updatedDate : null;
-        if (!updatedDate) {
-            return;
-        }
-
-        const timestamp = Date.parse(updatedDate);
-        if (!Number.isFinite(timestamp)) {
-            return;
-        }
-
-        const latencyMs = Date.now() - timestamp;
-        const acc = latencyAccRef.current;
-        const recentLatencies = [...acc.recentLatencies, latencyMs];
-        let recentTotalMs = acc.recentTotalMs + latencyMs;
-        if (recentLatencies.length > latencyWindowSize) {
-            recentTotalMs -= recentLatencies.shift() ?? 0;
-        }
-        const nextCount = recentLatencies.length;
-        const nextAverage = nextCount === 0 ? 0 : recentTotalMs / nextCount;
-        latencyAccRef.current = {
-            sampleCount: nextCount,
-            maxMs: Math.max(acc.maxMs, latencyMs),
-            avgMs: nextAverage,
-            recentLatencies,
-            recentTotalMs
-        };
-    }, []);
 
     const applySnapshot = useCallback((snapshot: SnapshotEvent) => {
         const rows = (snapshot.rows ?? []).map((row) => ({ ...row }));
@@ -1284,7 +1243,6 @@ export function useCollectionData(
         if (event.type === 'snapshot') {
             applySnapshot(event);
         } else if (event.type === 'rowUpdate') {
-            recordLatency(event.changedFields ?? {});
             applyUpdate(event);
         } else if (event.type === 'rowInsert') {
             applyInsert(event);
@@ -1293,7 +1251,7 @@ export function useCollectionData(
         } else if (event.type === 'rowReplace') {
             applyReplace(event);
         }
-    }, [applyInsert, applyRemove, applyReplace, applySnapshot, applyUpdate, recordLatency]);
+    }, [applyInsert, applyRemove, applyReplace, applySnapshot, applyUpdate]);
     handleDeltaEventRef.current = handleDeltaEvent;
 
     return {
@@ -1303,7 +1261,6 @@ export function useCollectionData(
         isLoadingSnapshot,
         setIsLoadingSnapshot,
         snapshotStats,
-        latencySummary,
         eventLog,
         appendLog,
         clearState,
