@@ -76,6 +76,19 @@ public class WebSocketConnectionTests
         Assert.False(socket.AbortCalled);
     }
 
+    [Fact]
+    public void TryWrite_AfterNormalCompleteWithBufferedFrames_DoesNotFaultConnection()
+    {
+        var socket = new FakeWebSocket();
+        var connection = CreateConnection(socket, queueCapacity: 2);
+
+        connection.TryWrite([1]);
+        connection.Complete();
+        connection.TryWrite([2]);
+
+        Assert.False(socket.AbortCalled);
+    }
+
     // Fault() must be safe to reach from multiple overflowing writes (or, in production, racing
     // with a DrainAsync failure) without repeatedly aborting an already-aborted socket.
     [Fact]

@@ -9,6 +9,7 @@ internal sealed class WebSocketConnection
     private readonly Channel<byte[]> _channel;
     private readonly ILogger<WebSocketOutboundPublisher> _logger;
     private readonly TimeSpan _sendStallTimeout;
+    private int _completed;
     private int _faulted;
     private long _framesWritten;
     private long _framesSent;
@@ -57,6 +58,7 @@ internal sealed class WebSocketConnection
 
     public void Complete()
     {
+        Interlocked.Exchange(ref _completed, 1);
         _channel.Writer.TryComplete();
     }
 
@@ -73,7 +75,7 @@ internal sealed class WebSocketConnection
         // (a producer bug flooding faster than any client could plausibly drain - see
         // WebSocketOutboundOptions.OutboundQueueCapacity). Only the latter should escalate to an
         // abort; ordinary slow clients are instead caught by DrainAsync's per-send stall timeout.
-        if (!_channel.Reader.Completion.IsCompleted)
+        if (Volatile.Read(ref _completed) == 0)
         {
             Fault("outbound queue capacity exceeded (possible runaway producer)");
         }
@@ -98,6 +100,7 @@ internal sealed class WebSocketConnection
 
         // Stop buffering immediately, or a producer racing this Fault() call could keep enqueuing
         // into a channel nobody will ever drain again.
+        Interlocked.Exchange(ref _completed, 1);
         _channel.Writer.TryComplete();
         try
         {
