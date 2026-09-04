@@ -106,6 +106,7 @@ internal sealed class WebSocketConnection
     {
         try
         {
+            using var sendCts = new CancellationTokenSource();
             await foreach (var payload in _channel.Reader.ReadAllAsync())
             {
                 if (Socket.State != WebSocketState.Open)
@@ -125,8 +126,9 @@ internal sealed class WebSocketConnection
                     // or the peer is dead) - the latter causes SendAsync to hang rather than fail
                     // immediately, so without this timeout a stalled client would never be detected
                     // at all, just silently stop receiving further frames forever.
-                    using var sendCts = new CancellationTokenSource(_sendStallTimeout);
+                    sendCts.CancelAfter(_sendStallTimeout);
                     await Socket.SendAsync(payload, WebSocketMessageType.Text, endOfMessage: true, sendCts.Token);
+                    sendCts.CancelAfter(Timeout.InfiniteTimeSpan);
                     Interlocked.Increment(ref _framesSent);
                 }
                 catch (OperationCanceledException)
