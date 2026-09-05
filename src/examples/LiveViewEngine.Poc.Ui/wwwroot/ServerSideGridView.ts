@@ -429,7 +429,13 @@ export default function ServerSideGridView(): React.ReactElement {
                         + `transfer ${data.snapshotStats.transferMs.toFixed(0)}ms | `
                         + `render ${data.snapshotStats.renderMs.toFixed(0)}ms`
                     )
-                    : null
+                    : null,
+                React.createElement(
+                    'span',
+                    null,
+                    `Max latency: ${data.latencySummary.maxMs.toFixed(0)} ms • `
+                    + `Avg latency (last ${data.latencySummary.sampleCount}): ${data.latencySummary.avgMs.toFixed(0)} ms`
+                )
             ),
             React.createElement(
                 'div',

@@ -12,11 +12,12 @@ const defaultLsUrl = window.location.origin;
 const commandListItem = 'TRADES_ALL';
 const subscribedFields = [
     'tradeId', 'createdDate', 'updatedDate', 'accountId', 'quantity',
-    'price', 'side', 'status', 'notional',
+    'price', 'side', 'status', 'isAlgo', 'isManualReview', 'notional', 'variedNumber',
     ...Array.from({ length: 30 }, (_, i) => `stringField${i.toString().padStart(2, '0')}`),
     ...Array.from({ length: 23 }, (_, i) => `intField${i.toString().padStart(2, '0')}`),
     ...Array.from({ length: 20 }, (_, i) => `decimalField${i.toString().padStart(2, '0')}`),
-    ...Array.from({ length: 20 }, (_, i) => `enumField${i.toString().padStart(2, '0')}`)
+    ...Array.from({ length: 20 }, (_, i) => `enumField${i.toString().padStart(2, '0')}`),
+    ...Array.from({ length: 20 }, (_, i) => `boolField${i.toString().padStart(2, '0')}`)
 ];
 const subscribedFieldSet = new Set(subscribedFields);
 const snapshotTimeoutMs = 10_000;
@@ -54,6 +55,9 @@ function App(): React.ReactElement {
     const snapshotCompletionTimeRef = useRef<number | null>(null);
     const snapshotTimeoutHandleRef = useRef<number | null>(null);
     const snapshotFinalizeGraceHandleRef = useRef<number | null>(null);
+    // Latency is only meaningful once the initial snapshot is fully loaded - recording it earlier would
+    // mix in stale snapshot timestamps and skew the rolling average high right after connecting.
+    const hasSnapshotLoadedRef = useRef(false);
 
     const defaultColDef = useMemo<ColDef<RowData>>(() => ({
         sortable: true,
@@ -63,7 +67,7 @@ function App(): React.ReactElement {
     }), []);
 
     const recordLatency = useCallback((updatedDate: string | null | undefined) => {
-        if (!updatedDate) { return; }
+        if (!hasSnapshotLoadedRef.current || !updatedDate) { return; }
         const timestamp = Date.parse(updatedDate);
         if (!Number.isFinite(timestamp)) { return; }
         const latencyMs = Date.now() - timestamp;
@@ -93,6 +97,7 @@ function App(): React.ReactElement {
         pendingLiveAddKeysRef.current.clear();
         commandSnapshotEndedRef.current = false;
         snapshotCompleteRef.current = false;
+        hasSnapshotLoadedRef.current = false;
         subscribeTimeRef.current = null;
         snapshotCompletionTimeRef.current = null;
         latencyAccRef.current = { maxMs: 0, avgMs: 0, sampleCount: 0, recentLatencies: [], recentTotalMs: 0 };
@@ -140,6 +145,7 @@ function App(): React.ReactElement {
 
         setSnapshotStats({ rowCount: rows.length, loadMs });
         setIsLoadingSnapshot(false);
+        hasSnapshotLoadedRef.current = true;
 
         if (gridApiRef.current && gridVisibleRef.current) {
             gridApiRef.current.setGridOption('rowData', rows);
@@ -294,7 +300,9 @@ function App(): React.ReactElement {
                     }
                     rowsByIdRef.current.set(rowKey, row);
                     pendingLiveAddKeysRef.current.delete(rowKey);
-                    recordLatency(row.updatedDate);
+                    // Not recorded as a latency sample - a row's first appearance (whether from the
+                    // initial snapshot or its own second-level subscribe) includes subscription setup
+                    // overhead, not steady-state field-update latency.
 
                     if (gridApiRef.current && gridVisibleRef.current) {
                         gridApiRef.current.applyTransaction({ add: [row] });
