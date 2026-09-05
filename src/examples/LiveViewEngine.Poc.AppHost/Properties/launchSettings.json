@@ -29,7 +29,7 @@
         "IncludeLightstreamer": "false"
       }
     },
-    "webhost-and-lighstreamer": {
+    "all": {
       "commandName": "Project",
       "dotnetRunMessages": true,
       "launchBrowser": true,
@@ -39,7 +39,7 @@
         "DOTNET_ENVIRONMENT": "Development",
         "ASPIRE_DASHBOARD_OTLP_ENDPOINT_URL": "http://localhost:19111",
         "ASPIRE_RESOURCE_SERVICE_ENDPOINT_URL": "http://localhost:20159",
-        "UseWebHostInContainer": "false",
+        "UseWebHostInContainer": "true",
         "IncludeLightstreamer": "true"
       }
     }
