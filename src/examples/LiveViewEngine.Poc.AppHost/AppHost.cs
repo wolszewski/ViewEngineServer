@@ -12,6 +12,8 @@ var tcpIngestPort =
     int.TryParse(builder.Configuration["TcpIngestPort"], out var configuredTcpIngestPort)
         ? configuredTcpIngestPort
         : 6000;
+var includeLightstreamer = bool.TryParse(builder.Configuration["IncludeLightstreamer"], out var configuredIncludeLightstreamer)
+    && configuredIncludeLightstreamer;
 
 if (useWebHostContainer)
 {
@@ -43,5 +45,28 @@ builder.AddProject<Projects.LiveViewEngine_Poc_DataProvider>("dataprovider")
 builder.AddProject<Projects.LiveViewEngine_Poc_Ui>("ui")
     .WithHttpEndpoint(port: 5102, name: "http", isProxied: false)
     .WithExternalHttpEndpoints();
+
+if (includeLightstreamer)
+{
+    var lightstreamer = builder.AddContainer("lightstreamer", "lightstreamer", "latest")
+        .WithHttpEndpoint(port: 8080, targetPort: 8080, name: "http")
+        .WithEndpoint(port: 6661, targetPort: 6661, name: "request-reply")
+        .WithEndpoint(port: 6662, targetPort: 6662, name: "request-reply-command")
+        .WithBindMount(Path.GetFullPath("./lightstreamer-adapters"), "/lightstreamer/adapters/TRADES")
+        .WithContainerRuntimeArgs("--cpus=4", "--memory=8g")
+        .WithLifetime(ContainerLifetime.Session);
+
+    var lightstreamerDataProvider = builder.AddProject<Projects.Lightstreamer_DataProvider>("lightstreamer-dataprovider")
+        .WithHttpEndpoint(port: 5111, name: "http", isProxied: false)
+        .WithExternalHttpEndpoints()
+        .WaitFor(lightstreamer);
+
+    builder.AddProject<Projects.Lightstreamer_UI>("lightstreamer-ui")
+        .WithEnvironment("Lightstreamer__BaseUrl", "http://127.0.0.1:8080")
+        .WithHttpEndpoint(port: 5112, name: "http", isProxied: false)
+        .WithExternalHttpEndpoints()
+        .WaitFor(lightstreamer)
+        .WaitFor(lightstreamerDataProvider);
+}
 
 builder.Build().Run();

@@ -12,6 +12,8 @@
         <ProjectReference Include="..\LiveViewEngine.Poc.DataProvider\LiveViewEngine.Poc.DataProvider.csproj" />
         <ProjectReference Include="..\LiveViewEngine.Poc.Ui\LiveViewEngine.Poc.Ui.csproj" />
         <ProjectReference Include="..\..\LiveViewEngine.WebHost\LiveViewEngine.WebHost.csproj" />
+        <ProjectReference Include="..\Lightstreamer.DataProvider\Lightstreamer.DataProvider.csproj" />
+        <ProjectReference Include="..\Lightstreamer.UI\Lightstreamer.UI.csproj" />
     </ItemGroup>
 
 </Project>

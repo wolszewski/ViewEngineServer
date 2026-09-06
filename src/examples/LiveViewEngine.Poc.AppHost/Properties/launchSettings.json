@@ -1,31 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/launchsettings.json",
   "profiles": {
-    "https": {
-      "commandName": "Project",
-      "dotnetRunMessages": true,
-      "launchBrowser": true,
-      "applicationUrl": "https://localhost:17219;http://localhost:15025",
-      "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development",
-        "DOTNET_ENVIRONMENT": "Development",
-        "ASPIRE_DASHBOARD_OTLP_ENDPOINT_URL": "https://localhost:21273",
-        "ASPIRE_RESOURCE_SERVICE_ENDPOINT_URL": "https://localhost:22122"
-      }
-    },
-    "http": {
-      "commandName": "Project",
-      "dotnetRunMessages": true,
-      "launchBrowser": true,
-      "applicationUrl": "http://localhost:15025",
-      "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development",
-        "DOTNET_ENVIRONMENT": "Development",
-        "ASPIRE_DASHBOARD_OTLP_ENDPOINT_URL": "http://localhost:19110",
-        "ASPIRE_RESOURCE_SERVICE_ENDPOINT_URL": "http://localhost:20158"
-      }
-    },
-    "http-container": {
+    "webhost": {
       "commandName": "Project",
       "dotnetRunMessages": true,
       "launchBrowser": true,
@@ -35,7 +11,36 @@
         "DOTNET_ENVIRONMENT": "Development",
         "ASPIRE_DASHBOARD_OTLP_ENDPOINT_URL": "http://localhost:19110",
         "ASPIRE_RESOURCE_SERVICE_ENDPOINT_URL": "http://localhost:20158",
-        "UseWebHostInContainer": "true"
+        "UseWebHostInContainer": "false",
+        "IncludeLightstreamer": "false"
+      }
+    },
+    "webhost-container": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": true,
+      "applicationUrl": "http://localhost:15025",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "DOTNET_ENVIRONMENT": "Development",
+        "ASPIRE_DASHBOARD_OTLP_ENDPOINT_URL": "http://localhost:19110",
+        "ASPIRE_RESOURCE_SERVICE_ENDPOINT_URL": "http://localhost:20158",
+        "UseWebHostInContainer": "true",
+        "IncludeLightstreamer": "false"
+      }
+    },
+    "all": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": true,
+      "applicationUrl": "http://localhost:15026",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "DOTNET_ENVIRONMENT": "Development",
+        "ASPIRE_DASHBOARD_OTLP_ENDPOINT_URL": "http://localhost:19111",
+        "ASPIRE_RESOURCE_SERVICE_ENDPOINT_URL": "http://localhost:20159",
+        "UseWebHostInContainer": "true",
+        "IncludeLightstreamer": "true"
       }
     }
   }

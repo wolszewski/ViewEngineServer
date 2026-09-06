@@ -20,6 +20,8 @@ export const defaultViewportThresholdPercents = [25, 50, 75];
 export const defaultViewportThresholdPercent = 50;
 export const defaultMessageFormat: MessageFormat = 'compact';
 export const impliedFields = new Set(['key']);
+const latencyWindowSize = 500;
+const latencySummaryRefreshMs = 500;
 
 export const knownTradeColumns = [
     'tradeId',
@@ -291,6 +293,12 @@ export interface SnapshotStats {
     waitMs: number;
     transferMs: number;
     renderMs: number;
+}
+
+export interface LatencySummary {
+    maxMs: number;
+    avgMs: number;
+    sampleCount: number;
 }
 
 export function parsePositiveInteger(value: string | null, fallback: number): number {
@@ -839,6 +847,7 @@ export interface CollectionDataApi {
     isLoadingSnapshot: boolean;
     setIsLoadingSnapshot: (value: boolean) => void;
     snapshotStats: SnapshotStats | null;
+    latencySummary: LatencySummary;
     eventLog: string[];
     appendLog: (entry: string) => void;
     clearState: () => void;
@@ -870,6 +879,7 @@ export function useCollectionData(
     const [columnDefs, setColumnDefs] = useState<ColDef<RowData>[]>([]);
     const [isLoadingSnapshot, setIsLoadingSnapshot] = useState(false);
     const [snapshotStats, setSnapshotStats] = useState<SnapshotStats | null>(null);
+    const [latencySummary, setLatencySummary] = useState<LatencySummary>({ maxMs: 0, avgMs: 0, sampleCount: 0 });
 
     const gridApiRef = useRef<GridApi<RowData> | null>(null);
     const isReloadingGridRef = useRef(false);
@@ -880,9 +890,42 @@ export function useCollectionData(
     const totalCountRef = useRef<number | null>(null);
     const pendingSnapshotRenderMeasureRef = useRef<PendingSnapshotRenderMeasure | null>(null);
     const handleDeltaEventRef = useRef<(event: DeltaEvent) => void>(() => {});
+    // Latency is only meaningful once the initial snapshot is fully loaded - recording it earlier would
+    // mix in stale snapshot timestamps and skew the rolling average high right after connecting.
+    const hasSnapshotLoadedRef = useRef(false);
+    const latencyAccRef = useRef({ maxMs: 0, avgMs: 0, sampleCount: 0, recentLatencies: [] as number[], recentTotalMs: 0 });
 
     const appendLog = useCallback((entry: string) => {
         setEventLog((current) => [...current.slice(-19), entry]);
+    }, []);
+
+    const recordLatency = useCallback((updatedDate: string | null | undefined) => {
+        if (!hasSnapshotLoadedRef.current || !updatedDate) { return; }
+        const timestamp = Date.parse(updatedDate);
+        if (!Number.isFinite(timestamp)) { return; }
+        const latencyMs = Date.now() - timestamp;
+        const acc = latencyAccRef.current;
+        const recentLatencies = [...acc.recentLatencies, latencyMs];
+        let recentTotalMs = acc.recentTotalMs + latencyMs;
+        if (recentLatencies.length > latencyWindowSize) {
+            recentTotalMs -= recentLatencies.shift() ?? 0;
+        }
+        const nextCount = recentLatencies.length;
+        const nextAvg = nextCount === 0 ? 0 : recentTotalMs / nextCount;
+        latencyAccRef.current = {
+            sampleCount: nextCount,
+            maxMs: Math.max(acc.maxMs, latencyMs),
+            avgMs: nextAvg,
+            recentLatencies,
+            recentTotalMs
+        };
+    }, []);
+
+    useEffect(() => {
+        const handle = window.setInterval(() => {
+            setLatencySummary({ ...latencyAccRef.current });
+        }, latencySummaryRefreshMs);
+        return () => clearInterval(handle);
     }, []);
 
     const publishRowsFromWindow = useCallback(() => {
@@ -925,9 +968,12 @@ export function useCollectionData(
         subscribedViewportRef.current = null;
         pendingSnapshotRenderMeasureRef.current = null;
         columnFieldsRef.current = null;
+        hasSnapshotLoadedRef.current = false;
+        latencyAccRef.current = { maxMs: 0, avgMs: 0, sampleCount: 0, recentLatencies: [], recentTotalMs: 0 };
         setRowData([]);
         setTotalCount(null);
         setSnapshotStats(null);
+        setLatencySummary({ maxMs: 0, avgMs: 0, sampleCount: 0 });
     }, []);
 
     /**
@@ -1050,6 +1096,7 @@ export function useCollectionData(
         }
 
         setIsLoadingSnapshot(false);
+        hasSnapshotLoadedRef.current = true;
         if (!snapshot.isPartial) {
             isReloadingGridRef.current = false;
         }
@@ -1116,12 +1163,13 @@ export function useCollectionData(
         const updated: RowData = { ...existing, ...changedFields };
         rowsByIdRef.current.set(rowId, updated);
         rowsByPositionRef.current.set(update.position, updated);
+        recordLatency(updated.updatedDate);
         if (unboundedViewport && gridApiRef.current) {
             gridApiRef.current.applyTransaction({ update: [updated] });
             return;
         }
         publishRowsFromWindow();
-    }, [publishRowsFromWindow, unboundedViewport]);
+    }, [publishRowsFromWindow, recordLatency, unboundedViewport]);
 
     const applyInsert = useCallback((insert: RowInsertEvent) => {
         if (columnDefs.length === 0 && insert.row) {
@@ -1261,6 +1309,7 @@ export function useCollectionData(
         isLoadingSnapshot,
         setIsLoadingSnapshot,
         snapshotStats,
+        latencySummary,
         eventLog,
         appendLog,
         clearState,

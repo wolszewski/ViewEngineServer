@@ -8,6 +8,8 @@
     <File Path="README.md" />
   </Folder>
   <Folder Name="/examples/">
+    <Project Path="src/examples/Lightstreamer.DataProvider/Lightstreamer.DataProvider.csproj" />
+    <Project Path="src/examples/Lightstreamer.UI/Lightstreamer.UI.csproj" />
     <Project Path="src/examples/LiveViewEngine.Poc.AppHost/LiveViewEngine.Poc.AppHost.csproj" />
     <Project Path="src/examples/LiveViewEngine.Poc.DataProvider/LiveViewEngine.Poc.DataProvider.csproj" />
     <Project Path="src/examples/LiveViewEngine.Poc.Shared/LiveViewEngine.Poc.Shared.csproj" />
