@@ -52,6 +52,7 @@ if (includeLightstreamer)
         .WithHttpEndpoint(port: 8080, targetPort: 8080, name: "http")
         .WithEndpoint(port: 6661, targetPort: 6661, name: "request-reply")
         .WithEndpoint(port: 6662, targetPort: 6662, name: "request-reply-command")
+        .WithEndpoint(port: 6663, targetPort: 6663, name: "request-reply-pure-command")
         .WithBindMount(Path.GetFullPath("./lightstreamer-adapters"), "/lightstreamer/adapters/TRADES")
         .WithContainerRuntimeArgs("--cpus=4", "--memory=8g")
         .WithLifetime(ContainerLifetime.Session);

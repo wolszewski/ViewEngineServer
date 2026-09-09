@@ -14,6 +14,7 @@ public sealed class TradeMergeDataProvider(
     private readonly HashSet<string> _subscribedItems = new(StringComparer.OrdinalIgnoreCase);
     private IItemEventListener? _listener;
     private long _forwardedUpdateCount;
+    private long _suppressedUpdateCount;
 
     public void Init(IDictionary parameters, string configFile)
     {
@@ -44,6 +45,8 @@ public sealed class TradeMergeDataProvider(
         {
             _subscribedItems.Remove(itemName);
         }
+
+        logger.LogInformation("Trade merge adapter unsubscribed item {ItemName}.", itemName);
     }
 
     public Task<bool> CreateCollectionAsync(string collectionName, IReadOnlyList<string> fieldNames, IReadOnlyList<string>? fieldTypes = null, CancellationToken cancellationToken = default)
@@ -61,6 +64,7 @@ public sealed class TradeMergeDataProvider(
         bool isNew;
         bool shouldForward;
         long forwardedUpdateCount = 0;
+        long suppressedUpdateCount = 0;
         lock (_sync)
         {
             isNew = !_rows.ContainsKey(rowKey);
@@ -71,6 +75,11 @@ public sealed class TradeMergeDataProvider(
             {
                 _forwardedUpdateCount++;
                 forwardedUpdateCount = _forwardedUpdateCount;
+            }
+            else
+            {
+                _suppressedUpdateCount++;
+                suppressedUpdateCount = _suppressedUpdateCount;
             }
         }
 
@@ -92,6 +101,15 @@ public sealed class TradeMergeDataProvider(
                     snapshot.Count);
             }
         }
+        else if (suppressedUpdateCount <= 5 || suppressedUpdateCount % 1_000 == 0)
+        {
+            logger.LogInformation(
+                "Suppressed merge update {SuppressedUpdateCount} for {RowKey}: listenerAttached={ListenerAttached}, itemSubscribed={ItemSubscribed}.",
+                suppressedUpdateCount,
+                rowKey,
+                _listener is not null,
+                _subscribedItems.Contains(rowKey));
+        }
 
         return Task.FromResult(true);
     }
@@ -102,6 +120,7 @@ public sealed class TradeMergeDataProvider(
         {
             _rows.Clear();
             _forwardedUpdateCount = 0;
+            _suppressedUpdateCount = 0;
         }
     }
 
@@ -109,6 +128,7 @@ public sealed class TradeMergeDataProvider(
     {
         if (_listener is null)
         {
+            logger.LogWarning("Merge snapshot publish skipped for {ItemName}: no listener attached yet.", itemName);
             return;
         }
 
@@ -117,6 +137,7 @@ public sealed class TradeMergeDataProvider(
         {
             if (!_rows.TryGetValue(itemName, out row))
             {
+                logger.LogWarning("Merge snapshot requested for unknown item {ItemName}; no row data found.", itemName);
                 return;
             }
         }

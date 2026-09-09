@@ -12,8 +12,21 @@ public sealed class TradeCommandProvider(ILogger<TradeCommandProvider> logger) :
     private IItemEventListener? _listener;
     private bool _listSubscribed;
     private bool _snapshotPending;
+    private long _sentCommandCount;
+    private long _suppressedCommandCount;
     public event Action? ListSubscribed;
     public event Action? ListUnsubscribed;
+
+    public bool IsSubscribed
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _listSubscribed;
+            }
+        }
+    }
 
     public void Init(IDictionary parameters, string configFile) { }
 
@@ -60,6 +73,7 @@ public sealed class TradeCommandProvider(ILogger<TradeCommandProvider> logger) :
             _snapshotPending = false;
         }
 
+        logger.LogInformation("Trade command adapter unsubscribed item {ItemName}.", itemName);
         if (notify)
         {
             ListUnsubscribed?.Invoke();
@@ -74,9 +88,16 @@ public sealed class TradeCommandProvider(ILogger<TradeCommandProvider> logger) :
             isNew = _allKeys.Add(key);
         }
 
-        if (isNew && IsListSubscribed())
+        if (isNew)
         {
-            Send(key, DataProviderConstants.ADD_COMMAND, isSnapshot: false);
+            if (IsListSubscribed())
+            {
+                Send(key, DataProviderConstants.ADD_COMMAND, isSnapshot: false);
+            }
+            else
+            {
+                LogSuppressed(key);
+            }
         }
     }
 
@@ -88,9 +109,16 @@ public sealed class TradeCommandProvider(ILogger<TradeCommandProvider> logger) :
             wasPresent = _allKeys.Remove(key);
         }
 
-        if (wasPresent && IsListSubscribed())
+        if (wasPresent)
         {
-            Send(key, DataProviderConstants.DELETE_COMMAND, isSnapshot: false);
+            if (IsListSubscribed())
+            {
+                Send(key, DataProviderConstants.DELETE_COMMAND, isSnapshot: false);
+            }
+            else
+            {
+                LogSuppressed(key);
+            }
         }
     }
 
@@ -99,6 +127,8 @@ public sealed class TradeCommandProvider(ILogger<TradeCommandProvider> logger) :
         lock (_sync)
         {
             _allKeys.Clear();
+            _sentCommandCount = 0;
+            _suppressedCommandCount = 0;
         }
     }
 
@@ -106,6 +136,7 @@ public sealed class TradeCommandProvider(ILogger<TradeCommandProvider> logger) :
     {
         if (_listener is null)
         {
+            logger.LogWarning("Command snapshot publish skipped: no listener attached yet.");
             return;
         }
 
@@ -116,6 +147,7 @@ public sealed class TradeCommandProvider(ILogger<TradeCommandProvider> logger) :
             isSubscribed = _listSubscribed;
             if (!isSubscribed)
             {
+                logger.LogInformation("Command snapshot publish skipped: item {ItemName} not subscribed.", ListItemName);
                 _snapshotPending = false;
                 return;
             }
@@ -135,11 +167,52 @@ public sealed class TradeCommandProvider(ILogger<TradeCommandProvider> logger) :
 
     private void Send(string key, string command, bool isSnapshot)
     {
+        long sentCommandCount;
+        lock (_sync)
+        {
+            _sentCommandCount++;
+            sentCommandCount = _sentCommandCount;
+        }
+
         _listener?.Update(ListItemName, new Dictionary<string, string?>
         {
             { DataProviderConstants.KEY_FIELD, key },
             { DataProviderConstants.COMMAND_FIELD, command }
         }, isSnapshot);
+
+        if (!isSnapshot && (sentCommandCount <= 5 || sentCommandCount % 1_000 == 0))
+        {
+            logger.LogInformation(
+                "Forwarded command {Command} {SentCommandCount} for {RowKey}.",
+                command,
+                sentCommandCount,
+                key);
+        }
+    }
+
+    private void LogSuppressed(string key)
+    {
+        long suppressedCommandCount;
+        bool listSubscribed;
+        bool snapshotPending;
+        lock (_sync)
+        {
+            _suppressedCommandCount++;
+            suppressedCommandCount = _suppressedCommandCount;
+            listSubscribed = _listSubscribed;
+            snapshotPending = _snapshotPending;
+        }
+
+        if (suppressedCommandCount <= 5 || suppressedCommandCount % 1_000 == 0)
+        {
+            logger.LogInformation(
+                "Suppressed command update {SuppressedCommandCount} for {RowKey}: listenerAttached={ListenerAttached}, listSubscribed={ListSubscribed}, snapshotPending={SnapshotPending}.",
+                suppressedCommandCount,
+                key,
+                _listener is not null,
+                listSubscribed,
+                snapshotPending);
+        }
     }
 
     private bool IsListSubscribed()

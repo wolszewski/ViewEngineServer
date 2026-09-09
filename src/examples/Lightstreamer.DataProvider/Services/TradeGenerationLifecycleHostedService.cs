@@ -6,6 +6,7 @@ namespace Lightstreamer.DataProvider.Services;
 
 public sealed class TradeGenerationLifecycleHostedService(
     TradeCommandProvider commandProvider,
+    TradePureCommandDataProvider pureCommandProvider,
     TradeMergeDataProvider mergeDataProvider,
     TradeGeneratorService tradeGenerator,
     TradeGenerationSettingsStore settingsStore,
@@ -18,15 +19,19 @@ public sealed class TradeGenerationLifecycleHostedService(
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        commandProvider.ListSubscribed += HandleListSubscribed;
+        commandProvider.ListSubscribed += HandleCommandListSubscribed;
         commandProvider.ListUnsubscribed += HandleListUnsubscribed;
+        pureCommandProvider.ListSubscribed += HandlePureListSubscribed;
+        pureCommandProvider.ListUnsubscribed += HandleListUnsubscribed;
         return Task.CompletedTask;
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        commandProvider.ListSubscribed -= HandleListSubscribed;
+        commandProvider.ListSubscribed -= HandleCommandListSubscribed;
         commandProvider.ListUnsubscribed -= HandleListUnsubscribed;
+        pureCommandProvider.ListSubscribed -= HandlePureListSubscribed;
+        pureCommandProvider.ListUnsubscribed -= HandleListUnsubscribed;
         _cts.Cancel();
         tradeGenerator.StopGeneration();
         await _transitionTask.ConfigureAwait(false);
@@ -38,12 +43,22 @@ public sealed class TradeGenerationLifecycleHostedService(
         _cts.Dispose();
     }
 
-    private void HandleListSubscribed()
+    private void HandleCommandListSubscribed() => HandleListSubscribed(commandProvider.PublishSnapshotAndEnableLiveUpdates);
+
+    private void HandlePureListSubscribed() => HandleListSubscribed(pureCommandProvider.PublishSnapshotAndEnableLiveUpdates);
+
+    private void HandleListSubscribed(Action publishSnapshotForSubscriber)
     {
         lock (_sync)
         {
             if (_started)
             {
+                // The other mode's list item is already driving generation - the data already
+                // exists, so just publish the current snapshot to the newly subscribed item
+                // instead of restarting the whole generator (which would also wipe the data the
+                // other mode is actively streaming).
+                logger.LogInformation("Generation already running; publishing existing snapshot to newly subscribed item.");
+                QueuePublishOnly(publishSnapshotForSubscriber);
                 return;
             }
 
@@ -57,6 +72,13 @@ public sealed class TradeGenerationLifecycleHostedService(
         lock (_sync)
         {
             if (!_started)
+            {
+                return;
+            }
+
+            // Two independently switchable modes share one generator - only stop once neither
+            // mode's list item is subscribed anymore.
+            if (commandProvider.IsSubscribed || pureCommandProvider.IsSubscribed)
             {
                 return;
             }
@@ -75,6 +97,23 @@ public sealed class TradeGenerationLifecycleHostedService(
             TaskScheduler.Default).Unwrap();
     }
 
+    // Chained onto the same transition queue as start/stop transitions so it can't run
+    // concurrently with (and see partially reset state from) a stop/start transition.
+    private void QueuePublishOnly(Action publishSnapshotForSubscriber)
+    {
+        _transitionTask = _transitionTask.ContinueWith(
+            _ =>
+            {
+                if (!_cts.IsCancellationRequested && tradeGenerator.IsRunning)
+                {
+                    publishSnapshotForSubscriber();
+                }
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.None,
+            TaskScheduler.Default);
+    }
+
     private async Task RunTransitionAsync(bool startRequested)
     {
         try
@@ -84,6 +123,7 @@ public sealed class TradeGenerationLifecycleHostedService(
 
             mergeDataProvider.ResetData();
             commandProvider.ResetKeys();
+            pureCommandProvider.ResetData();
 
             if (!startRequested || _cts.IsCancellationRequested)
             {
@@ -103,6 +143,7 @@ public sealed class TradeGenerationLifecycleHostedService(
             if (!_cts.IsCancellationRequested)
             {
                 commandProvider.PublishSnapshotAndEnableLiveUpdates();
+                pureCommandProvider.PublishSnapshotAndEnableLiveUpdates();
             }
         }
         catch (OperationCanceledException) when (_cts.IsCancellationRequested)

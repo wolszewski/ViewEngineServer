@@ -9,7 +9,12 @@ builder.Services.AddRazorComponents()
 
 builder.Services.AddSingleton<TradeCommandProvider>();
 builder.Services.AddSingleton<TradeMergeDataProvider>();
-builder.Services.AddSingleton<ITradeIngestionClient>(sp => sp.GetRequiredService<TradeMergeDataProvider>());
+builder.Services.AddSingleton<TradePureCommandDataProvider>();
+builder.Services.AddSingleton<ITradeIngestionClient>(sp => new CompositeTradeIngestionClient(
+[
+    sp.GetRequiredService<TradeMergeDataProvider>(),
+    sp.GetRequiredService<TradePureCommandDataProvider>()
+], sp.GetRequiredService<ILogger<CompositeTradeIngestionClient>>()));
 builder.Services.AddSingleton<TradeGeneratorService>();
 builder.Services.AddSingleton<TradeGenerationSettingsStore>();
 builder.Services.AddHostedService<TradeGenerationLifecycleHostedService>();
@@ -34,6 +39,17 @@ builder.Services.AddHostedService(sp =>
         sp.GetRequiredService<TradeCommandProvider>(),
         host, port, adapterName,
         sp.GetRequiredService<ILogger<LightstreamerDataProviderServerHost<TradeCommandProvider>>>());
+});
+
+builder.Services.AddHostedService(sp =>
+{
+    var host = "127.0.0.1";
+    var port = 6663;
+    var adapterName = "trades-pure-command-adapter";
+    return new LightstreamerDataProviderServerHost<TradePureCommandDataProvider>(
+        sp.GetRequiredService<TradePureCommandDataProvider>(),
+        host, port, adapterName,
+        sp.GetRequiredService<ILogger<LightstreamerDataProviderServerHost<TradePureCommandDataProvider>>>());
 });
 
 var app = builder.Build();
