@@ -52,8 +52,8 @@ const appModuleUrl = await loadTypeScriptModule('/CollectionApp.ts', [
     ["./ClientSideGridView.ts", clientSideGridViewModuleUrl]
 ]);
 const entryModuleUrl = await loadTypeScriptModule('/app.ts', [
-    ['./CollectionApp', appModuleUrl],
-    ["./CollectionApp.ts", appModuleUrl]
+    ["./CollectionApp.ts", appModuleUrl],
+    ['./CollectionApp', appModuleUrl]
 ]);
 
 try {
