@@ -39,6 +39,7 @@ interface ServerUrlState {
     viewportThresholdPercent: number;
     filters: AppliedFilter[];
     selectedFields: string[];
+    gridVisible: boolean;
 }
 
 function getInitialUrlState(): ServerUrlState {
@@ -79,7 +80,8 @@ function getInitialUrlState(): ServerUrlState {
         pageSize: parsePositiveInteger(params.get('pageSize'), defaultPageSize),
         viewportThresholdPercent: parsePercentInteger(params.get('viewportThreshold'), defaultViewportThresholdPercent),
         filters,
-        selectedFields
+        selectedFields,
+        gridVisible: params.get('grid') !== '0'
     };
 }
 
@@ -122,6 +124,10 @@ function syncUrlState(state: ServerUrlState): void {
         }
     }
 
+    if (!state.gridVisible) {
+        params.set('grid', '0');
+    }
+
     const nextSearch = params.toString();
     window.history.replaceState(
         null, '', `${window.location.pathname}${nextSearch.length > 0 ? `?${nextSearch}` : ''}${window.location.hash}`);
@@ -139,7 +145,7 @@ export default function ServerSideGridView(): React.ReactElement {
     const [viewportThresholdPercent, setViewportThresholdPercent] = useState(initialUrlState.viewportThresholdPercent);
     const [viewportThresholdInput, setViewportThresholdInput] = useState(String(initialUrlState.viewportThresholdPercent));
     const [filters, setFilters] = useState<AppliedFilter[]>(initialUrlState.filters);
-    const [gridVisible, setGridVisible] = useState(true);
+    const [gridVisible, setGridVisible] = useState(initialUrlState.gridVisible);
 
     const columnSelection = useColumnSelection(initialUrlState.selectedFields);
     const { selectedFields } = columnSelection;
@@ -148,7 +154,7 @@ export default function ServerSideGridView(): React.ReactElement {
         (field: string) => buildColumnDef(field),
         []
     );
-    const data = useCollectionData(buildColDef, { unboundedViewport: false });
+    const data = useCollectionData(buildColDef, { unboundedViewport: false, gridVisible });
 
     const pageSizeRef = useRef(pageSize);
     const isMountedRef = useRef(false);
@@ -360,9 +366,10 @@ export default function ServerSideGridView(): React.ReactElement {
             pageSize,
             viewportThresholdPercent,
             filters: normalisedFilters,
-            selectedFields
+            selectedFields,
+            gridVisible
         });
-    }, [collectionId, messageFormat, normalisedFilters, pageSize, selectedFields, sortAscending, sortColumn, viewportThresholdPercent]);
+    }, [collectionId, gridVisible, messageFormat, normalisedFilters, pageSize, selectedFields, sortAscending, sortColumn, viewportThresholdPercent]);
 
     useEffect(() => {
         const client = clientRef.current;
@@ -510,10 +517,11 @@ export default function ServerSideGridView(): React.ReactElement {
             )
         ),
         React.createElement(ColumnSelectorPanel, columnSelection),
-        React.createElement(
-            'div',
-            { className: 'grid-wrapper', style: gridVisible ? undefined : { display: 'none' } },
-            data.isLoadingSnapshot
+        gridVisible
+            ? React.createElement(
+                'div',
+                { className: 'grid-wrapper' },
+                data.isLoadingSnapshot
                 ? React.createElement(
                     'div',
                     { className: 'grid-loader' },
@@ -619,5 +627,6 @@ export default function ServerSideGridView(): React.ReactElement {
                 })
             )
         )
+            : null
     );
 }

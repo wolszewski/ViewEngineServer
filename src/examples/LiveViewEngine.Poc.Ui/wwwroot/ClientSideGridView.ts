@@ -8,6 +8,8 @@ import {
     defaultGridColDef,
     defaultMessageFormat,
     defaultSortColumn,
+    getInitialGridVisible,
+    syncGridVisibleParam,
     useCollectionData,
     useColumnSelection
 } from './gridShared';
@@ -21,15 +23,19 @@ export default function ClientSideGridView(): React.ReactElement {
     const [status, setStatus] = useState('Disconnected');
     const [collectionId, setCollectionId] = useState(defaultCollectionId);
     const [messageFormat, setMessageFormat] = useState<MessageFormat>(defaultMessageFormat);
-    const [gridVisible, setGridVisible] = useState(true);
+    const [gridVisible, setGridVisible] = useState(() => getInitialGridVisible());
 
     const columnSelection = useColumnSelection([]);
     const { selectedFields } = columnSelection;
 
     const buildColDef = useCallback((field: string) => buildColumnDef(field), []);
-    const data = useCollectionData(buildColDef, { unboundedViewport: true });
+    const data = useCollectionData(buildColDef, { unboundedViewport: true, gridVisible });
 
     const clientRef = useRef<WebHostClient | null>(null);
+
+    useEffect(() => {
+        syncGridVisibleParam(gridVisible);
+    }, [gridVisible]);
 
     const connect = useCallback(() => {
         data.isReloadingGridRef.current = true;
@@ -183,34 +189,36 @@ export default function ClientSideGridView(): React.ReactElement {
             )
         ),
         React.createElement(ColumnSelectorPanel, columnSelection),
-        React.createElement(
-            'div',
-            { className: 'grid-wrapper', style: gridVisible ? undefined : { display: 'none' } },
-            data.isLoadingSnapshot
-                ? React.createElement(
-                    'div',
-                    { className: 'grid-loader' },
-                    React.createElement('div', { className: 'grid-loader-spinner' }),
-                    'Loading full collection…'
-                )
-                : null,
-            React.createElement(
+        gridVisible
+            ? React.createElement(
                 'div',
-                { className: 'ag-theme-balham', style: { width: '100%', height: '100%' } },
-                React.createElement(AgGridReact<RowData>, {
-                    onGridReady: (params) => {
-                        data.gridApiRef.current = params.api;
-                    },
-                    rowData: data.rowData,
-                    columnDefs: data.columnDefs,
-                    defaultColDef: defaultGridColDef,
-                    getRowId: (params) => String(params.data.key ?? params.data.id ?? ''),
-                    suppressFieldDotNotation: true,
-                    animateRows: true,
-                    cellFlashDuration: 1,
-                    cellFadeDuration: 1_000
-                })
+                { className: 'grid-wrapper' },
+                data.isLoadingSnapshot
+                    ? React.createElement(
+                        'div',
+                        { className: 'grid-loader' },
+                        React.createElement('div', { className: 'grid-loader-spinner' }),
+                        'Loading full collection…'
+                    )
+                    : null,
+                React.createElement(
+                    'div',
+                    { className: 'ag-theme-balham', style: { width: '100%', height: '100%' } },
+                    React.createElement(AgGridReact<RowData>, {
+                        onGridReady: (params) => {
+                            data.gridApiRef.current = params.api;
+                        },
+                        rowData: data.rowData,
+                        columnDefs: data.columnDefs,
+                        defaultColDef: defaultGridColDef,
+                        getRowId: (params) => String(params.data.key ?? params.data.id ?? ''),
+                        suppressFieldDotNotation: true,
+                        animateRows: true,
+                        cellFlashDuration: 1,
+                        cellFadeDuration: 1_000
+                    })
+                )
             )
-        )
+            : null
     );
 }
