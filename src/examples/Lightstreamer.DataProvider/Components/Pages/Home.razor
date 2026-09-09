@@ -23,7 +23,16 @@
         </div>
         <div class="col-md-4">
             <label class="form-label">Update frequency (updates/sec)</label>
-            <input class="form-control" type="number" @bind="_settings.UpdateFrequencyHz" @bind:after="PersistSettings" min="1" />
+            <input class="form-control" type="number" @bind="_settings.UpdateFrequencyHz" @bind:after="PersistSettings" min="0" disabled="@_settings.SendAsFastAsPossible" />
+        </div>
+    </div>
+
+    <div class="row g-3 mt-1">
+        <div class="col-12">
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="sendAsFastAsPossible" @bind="_settings.SendAsFastAsPossible" @bind:after="PersistSettings" />
+                <label class="form-check-label" for="sendAsFastAsPossible">Send as fast as possible (ignores updates/sec)</label>
+            </div>
         </div>
     </div>
 
@@ -105,6 +114,7 @@
             InitialTradeCount = _settings.InitialTradeCount,
             UpdateFieldCount = _settings.UpdateFieldCount,
             UpdateFrequencyHz = _settings.UpdateFrequencyHz,
+            SendAsFastAsPossible = _settings.SendAsFastAsPossible,
             OrderedUpdates = _settings.OrderedUpdates,
             UpdatableFields = _selectedFields.Count == _updatableFieldNames.Count
                 ? null

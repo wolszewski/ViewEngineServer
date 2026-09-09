@@ -30,6 +30,7 @@ public sealed class TradeGenerationSettingsStore
             InitialTradeCount = settings.InitialTradeCount,
             UpdateFieldCount = settings.UpdateFieldCount,
             UpdateFrequencyHz = settings.UpdateFrequencyHz,
+            SendAsFastAsPossible = settings.SendAsFastAsPossible,
             OrderedUpdates = settings.OrderedUpdates,
             UpdatableFields = settings.UpdatableFields is null ? null : [.. settings.UpdatableFields]
         };

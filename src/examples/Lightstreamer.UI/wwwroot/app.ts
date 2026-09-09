@@ -8,7 +8,10 @@ ModuleRegistry.registerModules([AllCommunityModule]);
 declare const LightstreamerClient: any;
 declare const Subscription: any;
 
-const defaultLsUrl = window.location.origin;
+const normalizeLsUrl = (value: string): string => value.trim().replace(/\/+$/, '').replace(/\/lightstreamer\/?$/i, '');
+const defaultLsUrl = normalizeLsUrl(
+    window.location.port === '5112' ? 'http://127.0.0.1:8080' : window.location.origin
+);
 const commandListItem = 'TRADES_ALL';
 const subscribedFields = [
     'tradeId', 'createdDate', 'updatedDate', 'accountId', 'quantity',
@@ -34,6 +37,7 @@ function App(): React.ReactElement {
     const [snapshotStats, setSnapshotStats] = useState<{ rowCount: number; loadMs: number } | null>(null);
     const [latencySummary, setLatencySummary] = useState({ maxMs: 0, avgMs: 0, sampleCount: 0 });
     const latencyAccRef = useRef({ maxMs: 0, avgMs: 0, sampleCount: 0, recentLatencies: [] as number[], recentTotalMs: 0 });
+    const autoConnectHandleRef = useRef<number | null>(null);
     const [columnDefs] = useState<ColDef<RowData>[]>(() =>
         subscribedFields.map((field) => ({ field, headerName: field }))
     );
@@ -46,6 +50,7 @@ function App(): React.ReactElement {
     const rowsByIdRef = useRef<Map<string, RowData>>(new Map());
     const snapshotBufferRef = useRef<Map<string, RowData>>(new Map());
     const snapshotCommandKeysRef = useRef<Set<string>>(new Set());
+    const snapshotPendingKeysRef = useRef<Set<string>>(new Set());
     const snapshotRowsReceivedRef = useRef<Set<string>>(new Set());
     const pendingPreSnapshotUpdatesRef = useRef<Map<string, RowData>>(new Map());
     const pendingLiveAddKeysRef = useRef<Set<string>>(new Set());
@@ -92,6 +97,7 @@ function App(): React.ReactElement {
         rowsByIdRef.current.clear();
         snapshotBufferRef.current.clear();
         snapshotCommandKeysRef.current.clear();
+        snapshotPendingKeysRef.current.clear();
         snapshotRowsReceivedRef.current.clear();
         pendingPreSnapshotUpdatesRef.current.clear();
         pendingLiveAddKeysRef.current.clear();
@@ -157,15 +163,13 @@ function App(): React.ReactElement {
             return;
         }
 
-        for (const key of snapshotCommandKeysRef.current) {
-            if (!snapshotRowsReceivedRef.current.has(key)) {
-                snapshotCompletionTimeRef.current = null;
-                if (snapshotFinalizeGraceHandleRef.current !== null) {
-                    clearTimeout(snapshotFinalizeGraceHandleRef.current);
-                    snapshotFinalizeGraceHandleRef.current = null;
-                }
-                return;
+        if (snapshotPendingKeysRef.current.size > 0) {
+            snapshotCompletionTimeRef.current = null;
+            if (snapshotFinalizeGraceHandleRef.current !== null) {
+                clearTimeout(snapshotFinalizeGraceHandleRef.current);
+                snapshotFinalizeGraceHandleRef.current = null;
             }
+            return;
         }
 
         if (snapshotCompletionTimeRef.current === null) {
@@ -227,9 +231,13 @@ function App(): React.ReactElement {
 
                         if (!snapshotCompleteRef.current && isSnapshot) {
                             if (command === 'ADD') {
-                                snapshotCommandKeysRef.current.add(commandKey);
+                                if (!snapshotCommandKeysRef.current.has(commandKey)) {
+                                    snapshotCommandKeysRef.current.add(commandKey);
+                                    snapshotPendingKeysRef.current.add(commandKey);
+                                }
                             } else if (command === 'DELETE') {
                                 snapshotCommandKeysRef.current.delete(commandKey);
+                                snapshotPendingKeysRef.current.delete(commandKey);
                                 snapshotRowsReceivedRef.current.delete(commandKey);
                                 snapshotBufferRef.current.delete(commandKey);
                                 pendingPreSnapshotUpdatesRef.current.delete(commandKey);
@@ -267,6 +275,7 @@ function App(): React.ReactElement {
 
                         snapshotBufferRef.current.set(rowKey, row);
                         snapshotRowsReceivedRef.current.add(rowKey);
+                        snapshotPendingKeysRef.current.delete(rowKey);
                     } else {
                         const changedFields: RowData = {};
                         update.forEachChangedField((fieldName: string, _pos: number, value: string | null) => {
@@ -374,6 +383,25 @@ function App(): React.ReactElement {
     }, []);
 
     useEffect(() => {
+        if (clientRef.current) {
+            return undefined;
+        }
+
+        autoConnectHandleRef.current = window.setTimeout(() => {
+            if (!clientRef.current) {
+                connect();
+            }
+        }, 500);
+
+        return () => {
+            if (autoConnectHandleRef.current !== null) {
+                clearTimeout(autoConnectHandleRef.current);
+                autoConnectHandleRef.current = null;
+            }
+        };
+    }, [connect]);
+
+    useEffect(() => {
         return () => {
             clientRef.current?.disconnect();
         };
@@ -474,11 +502,11 @@ function App(): React.ReactElement {
                     type: 'text',
                     value: lsUrl,
                     disabled: isConnected,
-                    onChange: (e: Event) => setLsUrl((e.target as HTMLInputElement).value)
+                    onChange: (e: Event) => setLsUrl(normalizeLsUrl((e.target as HTMLInputElement).value))
                 })
             ),
             !isConnected
-                ? React.createElement('button', { type: 'button', onClick: connect }, 'Connect')
+                ? React.createElement('button', { type: 'button', onClick: connect, disabled: isLoadingSnapshot }, 'Connect')
                 : React.createElement('button', { type: 'button', onClick: disconnect }, 'Disconnect'),
             React.createElement(
                 'label',
