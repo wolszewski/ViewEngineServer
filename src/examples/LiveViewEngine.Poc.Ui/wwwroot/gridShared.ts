@@ -919,20 +919,6 @@ export function useCollectionData(
     // Kept current via an effect (rather than recreated as a dependency) so the snapshot/delta
     // handlers below don't need to be rebuilt on every visibility toggle.
     const gridVisibleRef = useRef(options.gridVisible ?? true);
-    useEffect(() => {
-        const isGridVisible = options.gridVisible ?? true;
-        gridVisibleRef.current = isGridVisible;
-        if (!isGridVisible) {
-            return;
-        }
-
-        const firstCachedRow = rowsByPositionRef.current.values().next().value as RowData | undefined;
-        if (firstCachedRow) {
-            setColumnsFromRow(firstCachedRow);
-        }
-
-        publishRowsFromWindow();
-    }, [options.gridVisible, publishRowsFromWindow, setColumnsFromRow]);
     // Latency is only meaningful once the initial snapshot is fully loaded - recording it earlier would
     // mix in stale snapshot timestamps and skew the rolling average high right after connecting.
     const hasSnapshotLoadedRef = useRef(false);
@@ -1048,6 +1034,21 @@ export function useCollectionData(
         columnFieldsRef.current = fields;
         setColumnDefs(fields.map((field) => buildColDef(field)));
     }, [buildColDef]);
+
+    useEffect(() => {
+        const isGridVisible = options.gridVisible ?? true;
+        gridVisibleRef.current = isGridVisible;
+        if (!isGridVisible) {
+            return;
+        }
+
+        const firstCachedRow = rowsByPositionRef.current.values().next().value as RowData | undefined;
+        if (firstCachedRow) {
+            setColumnsFromRow(firstCachedRow);
+        }
+
+        publishRowsFromWindow();
+    }, [options.gridVisible, publishRowsFromWindow, setColumnsFromRow]);
 
     const applySnapshot = useCallback((snapshot: SnapshotEvent) => {
         const incomingRowCount = snapshot.rows?.length ?? 0;
