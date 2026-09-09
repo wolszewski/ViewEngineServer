@@ -29,7 +29,7 @@ public static class SubscribeLatencyScenario
                 return Response.Ok();
             });
 
-            Response result = connect;
+            IResponse result = connect;
             if (!connect.IsError)
             {
                 result = await Step.Run("subscribe_snapshot", context, async () =>
