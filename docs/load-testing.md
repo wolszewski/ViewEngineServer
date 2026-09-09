@@ -22,8 +22,7 @@ for optional real-time reporting to NBomber Studio.
 - **`delta_latency`** — the row in `DeltaCollectionName` carries both `DeltaCreatedAtField` (set
   once on insert, never touched again) and `DeltaUpdatedAtField` (a UTC timestamp rewritten on
   every update tick), matching normal created-vs-updated row semantics. A single background updater
-  ticks at `DeltaUpdatesPerSecond` (default 20/s), rewriting only `DeltaUpdatedAtField` via the
-  configured ingest transport. `DeltaSubscriberCount` (default 100) virtual users each open one
+  configured ingest transport. `DeltaSubscriberCount` (default 50) virtual users each open one
   persistent WS subscription (lazily, on that VU's first iteration, reused across iterations) and
   every iteration waits for the next broadcast `rowUpdate`, reporting
   `customLatencyMs = receivedAt - parse(DeltaUpdatedAtField)`. The update rate is independent of
