@@ -78,6 +78,7 @@ function App(): React.ReactElement {
     const snapshotRowsReceivedRef = useRef<Set<string>>(new Set());
     const pendingPreSnapshotUpdatesRef = useRef<Map<string, RowData>>(new Map());
     const pendingLiveAddKeysRef = useRef<Set<string>>(new Set());
+    const pendingLiveAddUpdatesRef = useRef<Map<string, RowData>>(new Map());
     const commandSnapshotEndedRef = useRef(false);
     const snapshotCompleteRef = useRef(false);
     const subscribeTimeRef = useRef<number | null>(null);
@@ -126,6 +127,7 @@ function App(): React.ReactElement {
         snapshotRowsReceivedRef.current.clear();
         pendingPreSnapshotUpdatesRef.current.clear();
         pendingLiveAddKeysRef.current.clear();
+        pendingLiveAddUpdatesRef.current.clear();
         commandSnapshotEndedRef.current = false;
         snapshotCompleteRef.current = false;
         hasSnapshotLoadedRef.current = false;
@@ -289,6 +291,7 @@ function App(): React.ReactElement {
                             }
                         } else if (command === 'DELETE') {
                             pendingLiveAddKeysRef.current.delete(commandKey);
+                            pendingLiveAddUpdatesRef.current.delete(commandKey);
                             const existing = rowsByIdRef.current.get(commandKey);
                             rowsByIdRef.current.delete(commandKey);
                             if (existing && gridApiRef.current && gridVisibleRef.current) {
@@ -366,10 +369,32 @@ function App(): React.ReactElement {
                         return;
                     }
 
+                    if (!isSnapshot) {
+                        // Not the item's own snapshot yet - buffer the changed fields instead of
+                        // building the row now, otherwise the row would be created with only
+                        // these few fields populated and the rest left blank.
+                        const changedFields: RowData = {};
+                        update.forEachChangedField((fieldName: string, _pos: number, value: string | null) => {
+                            if (subscribedFieldSet.has(fieldName)) {
+                                changedFields[fieldName] = value;
+                            }
+                        });
+                        const existingPending = pendingLiveAddUpdatesRef.current.get(rowKey) ?? { key: rowKey };
+                        pendingLiveAddUpdatesRef.current.set(rowKey, { ...existingPending, ...changedFields });
+                        return;
+                    }
+
                     const row: RowData = { key: rowKey };
                     for (const field of subscribedFields) {
                         row[field] = update.getValue(field);
                     }
+
+                    const pendingUpdate = pendingLiveAddUpdatesRef.current.get(rowKey);
+                    if (pendingUpdate) {
+                        Object.assign(row, pendingUpdate);
+                        pendingLiveAddUpdatesRef.current.delete(rowKey);
+                    }
+
                     rowsByIdRef.current.set(rowKey, row);
                     pendingLiveAddKeysRef.current.delete(rowKey);
                     // Not recorded as a latency sample - a row's first appearance (whether from the
