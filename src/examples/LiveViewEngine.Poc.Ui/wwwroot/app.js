@@ -41,7 +41,7 @@ const clientSideGridViewModuleUrl = await loadTypeScriptModule('/ClientSideGridV
     ['./gridShared', gridSharedModuleUrl],
     ["./gridShared.ts", gridSharedModuleUrl]
 ]);
-const appModuleUrl = await loadTypeScriptModule('/app.ts', [
+const appModuleUrl = await loadTypeScriptModule('/CollectionApp.ts', [
     ['./webHostClient', webHostClientModuleUrl],
     ["./webHostClient.ts", webHostClientModuleUrl],
     ['./gridShared', gridSharedModuleUrl],
@@ -51,9 +51,13 @@ const appModuleUrl = await loadTypeScriptModule('/app.ts', [
     ['./ClientSideGridView', clientSideGridViewModuleUrl],
     ["./ClientSideGridView.ts", clientSideGridViewModuleUrl]
 ]);
+const entryModuleUrl = await loadTypeScriptModule('/app.ts', [
+    ["./CollectionApp.ts", appModuleUrl],
+    ['./CollectionApp', appModuleUrl]
+]);
 
 try {
-    await import(appModuleUrl);
+    await import(entryModuleUrl);
 } finally {
     URL.revokeObjectURL(compactProtocolModuleUrl);
     URL.revokeObjectURL(jsonProtocolModuleUrl);
@@ -62,4 +66,5 @@ try {
     URL.revokeObjectURL(serverSideGridViewModuleUrl);
     URL.revokeObjectURL(clientSideGridViewModuleUrl);
     URL.revokeObjectURL(appModuleUrl);
+    URL.revokeObjectURL(entryModuleUrl);
 }
