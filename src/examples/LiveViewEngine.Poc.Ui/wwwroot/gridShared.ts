@@ -327,6 +327,28 @@ export function parsePercentInteger(value: string | null, fallback: number): num
     return Math.min(100, Math.max(1, Math.floor(parsed)));
 }
 
+/**
+ * "grid" query-param convention for example UIs: absent (or "1") means visible (default); "0" means hidden.
+ * Kept here so the LiveViewEngine.Poc.Ui pages share identical behavior; other example UIs may duplicate it.
+ */
+export function getInitialGridVisible(): boolean {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('grid') !== '0';
+}
+
+export function syncGridVisibleParam(gridVisible: boolean): void {
+    const params = new URLSearchParams(window.location.search);
+    if (gridVisible) {
+        params.delete('grid');
+    } else {
+        params.set('grid', '0');
+    }
+
+    const nextSearch = params.toString();
+    window.history.replaceState(
+        null, '', `${window.location.pathname}${nextSearch.length > 0 ? `?${nextSearch}` : ''}${window.location.hash}`);
+}
+
 export function buildViewportWindow(pageCount: number, pageSize: number, totalCount: number | null): ViewportWindow {
     const normalizedPageCount = Math.max(1, Math.floor(pageCount));
     const end = (normalizedPageCount * pageSize) - 1;
@@ -867,10 +889,14 @@ export interface CollectionDataApi {
  * is never set, so the "trim the row that fell off the page" logic in applyInsert/applyRemove/
  * applyReplace never fires - every row the server sends stays in the cache, which is required since
  * there is no server-side page boundary to enforce.
+ *
+ * When `options.gridVisible` is false, the handlers below keep the caches in sync but skip grid
+ * publication work, so this hook can still measure raw data-load time without render cost while
+ * allowing the grid to be shown again without a resubscribe.
  */
 export function useCollectionData(
     buildColDef: (field: string) => ColDef<RowData>,
-    options: { unboundedViewport: boolean }
+    options: { unboundedViewport: boolean; gridVisible?: boolean }
 ): CollectionDataApi {
     const { unboundedViewport } = options;
     const [eventLog, setEventLog] = useState<string[]>([]);
@@ -890,6 +916,9 @@ export function useCollectionData(
     const totalCountRef = useRef<number | null>(null);
     const pendingSnapshotRenderMeasureRef = useRef<PendingSnapshotRenderMeasure | null>(null);
     const handleDeltaEventRef = useRef<(event: DeltaEvent) => void>(() => {});
+    // Kept current via an effect (rather than recreated as a dependency) so the snapshot/delta
+    // handlers below don't need to be rebuilt on every visibility toggle.
+    const gridVisibleRef = useRef(options.gridVisible ?? true);
     // Latency is only meaningful once the initial snapshot is fully loaded - recording it earlier would
     // mix in stale snapshot timestamps and skew the rolling average high right after connecting.
     const hasSnapshotLoadedRef = useRef(false);
@@ -1006,7 +1035,25 @@ export function useCollectionData(
         setColumnDefs(fields.map((field) => buildColDef(field)));
     }, [buildColDef]);
 
+    useEffect(() => {
+        const isGridVisible = options.gridVisible ?? true;
+        gridVisibleRef.current = isGridVisible;
+        if (!isGridVisible) {
+            return;
+        }
+
+        const firstCachedRow = rowsByPositionRef.current.values().next().value as RowData | undefined;
+        if (firstCachedRow) {
+            setColumnsFromRow(firstCachedRow);
+        }
+
+        publishRowsFromWindow();
+    }, [options.gridVisible, publishRowsFromWindow, setColumnsFromRow]);
+
     const applySnapshot = useCallback((snapshot: SnapshotEvent) => {
+        const incomingRowCount = snapshot.rows?.length ?? 0;
+        const isGridVisible = gridVisibleRef.current;
+
         const rows = (snapshot.rows ?? []).map((row) => ({ ...row }));
 
         const snapshotStart = snapshot.startIndex;
@@ -1080,7 +1127,7 @@ export function useCollectionData(
 
         totalCountRef.current = snapshot.totalCount;
         setTotalCount(snapshot.totalCount);
-        if (!snapshot.isPartial && !isNoOpFullSnapshot) {
+        if (!snapshot.isPartial && !isNoOpFullSnapshot && isGridVisible) {
             pendingSnapshotRenderMeasureRef.current = {
                 rowCount: rows.length,
                 waitMs: snapshot.waitMs,
@@ -1091,7 +1138,7 @@ export function useCollectionData(
             };
         }
 
-        if (rows.length > 0) {
+        if (rows.length > 0 && isGridVisible) {
             setColumnsFromRow(rows[0]);
         }
 
@@ -1099,7 +1146,19 @@ export function useCollectionData(
         hasSnapshotLoadedRef.current = true;
         if (!snapshot.isPartial) {
             isReloadingGridRef.current = false;
+            if (!isGridVisible) {
+                setSnapshotStats({
+                    rowCount: incomingRowCount,
+                    waitMs: snapshot.waitMs,
+                    transferMs: snapshot.transferMs,
+                    renderMs: 0
+                });
+            }
         }
+        if (!isGridVisible) {
+            return;
+        }
+
         publishRowsFromWindow();
         if (!snapshot.isPartial && pendingScrollToTopRef.current) {
             pendingScrollToTopRef.current = false;
@@ -1164,15 +1223,17 @@ export function useCollectionData(
         rowsByIdRef.current.set(rowId, updated);
         rowsByPositionRef.current.set(update.position, updated);
         recordLatency(updated.updatedDate);
-        if (unboundedViewport && gridApiRef.current) {
+        if (unboundedViewport && gridVisibleRef.current && gridApiRef.current) {
             gridApiRef.current.applyTransaction({ update: [updated] });
             return;
         }
-        publishRowsFromWindow();
+        if (gridVisibleRef.current) {
+            publishRowsFromWindow();
+        }
     }, [publishRowsFromWindow, recordLatency, unboundedViewport]);
 
     const applyInsert = useCallback((insert: RowInsertEvent) => {
-        if (columnDefs.length === 0 && insert.row) {
+        if (gridVisibleRef.current && columnDefs.length === 0 && insert.row) {
             setColumnsFromRow(insert.row);
         }
         const positions = Array.from(rowsByPositionRef.current.keys()).sort((left, right) => right - left);
@@ -1195,11 +1256,13 @@ export function useCollectionData(
         if (window) {
             rowsByPositionRef.current.delete(window.end + 1);
         }
-        if (unboundedViewport && gridApiRef.current) {
+        if (unboundedViewport && gridVisibleRef.current && gridApiRef.current) {
             gridApiRef.current.applyTransaction({ add: [insertedRow], addIndex: insert.position });
             return;
         }
-        publishRowsFromWindow();
+        if (gridVisibleRef.current) {
+            publishRowsFromWindow();
+        }
     }, [adjustTotalCount, columnDefs.length, publishRowsFromWindow, setColumnsFromRow, unboundedViewport]);
 
     const applyRemove = useCallback((remove: RowRemoveEvent) => {
@@ -1222,15 +1285,17 @@ export function useCollectionData(
             }
         }
         adjustTotalCount(-1);
-        if (unboundedViewport && gridApiRef.current && removedRow) {
+        if (unboundedViewport && gridVisibleRef.current && gridApiRef.current && removedRow) {
             gridApiRef.current.applyTransaction({ remove: [removedRow] });
             return;
         }
-        publishRowsFromWindow();
+        if (gridVisibleRef.current) {
+            publishRowsFromWindow();
+        }
     }, [adjustTotalCount, publishRowsFromWindow, unboundedViewport]);
 
     const applyReplace = useCallback((replace: RowReplaceEvent) => {
-        if (columnDefs.length === 0 && replace.row) {
+        if (gridVisibleRef.current && columnDefs.length === 0 && replace.row) {
             setColumnsFromRow(replace.row);
         }
 
@@ -1276,7 +1341,7 @@ export function useCollectionData(
         if (window) {
             rowsByPositionRef.current.delete(window.end + 1);
         }
-        if (unboundedViewport && gridApiRef.current && removedRow) {
+        if (unboundedViewport && gridVisibleRef.current && gridApiRef.current && removedRow) {
             gridApiRef.current.applyTransaction({
                 remove: [removedRow],
                 add: [insertedRow],
@@ -1284,7 +1349,9 @@ export function useCollectionData(
             });
             return;
         }
-        publishRowsFromWindow();
+        if (gridVisibleRef.current) {
+            publishRowsFromWindow();
+        }
     }, [columnDefs.length, publishRowsFromWindow, setColumnsFromRow, unboundedViewport]);
 
     const handleDeltaEvent = useCallback((event: DeltaEvent) => {

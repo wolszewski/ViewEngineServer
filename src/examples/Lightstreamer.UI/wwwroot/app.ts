@@ -9,6 +9,26 @@ declare const LightstreamerClient: any;
 declare const Subscription: any;
 
 const normalizeLsUrl = (value: string): string => value.trim().replace(/\/+$/, '').replace(/\/lightstreamer\/?$/i, '');
+
+// Same "grid" query-param convention as the other example UIs: absent or "1" means visible
+// (the default); "0" means hidden.
+function getInitialGridVisible(): boolean {
+    return new URLSearchParams(window.location.search).get('grid') !== '0';
+}
+
+function syncGridVisibleParam(gridVisible: boolean): void {
+    const params = new URLSearchParams(window.location.search);
+    if (gridVisible) {
+        params.delete('grid');
+    } else {
+        params.set('grid', '0');
+    }
+
+    const nextSearch = params.toString();
+    window.history.replaceState(
+        null, '', `${window.location.pathname}${nextSearch.length > 0 ? `?${nextSearch}` : ''}${window.location.hash}`);
+}
+
 const defaultLsUrl = normalizeLsUrl(
     window.location.port === '5112' ? 'http://127.0.0.1:8080' : window.location.origin
 );
@@ -23,7 +43,7 @@ const subscribedFields = [
     ...Array.from({ length: 20 }, (_, i) => `boolField${i.toString().padStart(2, '0')}`)
 ];
 const subscribedFieldSet = new Set(subscribedFields);
-const snapshotTimeoutMs = 10_000;
+const defaultSnapshotTimeoutSeconds = 10;
 const snapshotAddGraceMs = 300;
 const latencyWindowSize = 500;
 
@@ -34,15 +54,19 @@ function App(): React.ReactElement {
     const [status, setStatus] = useState('Disconnected');
     const [isConnected, setIsConnected] = useState(false);
     const [isLoadingSnapshot, setIsLoadingSnapshot] = useState(false);
-    const [snapshotStats, setSnapshotStats] = useState<{ rowCount: number; loadMs: number } | null>(null);
+    const [snapshotTimeoutSeconds, setSnapshotTimeoutSeconds] = useState(defaultSnapshotTimeoutSeconds);
+    const [snapshotStats, setSnapshotStats] = useState<{ rowCount: number; waitMs: number; transferMs: number; renderMs: number; incomplete: boolean } | null>(null);
     const [latencySummary, setLatencySummary] = useState({ maxMs: 0, avgMs: 0, sampleCount: 0 });
     const latencyAccRef = useRef({ maxMs: 0, avgMs: 0, sampleCount: 0, recentLatencies: [] as number[], recentTotalMs: 0 });
     const autoConnectHandleRef = useRef<number | null>(null);
     const [columnDefs] = useState<ColDef<RowData>[]>(() =>
         subscribedFields.map((field) => ({ field, headerName: field }))
     );
-    const [gridVisible, setGridVisible] = useState(true);
-    const gridVisibleRef = useRef(true);
+    const [gridVisible, setGridVisible] = useState(() => getInitialGridVisible());
+    const gridVisibleRef = useRef(gridVisible);
+    useEffect(() => {
+        syncGridVisibleParam(gridVisible);
+    }, [gridVisible]);
     const initialRowData = useMemo<RowData[]>(() => [], []);
 
     const gridApiRef = useRef<GridApi<RowData> | null>(null);
@@ -57,6 +81,7 @@ function App(): React.ReactElement {
     const commandSnapshotEndedRef = useRef(false);
     const snapshotCompleteRef = useRef(false);
     const subscribeTimeRef = useRef<number | null>(null);
+    const firstUpdateTimeRef = useRef<number | null>(null);
     const snapshotCompletionTimeRef = useRef<number | null>(null);
     const snapshotTimeoutHandleRef = useRef<number | null>(null);
     const snapshotFinalizeGraceHandleRef = useRef<number | null>(null);
@@ -105,6 +130,7 @@ function App(): React.ReactElement {
         snapshotCompleteRef.current = false;
         hasSnapshotLoadedRef.current = false;
         subscribeTimeRef.current = null;
+        firstUpdateTimeRef.current = null;
         snapshotCompletionTimeRef.current = null;
         latencyAccRef.current = { maxMs: 0, avgMs: 0, sampleCount: 0, recentLatencies: [], recentTotalMs: 0 };
         setSnapshotStats(null);
@@ -122,7 +148,7 @@ function App(): React.ReactElement {
         }
     }, []);
 
-    const finalizeSnapshot = useCallback(() => {
+    const finalizeSnapshot = useCallback((forced: boolean = false) => {
         if (snapshotCompleteRef.current) { return; }
         snapshotCompleteRef.current = true;
 
@@ -137,24 +163,38 @@ function App(): React.ReactElement {
         }
 
         const completionTime = snapshotCompletionTimeRef.current ?? performance.now();
-        const loadMs = subscribeTimeRef.current !== null
-            ? completionTime - subscribeTimeRef.current
+        const firstUpdateTime = firstUpdateTimeRef.current ?? completionTime;
+        const waitMs = subscribeTimeRef.current !== null
+            ? firstUpdateTime - subscribeTimeRef.current
             : 0;
+        const transferMs = Math.max(0, completionTime - firstUpdateTime);
         subscribeTimeRef.current = null;
+        firstUpdateTimeRef.current = null;
         snapshotCompletionTimeRef.current = null;
 
         const rows = Array.from(snapshotBufferRef.current.values());
         snapshotBufferRef.current.clear();
+        const rowCount = gridVisibleRef.current ? rows.length : snapshotRowsReceivedRef.current.size;
         for (const row of rows) {
             rowsByIdRef.current.set(row.key as string, row);
         }
 
-        setSnapshotStats({ rowCount: rows.length, loadMs });
         setIsLoadingSnapshot(false);
         hasSnapshotLoadedRef.current = true;
 
         if (gridApiRef.current && gridVisibleRef.current) {
             gridApiRef.current.setGridOption('rowData', rows);
+            // Measured the same way as the WebHost example UIs: two nested rAFs bracket the
+            // browser's actual paint of the just-applied rowData, so renderMs reflects real
+            // render time rather than just the synchronous setGridOption call.
+            const renderStart = performance.now();
+            window.requestAnimationFrame(() => {
+                window.requestAnimationFrame(() => {
+                    setSnapshotStats({ rowCount, waitMs, transferMs, renderMs: performance.now() - renderStart, incomplete: forced });
+                });
+            });
+        } else {
+            setSnapshotStats({ rowCount, waitMs, transferMs, renderMs: 0, incomplete: forced });
         }
     }, []);
 
@@ -190,7 +230,8 @@ function App(): React.ReactElement {
         setIsLoadingSnapshot(true);
         subscribeTimeRef.current = performance.now();
 
-        snapshotTimeoutHandleRef.current = window.setTimeout(finalizeSnapshot, snapshotTimeoutMs);
+        const timeoutMs = Math.max(1, snapshotTimeoutSeconds) * 1000;
+        snapshotTimeoutHandleRef.current = window.setTimeout(() => finalizeSnapshot(true), timeoutMs);
 
         const subscription = new Subscription('COMMAND', [commandListItem], ['key', 'command']);
         subscription.setDataAdapter('trades-command-adapter');
@@ -212,6 +253,10 @@ function App(): React.ReactElement {
                 setStatus(`Second-level subscription error for ${key}: ${code} ${message}`);
             },
             onItemUpdate(update: any) {
+                if (firstUpdateTimeRef.current === null) {
+                    firstUpdateTimeRef.current = performance.now();
+                }
+
                 const itemName: string = update.getItemName();
                 const isSnapshot = update.isSnapshot();
                 const command = update.getValue('command');
@@ -261,6 +306,20 @@ function App(): React.ReactElement {
                 }
 
                 if (!snapshotCompleteRef.current) {
+                    if (!gridVisibleRef.current) {
+                        // Grid hidden: skip building/storing the row payload entirely - only the
+                        // key-tracking bookkeeping needed for tryFinalizeSnapshot's completion
+                        // detection is kept, so this mode measures raw snapshot load time with zero
+                        // per-row data transformation.
+                        if (isSnapshot) {
+                            snapshotRowsReceivedRef.current.add(rowKey);
+                            snapshotPendingKeysRef.current.delete(rowKey);
+                        }
+
+                        tryFinalizeSnapshot();
+                        return;
+                    }
+
                     if (isSnapshot) {
                         const row: RowData = { key: rowKey };
                         for (const field of subscribedFields) {
@@ -294,6 +353,10 @@ function App(): React.ReactElement {
                     }
 
                     tryFinalizeSnapshot();
+                    return;
+                }
+
+                if (!gridVisibleRef.current) {
                     return;
                 }
 
@@ -362,7 +425,7 @@ function App(): React.ReactElement {
         lsClient.subscribe(subscription);
         lsClient.connect();
         clientRef.current = lsClient;
-    }, [clearState, finalizeSnapshot, lsUrl, recordLatency, tryFinalizeSnapshot]);
+    }, [clearState, finalizeSnapshot, lsUrl, recordLatency, snapshotTimeoutSeconds, tryFinalizeSnapshot]);
 
     const disconnect = useCallback(() => {
         if (clientRef.current) {
@@ -374,6 +437,15 @@ function App(): React.ReactElement {
         setIsLoadingSnapshot(false);
         setStatus('Disconnected');
     }, [clearState]);
+
+    // Kept current via an effect so the mount-only auto-connect effect below doesn't need
+    // `connect` in its dependency array - `connect` is redefined whenever any of its inputs
+    // (lsUrl, snapshotTimeoutSeconds, ...) change, and depending on it directly would
+    // re-arm the auto-connect timer (and reconnect) on every keystroke in those fields.
+    const connectRef = useRef(connect);
+    useEffect(() => {
+        connectRef.current = connect;
+    }, [connect]);
 
     useEffect(() => {
         const handle = window.setInterval(() => {
@@ -389,7 +461,7 @@ function App(): React.ReactElement {
 
         autoConnectHandleRef.current = window.setTimeout(() => {
             if (!clientRef.current) {
-                connect();
+                connectRef.current();
             }
         }, 500);
 
@@ -399,7 +471,9 @@ function App(): React.ReactElement {
                 autoConnectHandleRef.current = null;
             }
         };
-    }, [connect]);
+        // Intentionally mount-only (see connectRef comment above) - must not depend on `connect`.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     useEffect(() => {
         return () => {
@@ -483,7 +557,11 @@ function App(): React.ReactElement {
             'div',
             { className: 'status' },
             snapshotStats !== null
-                ? `Snapshot: ${snapshotStats.rowCount.toLocaleString()} rows loaded in ${snapshotStats.loadMs.toFixed(0)} ms`
+                ? `snapshot ${snapshotStats.rowCount.toLocaleString()} rows | `
+                    + `wait ${snapshotStats.waitMs.toFixed(0)}ms | `
+                    + `transfer ${snapshotStats.transferMs.toFixed(0)}ms | `
+                    + `render ${snapshotStats.renderMs.toFixed(0)}ms`
+                    + (snapshotStats.incomplete ? ` — incomplete (stopped after ${snapshotTimeoutSeconds}s max wait)` : '')
                 : 'Snapshot: —'
         ),
         React.createElement(
@@ -505,6 +583,23 @@ function App(): React.ReactElement {
                     onChange: (e: Event) => setLsUrl(normalizeLsUrl((e.target as HTMLInputElement).value))
                 })
             ),
+            React.createElement(
+                'label',
+                { className: 'control-label' },
+                'Max wait (s)',
+                React.createElement('input', {
+                    type: 'number',
+                    min: 1,
+                    value: snapshotTimeoutSeconds,
+                    disabled: isConnected,
+                    onChange: (e: Event) => {
+                        const parsed = Number((e.target as HTMLInputElement).value);
+                        if (Number.isFinite(parsed) && parsed >= 1) {
+                            setSnapshotTimeoutSeconds(Math.floor(parsed));
+                        }
+                    }
+                })
+            ),
             !isConnected
                 ? React.createElement('button', { type: 'button', onClick: connect, disabled: isLoadingSnapshot }, 'Connect')
                 : React.createElement('button', { type: 'button', onClick: disconnect }, 'Disconnect'),
@@ -523,33 +618,35 @@ function App(): React.ReactElement {
                 'Show grid'
             )
         ),
-        React.createElement(
-            'div',
-            { className: 'grid-wrapper', style: gridVisible ? undefined : { display: 'none' } },
-            isLoadingSnapshot
-                ? React.createElement(
-                    'div',
-                    { className: 'grid-loader' },
-                    React.createElement('div', { className: 'grid-loader-spinner' }),
-                    'Loading snapshot…'
-                )
-                : null,
-            React.createElement(
+        gridVisible
+            ? React.createElement(
                 'div',
-                { className: 'ag-theme-balham', style: { width: '100%', height: '100%' } },
-                React.createElement(AgGridReact<RowData>, {
-                    onGridReady: (params) => { gridApiRef.current = params.api; },
-                    rowData: initialRowData,
-                    columnDefs,
-                    defaultColDef,
-                    getRowId: (params) => String(params.data.key ?? ''),
-                    suppressFieldDotNotation: true,
-                    animateRows: true,
-                    cellFlashDuration: 1,
-                    cellFadeDuration: 1_000
-                })
+                { className: 'grid-wrapper' },
+                isLoadingSnapshot
+                    ? React.createElement(
+                        'div',
+                        { className: 'grid-loader' },
+                        React.createElement('div', { className: 'grid-loader-spinner' }),
+                        'Loading snapshot…'
+                    )
+                    : null,
+                React.createElement(
+                    'div',
+                    { className: 'ag-theme-balham', style: { width: '100%', height: '100%' } },
+                    React.createElement(AgGridReact<RowData>, {
+                        onGridReady: (params) => { gridApiRef.current = params.api; },
+                        rowData: initialRowData,
+                        columnDefs,
+                        defaultColDef,
+                        getRowId: (params) => String(params.data.key ?? ''),
+                        suppressFieldDotNotation: true,
+                        animateRows: true,
+                        cellFlashDuration: 1,
+                        cellFadeDuration: 1_000
+                    })
+                )
             )
-        )
+            : null
     );
 }
 
