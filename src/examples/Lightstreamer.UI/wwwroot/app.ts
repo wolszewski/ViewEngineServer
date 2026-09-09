@@ -378,17 +378,12 @@ function App(): React.ReactElement {
     }, []);
 
     useEffect(() => {
-        if (autoConnectHandleRef.current !== null) {
-            clearTimeout(autoConnectHandleRef.current);
-            autoConnectHandleRef.current = null;
-        }
-
-        if (isConnected || clientRef.current) {
+        if (clientRef.current) {
             return undefined;
         }
 
         autoConnectHandleRef.current = window.setTimeout(() => {
-            if (!clientRef.current && !isConnected) {
+            if (!clientRef.current) {
                 connect();
             }
         }, 500);
@@ -399,7 +394,7 @@ function App(): React.ReactElement {
                 autoConnectHandleRef.current = null;
             }
         };
-    }, [connect, isConnected]);
+    }, []);
 
     useEffect(() => {
         return () => {
