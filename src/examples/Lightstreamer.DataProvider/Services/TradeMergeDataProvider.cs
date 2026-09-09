@@ -14,6 +14,7 @@ public sealed class TradeMergeDataProvider(
     private readonly HashSet<string> _subscribedItems = new(StringComparer.OrdinalIgnoreCase);
     private IItemEventListener? _listener;
     private long _forwardedUpdateCount;
+    private long _suppressedUpdateCount;
 
     public void Init(IDictionary parameters, string configFile)
     {
@@ -44,6 +45,8 @@ public sealed class TradeMergeDataProvider(
         {
             _subscribedItems.Remove(itemName);
         }
+
+        logger.LogInformation("Trade merge adapter unsubscribed item {ItemName}.", itemName);
     }
 
     public Task<bool> CreateCollectionAsync(string collectionName, IReadOnlyList<string> fieldNames, IReadOnlyList<string>? fieldTypes = null, CancellationToken cancellationToken = default)
@@ -57,20 +60,41 @@ public sealed class TradeMergeDataProvider(
 
     public Task<bool> IngestAsync(string collectionName, string rowKey, IReadOnlyDictionary<string, string?> fieldValues, CancellationToken cancellationToken = default)
     {
-        Dictionary<string, string?> snapshot;
         bool isNew;
         bool shouldForward;
         long forwardedUpdateCount = 0;
+        long suppressedUpdateCount = 0;
         lock (_sync)
         {
-            isNew = !_rows.ContainsKey(rowKey);
-            snapshot = new Dictionary<string, string?>(fieldValues, StringComparer.OrdinalIgnoreCase);
-            _rows[rowKey] = snapshot;
+            isNew = !_rows.TryGetValue(rowKey, out var existing);
+            if (isNew)
+            {
+                _rows[rowKey] = new Dictionary<string, string?>(fieldValues, StringComparer.OrdinalIgnoreCase);
+            }
+            else
+            {
+                // Merge into the cached row instead of replacing it - update-mode ingestion only
+                // carries the handful of changed fields, and replacing the cache with just those
+                // would permanently drop every other field the row previously had. Any later
+                // second-level subscribe (SendSnapshot) reads this cache, so a clobbered cache
+                // meant a client subscribing after an update landed only ever saw those few
+                // fields instead of the full row.
+                foreach (var (field, value) in fieldValues)
+                {
+                    existing![field] = value;
+                }
+            }
+
             shouldForward = _listener is not null && _subscribedItems.Contains(rowKey);
             if (shouldForward)
             {
                 _forwardedUpdateCount++;
                 forwardedUpdateCount = _forwardedUpdateCount;
+            }
+            else
+            {
+                _suppressedUpdateCount++;
+                suppressedUpdateCount = _suppressedUpdateCount;
             }
         }
 
@@ -81,7 +105,10 @@ public sealed class TradeMergeDataProvider(
 
         if (shouldForward && _listener is not null)
         {
-            _listener.Update(rowKey, snapshot, isSnapshot: false);
+            // Forward only the incoming delta, not the full cached row - correct and cheaper for a
+            // MERGE-mode item, which keeps unchanged fields from the last update/snapshot as-is.
+            var delta = new Dictionary<string, string?>(fieldValues, StringComparer.OrdinalIgnoreCase);
+            _listener.Update(rowKey, delta, isSnapshot: false);
 
             if (forwardedUpdateCount <= 5 || forwardedUpdateCount % 1_000 == 0)
             {
@@ -89,8 +116,17 @@ public sealed class TradeMergeDataProvider(
                     "Forwarded merge update {ForwardedUpdateCount} for {RowKey} with {FieldCount} fields.",
                     forwardedUpdateCount,
                     rowKey,
-                    snapshot.Count);
+                    delta.Count);
             }
+        }
+        else if (suppressedUpdateCount <= 5 || suppressedUpdateCount % 1_000 == 0)
+        {
+        logger.LogInformation(
+            "Suppressed merge update {SuppressedUpdateCount} for {RowKey}: listenerAttached={ListenerAttached}, shouldForward={ShouldForward}.",
+            suppressedUpdateCount,
+            rowKey,
+            _listener is not null,
+            shouldForward);
         }
 
         return Task.FromResult(true);
@@ -102,6 +138,7 @@ public sealed class TradeMergeDataProvider(
         {
             _rows.Clear();
             _forwardedUpdateCount = 0;
+            _suppressedUpdateCount = 0;
         }
     }
 
@@ -109,16 +146,24 @@ public sealed class TradeMergeDataProvider(
     {
         if (_listener is null)
         {
+            logger.LogWarning("Merge snapshot publish skipped for {ItemName}: no listener attached yet.", itemName);
             return;
         }
 
+        // Copied under the lock instead of taking the cached dictionary reference and using it
+        // after releasing the lock - IngestAsync mutates that same instance in place, and
+        // serializing it concurrently on another thread (inside _listener.Update) could corrupt
+        // the payload or throw a "collection modified" error.
         Dictionary<string, string?>? row;
         lock (_sync)
         {
-            if (!_rows.TryGetValue(itemName, out row))
+            if (!_rows.TryGetValue(itemName, out var existing))
             {
+                logger.LogWarning("Merge snapshot requested for unknown item {ItemName}; no row data found.", itemName);
                 return;
             }
+
+            row = new Dictionary<string, string?>(existing, StringComparer.OrdinalIgnoreCase);
         }
 
         logger.LogInformation("Sending merge snapshot for {ItemName}.", itemName);

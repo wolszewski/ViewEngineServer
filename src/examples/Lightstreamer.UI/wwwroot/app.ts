@@ -32,7 +32,40 @@ function syncGridVisibleParam(gridVisible: boolean): void {
 const defaultLsUrl = normalizeLsUrl(
     window.location.port === '5112' ? 'http://127.0.0.1:8080' : window.location.origin
 );
-const commandListItem = 'TRADES_ALL';
+type PushMode = 'twoLevel' | 'pure';
+// 'twoLevel' = COMMAND item carries only key/command; row fields arrive via a per-key
+// second-level MERGE subscription. 'pure' = COMMAND item carries the full row fields directly
+// on every ADD/UPDATE, no second-level subscription involved.
+const pushModeItemNames: Record<PushMode, string> = {
+    twoLevel: 'TRADES_ALL',
+    pure: 'TRADES_ALL_PURE'
+};
+const pushModeDataAdapters: Record<PushMode, string> = {
+    twoLevel: 'trades-command-adapter',
+    pure: 'trades-pure-command-adapter'
+};
+const defaultPushMode: PushMode = 'twoLevel';
+
+// Same "mode" query-param convention as "grid": absent or "twoLevel" means the default;
+// "pure" selects pure command mode. Any other/invalid value falls back to the default.
+function getInitialPushMode(): PushMode {
+    const value = new URLSearchParams(window.location.search).get('mode');
+    return value === 'pure' ? 'pure' : defaultPushMode;
+}
+
+function syncPushModeParam(pushMode: PushMode): void {
+    const params = new URLSearchParams(window.location.search);
+    if (pushMode === defaultPushMode) {
+        params.delete('mode');
+    } else {
+        params.set('mode', pushMode);
+    }
+
+    const nextSearch = params.toString();
+    window.history.replaceState(
+        null, '', `${window.location.pathname}${nextSearch.length > 0 ? `?${nextSearch}` : ''}${window.location.hash}`);
+}
+
 const subscribedFields = [
     'tradeId', 'createdDate', 'updatedDate', 'accountId', 'quantity',
     'price', 'side', 'status', 'isAlgo', 'isManualReview', 'notional', 'variedNumber',
@@ -51,6 +84,7 @@ type RowData = Record<string, string | null>;
 
 function App(): React.ReactElement {
     const [lsUrl, setLsUrl] = useState(defaultLsUrl);
+    const [pushMode, setPushMode] = useState<PushMode>(() => getInitialPushMode());
     const [status, setStatus] = useState('Disconnected');
     const [isConnected, setIsConnected] = useState(false);
     const [isLoadingSnapshot, setIsLoadingSnapshot] = useState(false);
@@ -67,6 +101,9 @@ function App(): React.ReactElement {
     useEffect(() => {
         syncGridVisibleParam(gridVisible);
     }, [gridVisible]);
+    useEffect(() => {
+        syncPushModeParam(pushMode);
+    }, [pushMode]);
     const initialRowData = useMemo<RowData[]>(() => [], []);
 
     const gridApiRef = useRef<GridApi<RowData> | null>(null);
@@ -226,6 +263,115 @@ function App(): React.ReactElement {
         }
     }, [finalizeSnapshot]);
 
+    // Pure command mode: the single COMMAND item already carries every subscribed field on
+    // each ADD/UPDATE, so there is no second-level subscription/snapshot to coordinate - the
+    // row is always fully known from the update that announces it.
+    const handlePureItemUpdate = useCallback((update: any) => {
+        if (firstUpdateTimeRef.current === null) {
+            firstUpdateTimeRef.current = performance.now();
+        }
+
+        const command = update.getValue('command');
+        const rowKey: string | null = update.getValue('key');
+        if (!rowKey) {
+            return;
+        }
+
+        if (command === 'DELETE') {
+            if (!snapshotCompleteRef.current) {
+                snapshotCommandKeysRef.current.delete(rowKey);
+                snapshotPendingKeysRef.current.delete(rowKey);
+                snapshotRowsReceivedRef.current.delete(rowKey);
+                snapshotBufferRef.current.delete(rowKey);
+            } else {
+                const existing = rowsByIdRef.current.get(rowKey);
+                rowsByIdRef.current.delete(rowKey);
+                if (existing && gridApiRef.current && gridVisibleRef.current) {
+                    gridApiRef.current.applyTransaction({ remove: [existing] });
+                }
+            }
+
+            tryFinalizeSnapshot();
+            return;
+        }
+
+        if (!snapshotCompleteRef.current) {
+            if (command === 'ADD' && !snapshotCommandKeysRef.current.has(rowKey)) {
+                snapshotCommandKeysRef.current.add(rowKey);
+                snapshotPendingKeysRef.current.add(rowKey);
+            }
+
+            const row: RowData = { key: rowKey };
+            for (const field of subscribedFields) {
+                row[field] = update.getValue(field);
+            }
+
+            snapshotBufferRef.current.set(rowKey, row);
+            snapshotRowsReceivedRef.current.add(rowKey);
+            snapshotPendingKeysRef.current.delete(rowKey);
+            tryFinalizeSnapshot();
+            return;
+        }
+
+        if (!gridVisibleRef.current) {
+            return;
+        }
+
+        if (command === 'ADD') {
+            const row: RowData = { key: rowKey };
+            for (const field of subscribedFields) {
+                row[field] = update.getValue(field);
+            }
+
+            rowsByIdRef.current.set(rowKey, row);
+            if (gridApiRef.current) {
+                gridApiRef.current.applyTransaction({ add: [row] });
+            }
+
+            return;
+        }
+
+        const existing = rowsByIdRef.current.get(rowKey);
+        const changedFields: RowData = {};
+        update.forEachChangedField((fieldName: string, _pos: number, value: string | null) => {
+            if (subscribedFieldSet.has(fieldName)) {
+                changedFields[fieldName] = value;
+            }
+        });
+
+        let updated: RowData;
+        if (existing) {
+            updated = { ...existing, ...changedFields };
+        } else {
+            updated = { key: rowKey };
+            for (const field of subscribedFields) {
+                updated[field] = update.getValue(field);
+            }
+        }
+
+        rowsByIdRef.current.set(rowKey, updated);
+        recordLatency(updated.updatedDate);
+
+        if (!gridApiRef.current) {
+            return;
+        }
+
+        if (existing) {
+            gridApiRef.current.applyTransaction({ update: [updated] });
+            const rowNode = gridApiRef.current.getRowNode(rowKey);
+            if (rowNode) {
+                gridApiRef.current.flashCells({
+                    rowNodes: [rowNode],
+                    columns: Object.keys(changedFields),
+                    flashDuration: 1,
+                    fadeDuration: 1_000
+                });
+            }
+        } else {
+            gridApiRef.current.applyTransaction({ add: [updated] });
+        }
+    }, [recordLatency, tryFinalizeSnapshot]);
+
     const connect = useCallback(() => {
         clearState();
         setIsConnected(true);
@@ -235,10 +381,15 @@ function App(): React.ReactElement {
         const timeoutMs = Math.max(1, snapshotTimeoutSeconds) * 1000;
         snapshotTimeoutHandleRef.current = window.setTimeout(() => finalizeSnapshot(true), timeoutMs);
 
-        const subscription = new Subscription('COMMAND', [commandListItem], ['key', 'command']);
-        subscription.setDataAdapter('trades-command-adapter');
-        subscription.setCommandSecondLevelDataAdapter('trades-merge-adapter');
-        subscription.setCommandSecondLevelFields(subscribedFields);
+        const listItemName = pushModeItemNames[pushMode];
+        const subscription = pushMode === 'twoLevel'
+            ? new Subscription('COMMAND', [listItemName], ['key', 'command'])
+            : new Subscription('COMMAND', [listItemName], ['key', 'command', ...subscribedFields]);
+        subscription.setDataAdapter(pushModeDataAdapters[pushMode]);
+        if (pushMode === 'twoLevel') {
+            subscription.setCommandSecondLevelDataAdapter('trades-merge-adapter');
+            subscription.setCommandSecondLevelFields(subscribedFields);
+        }
         subscription.setRequestedSnapshot('yes');
 
         subscription.addListener({
@@ -254,7 +405,7 @@ function App(): React.ReactElement {
             onCommandSecondLevelSubscriptionError(code: number, message: string, key: string) {
                 setStatus(`Second-level subscription error for ${key}: ${code} ${message}`);
             },
-            onItemUpdate(update: any) {
+            onItemUpdate: pushMode === 'pure' ? handlePureItemUpdate : (update: any) => {
                 if (firstUpdateTimeRef.current === null) {
                     firstUpdateTimeRef.current = performance.now();
                 }
@@ -266,7 +417,7 @@ function App(): React.ReactElement {
                 const rowKey = commandKey ?? itemName;
                 const hasRowPayload = subscribedFields.some((field) => update.getValue(field) !== null);
 
-                if (itemName === commandListItem) {
+                if (itemName === listItemName) {
                     if (commandKey) {
                         if (!snapshotCompleteRef.current && commandSnapshotEndedRef.current && isSnapshot) {
                             snapshotCompletionTimeRef.current = null;
@@ -309,20 +460,6 @@ function App(): React.ReactElement {
                 }
 
                 if (!snapshotCompleteRef.current) {
-                    if (!gridVisibleRef.current) {
-                        // Grid hidden: skip building/storing the row payload entirely - only the
-                        // key-tracking bookkeeping needed for tryFinalizeSnapshot's completion
-                        // detection is kept, so this mode measures raw snapshot load time with zero
-                        // per-row data transformation.
-                        if (isSnapshot) {
-                            snapshotRowsReceivedRef.current.add(rowKey);
-                            snapshotPendingKeysRef.current.delete(rowKey);
-                        }
-
-                        tryFinalizeSnapshot();
-                        return;
-                    }
-
                     if (isSnapshot) {
                         const row: RowData = { key: rowKey };
                         for (const field of subscribedFields) {
@@ -432,7 +569,7 @@ function App(): React.ReactElement {
                 }
             },
             onEndOfSnapshot(itemName: string, _itemPos: number) {
-                if (snapshotCompleteRef.current || itemName !== commandListItem) {
+                if (snapshotCompleteRef.current || itemName !== listItemName) {
                     return;
                 }
 
@@ -450,7 +587,7 @@ function App(): React.ReactElement {
         lsClient.subscribe(subscription);
         lsClient.connect();
         clientRef.current = lsClient;
-    }, [clearState, finalizeSnapshot, lsUrl, recordLatency, snapshotTimeoutSeconds, tryFinalizeSnapshot]);
+    }, [clearState, finalizeSnapshot, handlePureItemUpdate, lsUrl, pushMode, recordLatency, snapshotTimeoutSeconds, tryFinalizeSnapshot]);
 
     const disconnect = useCallback(() => {
         if (clientRef.current) {
@@ -607,6 +744,21 @@ function App(): React.ReactElement {
                     disabled: isConnected,
                     onChange: (e: Event) => setLsUrl(normalizeLsUrl((e.target as HTMLInputElement).value))
                 })
+            ),
+            React.createElement(
+                'label',
+                { className: 'control-label' },
+                'Push mode',
+                React.createElement(
+                    'select',
+                    {
+                        value: pushMode,
+                        disabled: isConnected,
+                        onChange: (e: Event) => setPushMode((e.target as HTMLSelectElement).value as PushMode)
+                    },
+                    React.createElement('option', { value: 'twoLevel' }, 'Two-level push (COMMAND + MERGE)'),
+                    React.createElement('option', { value: 'pure' }, 'Pure command mode')
+                )
             ),
             React.createElement(
                 'label',

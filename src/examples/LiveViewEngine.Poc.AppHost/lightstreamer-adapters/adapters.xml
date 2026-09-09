@@ -23,5 +23,15 @@
         <param name="connection_recovery_timeout_millis">1000</param>
         <param name="unsubscription_timeout_millis">-1</param>
     </data_provider>
+
+    <data_provider name="trades-pure-command-adapter">
+        <adapter_class>ROBUST_PROXY_FOR_REMOTE_ADAPTER</adapter_class>
+        <classloader>log-enabled</classloader>
+        <param name="request_reply_port">6663</param>
+        <param name="status_item">adapter_status</param>
+        <param name="timeout">-1</param>
+        <param name="connection_recovery_timeout_millis">1000</param>
+        <param name="unsubscription_timeout_millis">-1</param>
+    </data_provider>
 </adapters_conf>
 
