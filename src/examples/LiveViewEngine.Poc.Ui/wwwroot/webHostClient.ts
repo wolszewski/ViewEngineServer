@@ -28,6 +28,9 @@ export type {
 interface ClientCallbacks {
     onStatus: (status: string) => void;
     onEvent: (event: DeltaEvent) => void;
+    // Fired as each snapshotRow frame is registered while a snapshot is still streaming in, so
+    // callers can show a live "rows loaded so far" count without waiting for the terminating eos.
+    onSnapshotProgress?: (rowsLoaded: number) => void;
     onSubscriptionRejected?: (reason: string, message: string) => void;
     // Non-terminal: the subscription stays alive server-side with its previous view/viewport
     // untouched - only the requested updateview/setviewport change was refused. Unlike
@@ -210,6 +213,7 @@ export class WebHostClient {
                     isPartial: frame.isPartial === true,
                     firstMessageAt: performance.now()
                 };
+                this.callbacks.onSnapshotProgress?.(0);
                 return;
             case 'snapshotRow':
                 if (!this.isActiveSubscription(frame.subscriptionId) || !this.pendingSnapshot) {
@@ -218,6 +222,7 @@ export class WebHostClient {
 
                 this.pendingSnapshot.firstMessageAt ??= performance.now();
                 this.pendingSnapshot.rows.push(frame.row);
+                this.callbacks.onSnapshotProgress?.(this.pendingSnapshot.rows.length);
                 return;
             case 'eos':
                 if (!this.isActiveSubscription(frame.subscriptionId) || !this.pendingSnapshot) {

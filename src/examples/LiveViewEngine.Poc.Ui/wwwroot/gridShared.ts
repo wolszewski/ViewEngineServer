@@ -870,10 +870,14 @@ export interface CollectionDataApi {
     setIsLoadingSnapshot: (value: boolean) => void;
     snapshotStats: SnapshotStats | null;
     latencySummary: LatencySummary;
+    liveSnapshotRowCount: number;
+    trackLiveSnapshotCount: boolean;
+    setTrackLiveSnapshotCount: (value: boolean) => void;
     eventLog: string[];
     appendLog: (entry: string) => void;
     clearState: () => void;
     handleDeltaEventRef: React.MutableRefObject<(event: DeltaEvent) => void>;
+    handleSnapshotProgressRef: React.MutableRefObject<(rowsLoaded: number) => void>;
     gridApiRef: React.MutableRefObject<GridApi<RowData> | null>;
     isReloadingGridRef: React.MutableRefObject<boolean>;
     pendingScrollToTopRef: React.MutableRefObject<boolean>;
@@ -906,6 +910,8 @@ export function useCollectionData(
     const [isLoadingSnapshot, setIsLoadingSnapshot] = useState(false);
     const [snapshotStats, setSnapshotStats] = useState<SnapshotStats | null>(null);
     const [latencySummary, setLatencySummary] = useState<LatencySummary>({ maxMs: 0, avgMs: 0, sampleCount: 0 });
+    const [liveSnapshotRowCount, setLiveSnapshotRowCount] = useState(0);
+    const [trackLiveSnapshotCount, setTrackLiveSnapshotCount] = useState(true);
 
     const gridApiRef = useRef<GridApi<RowData> | null>(null);
     const isReloadingGridRef = useRef(false);
@@ -916,6 +922,13 @@ export function useCollectionData(
     const totalCountRef = useRef<number | null>(null);
     const pendingSnapshotRenderMeasureRef = useRef<PendingSnapshotRenderMeasure | null>(null);
     const handleDeltaEventRef = useRef<(event: DeltaEvent) => void>(() => {});
+    const liveSnapshotRowCountRef = useRef(0);
+    // Kept as a ref (rather than depending on the WebHostClient callback wiring) so toggling
+    // "track live count" doesn't require the connect effect to be rebuilt/resubscribed.
+    const handleSnapshotProgressRef = useRef<(rowsLoaded: number) => void>(() => {});
+    handleSnapshotProgressRef.current = (rowsLoaded: number) => {
+        liveSnapshotRowCountRef.current = rowsLoaded;
+    };
     // Kept current via an effect (rather than recreated as a dependency) so the snapshot/delta
     // handlers below don't need to be rebuilt on every visibility toggle.
     const gridVisibleRef = useRef(options.gridVisible ?? true);
@@ -956,6 +969,24 @@ export function useCollectionData(
         }, latencySummaryRefreshMs);
         return () => clearInterval(handle);
     }, []);
+
+    // Reads the row count off a ref once per animation frame (rather than calling setState from
+    // the hot snapshotRow path itself, or only every couple hundred ms) so a fast-streaming
+    // snapshot doesn't trigger a re-render per row while still sampling as often as the browser
+    // can paint, so fast/local loads still look live instead of jumping straight to the final count.
+    useEffect(() => {
+        if (!isLoadingSnapshot || !trackLiveSnapshotCount) {
+            return undefined;
+        }
+
+        let rafHandle = 0;
+        const tick = () => {
+            setLiveSnapshotRowCount(liveSnapshotRowCountRef.current);
+            rafHandle = window.requestAnimationFrame(tick);
+        };
+        rafHandle = window.requestAnimationFrame(tick);
+        return () => window.cancelAnimationFrame(rafHandle);
+    }, [isLoadingSnapshot, trackLiveSnapshotCount]);
 
     const publishRowsFromWindow = useCallback(() => {
         const window = subscribedViewportRef.current;
@@ -999,10 +1030,12 @@ export function useCollectionData(
         columnFieldsRef.current = null;
         hasSnapshotLoadedRef.current = false;
         latencyAccRef.current = { maxMs: 0, avgMs: 0, sampleCount: 0, recentLatencies: [], recentTotalMs: 0 };
+        liveSnapshotRowCountRef.current = 0;
         setRowData([]);
         setTotalCount(null);
         setSnapshotStats(null);
         setLatencySummary({ maxMs: 0, avgMs: 0, sampleCount: 0 });
+        setLiveSnapshotRowCount(0);
     }, []);
 
     /**
@@ -1377,10 +1410,14 @@ export function useCollectionData(
         setIsLoadingSnapshot,
         snapshotStats,
         latencySummary,
+        liveSnapshotRowCount,
+        trackLiveSnapshotCount,
+        setTrackLiveSnapshotCount,
         eventLog,
         appendLog,
         clearState,
         handleDeltaEventRef,
+        handleSnapshotProgressRef,
         gridApiRef,
         isReloadingGridRef,
         pendingScrollToTopRef,

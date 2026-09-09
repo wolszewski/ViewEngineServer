@@ -66,6 +66,7 @@ export default function ClientSideGridView(): React.ReactElement {
         clientRef.current = new WebHostClient('ws://127.0.0.1:5100/ws', {
             onStatus: setStatus,
             onEvent: (event: DeltaEvent) => data.handleDeltaEventRef.current(event),
+            onSnapshotProgress: (rowsLoaded: number) => data.handleSnapshotProgressRef.current(rowsLoaded),
             onSubscriptionRejected: (reason, message) => {
                 data.isReloadingGridRef.current = false;
                 data.setIsLoadingSnapshot(false);
@@ -134,7 +135,13 @@ export default function ClientSideGridView(): React.ReactElement {
                         + `transfer ${data.snapshotStats.transferMs.toFixed(0)}ms | `
                         + `render ${data.snapshotStats.renderMs.toFixed(0)}ms`
                     )
-                    : null,
+                    : (data.isLoadingSnapshot && data.trackLiveSnapshotCount
+                        ? React.createElement(
+                            'span',
+                            null,
+                            `loading… ${data.liveSnapshotRowCount.toLocaleString()} rows loaded so far`
+                        )
+                        : null),
                 React.createElement(
                     'span',
                     null,
@@ -186,6 +193,16 @@ export default function ClientSideGridView(): React.ReactElement {
                     onChange: (e: Event) => setGridVisible((e.target as HTMLInputElement).checked)
                 }),
                 'Show grid'
+            ),
+            React.createElement(
+                'label',
+                { className: 'control-label', style: { flexDirection: 'row', alignItems: 'center', gap: '0.4rem' } },
+                React.createElement('input', {
+                    type: 'checkbox',
+                    checked: data.trackLiveSnapshotCount,
+                    onChange: (e: Event) => data.setTrackLiveSnapshotCount((e.target as HTMLInputElement).checked)
+                }),
+                'Live loaded count'
             )
         ),
         React.createElement(ColumnSelectorPanel, columnSelection),
@@ -198,7 +215,9 @@ export default function ClientSideGridView(): React.ReactElement {
                         'div',
                         { className: 'grid-loader' },
                         React.createElement('div', { className: 'grid-loader-spinner' }),
-                        'Loading full collection…'
+                        data.trackLiveSnapshotCount
+                            ? `Loading full collection… ${data.liveSnapshotRowCount.toLocaleString()} rows loaded`
+                            : 'Loading full collection…'
                     )
                     : null,
                 React.createElement(
