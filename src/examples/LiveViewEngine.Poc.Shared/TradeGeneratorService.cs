@@ -181,10 +181,93 @@ public class TradeGeneratorService(
             status.IsInUpdateMode = true;
         });
 
-        var nextTradeIndex = 0;
-        var rateWindowStart = Stopwatch.GetTimestamp();
-        var updatesSentTotal = 0;
-        var rateWindowStartCount = 0;
+        if (settings.SendAsFastAsPossible)
+        {
+            UpdateStatus(status =>
+            {
+                status.UpdatesSent = 0;
+                status.UpdatesPerSecond = 0;
+                status.StatusMessage = "Sending updates as fast as possible";
+                status.IsInUpdateMode = true;
+                status.LastUpdatedUtc = DateTimeOffset.UtcNow;
+            });
+
+            var nextTradeIndex = 0;
+            var rateWindowStart = Stopwatch.GetTimestamp();
+            var updatesSentTotal = 0;
+            var rateWindowStartCount = 0;
+
+            while (!ct.IsCancellationRequested)
+            {
+                if (trades.Count == 0)
+                {
+                    await Task.Delay(25, ct).ConfigureAwait(false);
+                    continue;
+                }
+
+                TradeEntity trade;
+                if (settings.OrderedUpdates)
+                {
+                    trade = trades[nextTradeIndex];
+                    nextTradeIndex = (nextTradeIndex + 1) % trades.Count;
+                }
+                else
+                {
+                    trade = trades[Random.Shared.Next(trades.Count)];
+                }
+
+                var changedFields = ApplyUpdates(trade, settings);
+                var success = await ingestionClient.IngestAsync(CollectionName, trade.Key, changedFields, ct);
+                if (!success)
+                {
+                    logger.LogWarning("Update ingestion failed for trade {TradeId}.", trade.Id);
+                }
+
+                updatesSentTotal++;
+
+                var elapsed = Stopwatch.GetElapsedTime(rateWindowStart);
+                if (elapsed.TotalSeconds >= 1.0)
+                {
+                    var rate = (updatesSentTotal - rateWindowStartCount) / elapsed.TotalSeconds;
+                    rateWindowStart = Stopwatch.GetTimestamp();
+                    rateWindowStartCount = updatesSentTotal;
+                    var snapshot = updatesSentTotal;
+
+                    UpdateStatus(status =>
+                    {
+                        status.UpdatesSent = snapshot;
+                        status.UpdatesPerSecond = rate;
+                        status.LastUpdatedUtc = DateTimeOffset.UtcNow;
+                    });
+                }
+            }
+
+            return;
+        }
+
+        if (settings.UpdateFrequencyHz <= 0)
+        {
+            UpdateStatus(status =>
+            {
+                status.UpdatesSent = 0;
+                status.UpdatesPerSecond = 0;
+                status.StatusMessage = "Update stream paused (frequency = 0)";
+                status.IsInUpdateMode = true;
+                status.LastUpdatedUtc = DateTimeOffset.UtcNow;
+            });
+
+            while (!ct.IsCancellationRequested)
+            {
+                await Task.Delay(250, ct).ConfigureAwait(false);
+            }
+
+            return;
+        }
+
+        var nextTradeIndexRegular = 0;
+        var rateWindowStartRegular = Stopwatch.GetTimestamp();
+        var updatesSentTotalRegular = 0;
+        var rateWindowStartCountRegular = 0;
         var limiter = new RateLimiter();
         limiter.Configure(settings.UpdateFrequencyHz);
         limiter.Start();
@@ -202,8 +285,8 @@ public class TradeGeneratorService(
             TradeEntity trade;
             if (settings.OrderedUpdates)
             {
-                trade = trades[nextTradeIndex];
-                nextTradeIndex = (nextTradeIndex + 1) % trades.Count;
+                trade = trades[nextTradeIndexRegular];
+                nextTradeIndexRegular = (nextTradeIndexRegular + 1) % trades.Count;
             }
             else
             {
@@ -217,15 +300,15 @@ public class TradeGeneratorService(
                 logger.LogWarning("Update ingestion failed for trade {TradeId}.", trade.Id);
             }
 
-            updatesSentTotal++;
+            updatesSentTotalRegular++;
 
-            var elapsed = Stopwatch.GetElapsedTime(rateWindowStart);
+            var elapsed = Stopwatch.GetElapsedTime(rateWindowStartRegular);
             if (elapsed.TotalSeconds >= 1.0)
             {
-                var rate = (updatesSentTotal - rateWindowStartCount) / elapsed.TotalSeconds;
-                rateWindowStart = Stopwatch.GetTimestamp();
-                rateWindowStartCount = updatesSentTotal;
-                var snapshot = updatesSentTotal;
+                var rate = (updatesSentTotalRegular - rateWindowStartCountRegular) / elapsed.TotalSeconds;
+                rateWindowStartRegular = Stopwatch.GetTimestamp();
+                rateWindowStartCountRegular = updatesSentTotalRegular;
+                var snapshot = updatesSentTotalRegular;
 
                 UpdateStatus(status =>
                 {

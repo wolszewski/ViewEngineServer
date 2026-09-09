@@ -8,7 +8,10 @@ ModuleRegistry.registerModules([AllCommunityModule]);
 declare const LightstreamerClient: any;
 declare const Subscription: any;
 
-const defaultLsUrl = window.location.origin;
+const normalizeLsUrl = (value: string): string => value.trim().replace(/\/+$/, '').replace(/\/lightstreamer\/?$/i, '');
+const defaultLsUrl = normalizeLsUrl(
+    window.location.port === '5112' ? 'http://127.0.0.1:8080' : window.location.origin
+);
 const commandListItem = 'TRADES_ALL';
 const subscribedFields = [
     'tradeId', 'createdDate', 'updatedDate', 'accountId', 'quantity',
@@ -34,6 +37,7 @@ function App(): React.ReactElement {
     const [snapshotStats, setSnapshotStats] = useState<{ rowCount: number; loadMs: number } | null>(null);
     const [latencySummary, setLatencySummary] = useState({ maxMs: 0, avgMs: 0, sampleCount: 0 });
     const latencyAccRef = useRef({ maxMs: 0, avgMs: 0, sampleCount: 0, recentLatencies: [] as number[], recentTotalMs: 0 });
+    const autoConnectHandleRef = useRef<number | null>(null);
     const [columnDefs] = useState<ColDef<RowData>[]>(() =>
         subscribedFields.map((field) => ({ field, headerName: field }))
     );
@@ -374,6 +378,30 @@ function App(): React.ReactElement {
     }, []);
 
     useEffect(() => {
+        if (autoConnectHandleRef.current !== null) {
+            clearTimeout(autoConnectHandleRef.current);
+            autoConnectHandleRef.current = null;
+        }
+
+        if (isConnected || clientRef.current) {
+            return undefined;
+        }
+
+        autoConnectHandleRef.current = window.setTimeout(() => {
+            if (!clientRef.current && !isConnected) {
+                connect();
+            }
+        }, 500);
+
+        return () => {
+            if (autoConnectHandleRef.current !== null) {
+                clearTimeout(autoConnectHandleRef.current);
+                autoConnectHandleRef.current = null;
+            }
+        };
+    }, [connect, isConnected]);
+
+    useEffect(() => {
         return () => {
             clientRef.current?.disconnect();
         };
@@ -478,7 +506,7 @@ function App(): React.ReactElement {
                 })
             ),
             !isConnected
-                ? React.createElement('button', { type: 'button', onClick: connect }, 'Connect')
+                ? React.createElement('button', { type: 'button', onClick: connect, disabled: isLoadingSnapshot }, 'Connect')
                 : React.createElement('button', { type: 'button', onClick: disconnect }, 'Disconnect'),
             React.createElement(
                 'label',

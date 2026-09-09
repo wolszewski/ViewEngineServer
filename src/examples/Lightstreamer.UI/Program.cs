@@ -29,6 +29,7 @@ builder.Services.AddReverseProxy().LoadFromMemory(
 var app = builder.Build();
 
 app.UseDefaultFiles();
+app.UseWebSockets();
 app.UseStaticFiles(new StaticFileOptions
 {
     OnPrepareResponse = static context =>
