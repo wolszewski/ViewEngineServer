@@ -399,7 +399,7 @@ function App(): React.ReactElement {
                 autoConnectHandleRef.current = null;
             }
         };
-    }, []);
+    }, [connect]);
 
     useEffect(() => {
         return () => {
