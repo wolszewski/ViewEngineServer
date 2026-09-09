@@ -140,7 +140,12 @@ public static class DeltaLatencyScenario
             return existing;
         }
 
-        var channel = Channel.CreateUnbounded<double>();
+        var channel = Channel.CreateBounded<double>(new BoundedChannelOptions(1)
+        {
+            SingleReader = true,
+            SingleWriter = true,
+            FullMode = BoundedChannelFullMode.DropOldest
+        });
         if (!subscribers.TryAdd(instanceId, channel))
         {
             return subscribers[instanceId];
