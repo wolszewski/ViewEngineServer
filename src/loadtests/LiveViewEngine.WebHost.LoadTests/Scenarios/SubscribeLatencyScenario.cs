@@ -29,9 +29,10 @@ public static class SubscribeLatencyScenario
                 return Response.Ok();
             });
 
+            Response result = connect;
             if (!connect.IsError)
             {
-                var subscribe = await Step.Run("subscribe_snapshot", context, async () =>
+                result = await Step.Run("subscribe_snapshot", context, async () =>
                 {
                     var rowCount = await protocol.SubscribeAndAwaitSnapshot(
                         new WsInboundMessage
@@ -49,7 +50,7 @@ public static class SubscribeLatencyScenario
             }
 
             await CloseQuietly(protocol, context.ScenarioCancellationToken);
-            return Response.Ok();
+            return result;
         })
         .WithLoadSimulations(
             Simulation.KeepConstant(
