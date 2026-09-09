@@ -328,10 +328,8 @@ export function parsePercentInteger(value: string | null, fallback: number): num
 }
 
 /**
- * Shared "grid" query-param convention (used by every example UI's "Show grid"
- * checkbox): absent or "1" means visible (the default); "0" means hidden. Keeping this
- * in one place keeps the convention identical across ClientSideGridView, ServerSideGridView
- * and the Lightstreamer example UI.
+ * "grid" query-param convention for example UIs: absent (or "1") means visible (default); "0" means hidden.
+ * Kept here so the LiveViewEngine.Poc.Ui pages share identical behavior; other example UIs may duplicate it.
  */
 export function getInitialGridVisible(): boolean {
     const params = new URLSearchParams(window.location.search);
