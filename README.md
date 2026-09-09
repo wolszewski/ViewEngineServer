@@ -140,6 +140,13 @@ Unsubscribe:
 
 ---
 
+## Load testing
+
+`src/loadtests/LiveViewEngine.WebHost.LoadTests` is an NBomber-based load test measuring
+subscribe and delta (ingest→WS) latency against `/ws`, with switchable HTTP/TCP ingestion and
+optional real-time reporting to a self-hosted NBomber Studio. See
+[docs/load-testing.md](docs/load-testing.md).
+
 ## TCP ingestion
 
 The server also exposes a persistent TCP ingestion endpoint on `127.0.0.1:6000`

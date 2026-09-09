@@ -42,6 +42,21 @@
         "UseWebHostInContainer": "true",
         "IncludeLightstreamer": "true"
       }
+    },
+    "loadtest-webhost": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": true,
+      "applicationUrl": "http://localhost:15027",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "DOTNET_ENVIRONMENT": "Development",
+        "ASPIRE_DASHBOARD_OTLP_ENDPOINT_URL": "http://localhost:19112",
+        "ASPIRE_RESOURCE_SERVICE_ENDPOINT_URL": "http://localhost:20160",
+        "UseWebHostInContainer": "true",
+        "IncludeLightstreamer": "false",
+        "IncludeLoadTestStudio": "true"
+      }
     }
   }
 }
