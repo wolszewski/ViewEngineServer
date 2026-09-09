@@ -2,10 +2,9 @@ import ts from 'https://esm.sh/typescript@5.6.3';
 
 async function loadTypeScriptModule(path, replacements = []) {
     const source = await fetch(path, { cache: 'no-store' }).then((response) => response.text());
-    const adjustedSource = replacements.reduce(
-        (text, [from, to]) => text.replaceAll(from, to),
-        source
-    );
+    const adjustedSource = [...replacements]
+        .sort((a, b) => b[0].length - a[0].length)
+        .reduce((text, [from, to]) => text.replaceAll(from, to), source);
     const transpiled = ts.transpileModule(adjustedSource, {
         compilerOptions: {
             target: ts.ScriptTarget.ES2022,
