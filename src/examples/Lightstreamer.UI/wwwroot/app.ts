@@ -271,7 +271,6 @@ function App(): React.ReactElement {
             firstUpdateTimeRef.current = performance.now();
         }
 
-        const isSnapshot = update.isSnapshot();
         const command = update.getValue('command');
         const rowKey: string | null = update.getValue('key');
         if (!rowKey) {
