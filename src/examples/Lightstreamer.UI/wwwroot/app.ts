@@ -302,13 +302,6 @@ function App(): React.ReactElement {
                 snapshotPendingKeysRef.current.add(rowKey);
             }
 
-            if (!gridVisibleRef.current) {
-                snapshotRowsReceivedRef.current.add(rowKey);
-                snapshotPendingKeysRef.current.delete(rowKey);
-                tryFinalizeSnapshot();
-                return;
-            }
-
             const row: RowData = { key: rowKey };
             for (const field of subscribedFields) {
                 row[field] = update.getValue(field);
@@ -468,20 +461,6 @@ function App(): React.ReactElement {
                 }
 
                 if (!snapshotCompleteRef.current) {
-                    if (!gridVisibleRef.current) {
-                        // Grid hidden: skip building/storing the row payload entirely - only the
-                        // key-tracking bookkeeping needed for tryFinalizeSnapshot's completion
-                        // detection is kept, so this mode measures raw snapshot load time with zero
-                        // per-row data transformation.
-                        if (isSnapshot) {
-                            snapshotRowsReceivedRef.current.add(rowKey);
-                            snapshotPendingKeysRef.current.delete(rowKey);
-                        }
-
-                        tryFinalizeSnapshot();
-                        return;
-                    }
-
                     if (isSnapshot) {
                         const row: RowData = { key: rowKey };
                         for (const field of subscribedFields) {

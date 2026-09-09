@@ -141,11 +141,9 @@ public sealed class TradeCommandProvider(ILogger<TradeCommandProvider> logger) :
         }
 
         List<string> keys;
-        bool isSubscribed;
         lock (_sync)
         {
-            isSubscribed = _listSubscribed;
-            if (!isSubscribed)
+            if (!_listSubscribed)
             {
                 logger.LogInformation("Command snapshot publish skipped: item {ItemName} not subscribed.", ListItemName);
                 _snapshotPending = false;
@@ -153,13 +151,20 @@ public sealed class TradeCommandProvider(ILogger<TradeCommandProvider> logger) :
             }
 
             keys = [.. _allKeys];
-            _snapshotPending = false;
+            // _snapshotPending stays true until every key below has been sent - NotifyKeyAdded/
+            // NotifyKeyRemoved gate on it, keeping a concurrently-running generator from
+            // interleaving an ADD/DELETE for a not-yet-announced key ahead of this snapshot burst.
         }
 
         logger.LogInformation("Sending command snapshot with {KeyCount} keys.", keys.Count);
         foreach (var key in keys)
         {
             Send(key, DataProviderConstants.ADD_COMMAND, isSnapshot: true);
+        }
+
+        lock (_sync)
+        {
+            _snapshotPending = false;
         }
 
         _listener.EndOfSnapshot(ListItemName);

@@ -13,7 +13,7 @@ public sealed class TradePureCommandDataProvider(ILogger<TradePureCommandDataPro
 {
     public const string ListItemName = "TRADES_ALL_PURE";
     private readonly Lock _sync = new();
-    private readonly Dictionary<string, Dictionary<string, string?>> _rows = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Dictionary<string, string?>> _rows = new(StringComparer.Ordinal);
     private IItemEventListener? _listener;
     private bool _listSubscribed;
     private bool _snapshotPending;
@@ -112,7 +112,7 @@ public sealed class TradePureCommandDataProvider(ILogger<TradePureCommandDataPro
             isNew = !_rows.TryGetValue(rowKey, out var existing);
             if (isNew)
             {
-                snapshot = new Dictionary<string, string?>(fieldValues, StringComparer.OrdinalIgnoreCase);
+                snapshot = new Dictionary<string, string?>(fieldValues);
                 _rows[rowKey] = snapshot;
             }
             else
@@ -139,7 +139,7 @@ public sealed class TradePureCommandDataProvider(ILogger<TradePureCommandDataPro
 
         if (shouldSend)
         {
-            var payload = new Dictionary<string, string?>(fieldValues, StringComparer.OrdinalIgnoreCase)
+            var payload = new Dictionary<string, string?>(fieldValues)
             {
                 [DataProviderConstants.KEY_FIELD] = rowKey,
                 [DataProviderConstants.COMMAND_FIELD] = isNew ? DataProviderConstants.ADD_COMMAND : DataProviderConstants.UPDATE_COMMAND
@@ -188,7 +188,7 @@ public sealed class TradePureCommandDataProvider(ILogger<TradePureCommandDataPro
             return;
         }
 
-        List<KeyValuePair<string, Dictionary<string, string?>>> rows;
+        List<string> keys;
         lock (_sync)
         {
             if (!_listSubscribed)
@@ -198,19 +198,44 @@ public sealed class TradePureCommandDataProvider(ILogger<TradePureCommandDataPro
                 return;
             }
 
-            rows = [.. _rows];
-            _snapshotPending = false;
+            keys = [.. _rows.Keys];
+            // _snapshotPending stays true until every row below has been sent - IngestAsync gates
+            // live sends on it, so this keeps concurrent generator updates (already in steady
+            // state on another thread) from interleaving a partial UPDATE for a key ahead of that
+            // key's own full ADD snapshot row.
         }
 
-        logger.LogInformation("Sending pure-command snapshot with {RowCount} rows.", rows.Count);
-        foreach (var (key, fields) in rows)
+        logger.LogInformation("Sending pure-command snapshot with {RowCount} rows.", keys.Count);
+
+        // Reused across rows and filled under a short-held lock (instead of allocating a fresh,
+        // case-insensitive dictionary copy per row) - at ~125 fields x 10k rows the per-row
+        // allocation/rehash cost was significant, and copying under the lock also avoids racing
+        // with concurrent field updates from IngestAsync against the same row dictionary.
+        var payload = new Dictionary<string, string?>();
+        foreach (var key in keys)
         {
-            var payload = new Dictionary<string, string?>(fields, StringComparer.OrdinalIgnoreCase)
+            payload.Clear();
+            lock (_sync)
             {
-                [DataProviderConstants.KEY_FIELD] = key,
-                [DataProviderConstants.COMMAND_FIELD] = DataProviderConstants.ADD_COMMAND
-            };
+                if (!_rows.TryGetValue(key, out var fields))
+                {
+                    continue;
+                }
+
+                foreach (var (field, value) in fields)
+                {
+                    payload[field] = value;
+                }
+            }
+
+            payload[DataProviderConstants.KEY_FIELD] = key;
+            payload[DataProviderConstants.COMMAND_FIELD] = DataProviderConstants.ADD_COMMAND;
             _listener.Update(ListItemName, payload, isSnapshot: true);
+        }
+
+        lock (_sync)
+        {
+            _snapshotPending = false;
         }
 
         _listener.EndOfSnapshot(ListItemName);
