@@ -11,6 +11,8 @@ public class TradeGeneratorService(
     private const string CollectionName = "trades";
     private const string CreatedDateFieldName = "createdDate";
     private const string UpdatedDateFieldName = "updatedDate";
+    private const int MinFastRetryDelayMs = 25;
+    private const int MaxFastRetryDelayMs = 500;
     private readonly List<TradeFieldDefinition> _fieldDefinitions = CreateFieldDefinitions();
     private readonly Lock _sync = new();
     private CancellationTokenSource? _activeRun;
@@ -196,12 +198,14 @@ public class TradeGeneratorService(
             var rateWindowStart = Stopwatch.GetTimestamp();
             var updatesSentTotal = 0;
             var rateWindowStartCount = 0;
+            var updatableFields = CreateUpdatableFields(settings);
+            var consecutiveIngestFailures = 0;
 
             while (!ct.IsCancellationRequested)
             {
                 if (trades.Count == 0)
                 {
-                    await Task.Delay(25, ct).ConfigureAwait(false);
+                    await Task.Delay(MinFastRetryDelayMs, ct).ConfigureAwait(false);
                     continue;
                 }
 
@@ -216,11 +220,20 @@ public class TradeGeneratorService(
                     trade = trades[Random.Shared.Next(trades.Count)];
                 }
 
-                var changedFields = ApplyUpdates(trade, settings);
+                var changedFields = ApplyUpdates(trade, settings, updatableFields);
                 var success = await ingestionClient.IngestAsync(CollectionName, trade.Key, changedFields, ct);
                 if (!success)
                 {
                     logger.LogWarning("Update ingestion failed for trade {TradeId}.", trade.Id);
+                    consecutiveIngestFailures++;
+                    var retryDelayMs = Math.Min(
+                        MaxFastRetryDelayMs,
+                        MinFastRetryDelayMs << Math.Min(consecutiveIngestFailures - 1, 4));
+                    await Task.Delay(retryDelayMs, ct).ConfigureAwait(false);
+                }
+                else
+                {
+                    consecutiveIngestFailures = 0;
                 }
 
                 updatesSentTotal++;
@@ -268,6 +281,7 @@ public class TradeGeneratorService(
         var rateWindowStartRegular = Stopwatch.GetTimestamp();
         var updatesSentTotalRegular = 0;
         var rateWindowStartCountRegular = 0;
+        var updatableFieldsRegular = CreateUpdatableFields(settings);
         var limiter = new RateLimiter();
         limiter.Configure(settings.UpdateFrequencyHz);
         limiter.Start();
@@ -293,7 +307,7 @@ public class TradeGeneratorService(
                 trade = trades[Random.Shared.Next(trades.Count)];
             }
 
-            var changedFields = ApplyUpdates(trade, settings);
+            var changedFields = ApplyUpdates(trade, settings, updatableFieldsRegular);
             var success = await ingestionClient.IngestAsync(CollectionName, trade.Key, changedFields, ct);
             if (!success)
             {
@@ -320,22 +334,32 @@ public class TradeGeneratorService(
         }
     }
 
-    private Dictionary<string, string?> ApplyUpdates(TradeEntity trade, TradeGenerationSettings settings)
+    private List<TradeFieldDefinition> CreateUpdatableFields(TradeGenerationSettings settings)
     {
         var updatableFields = _fieldDefinitions.Where(static field => field.IsUserUpdatable).ToList();
         if (settings.UpdatableFields is { Count: > 0 })
         {
             var allowedSet = new HashSet<string>(settings.UpdatableFields, StringComparer.OrdinalIgnoreCase);
-            updatableFields = updatableFields.Where(f => allowedSet.Contains(f.Name)).ToList();
+            updatableFields = updatableFields.Where(field => allowedSet.Contains(field.Name)).ToList();
         }
 
+        return updatableFields;
+    }
+
+    private Dictionary<string, string?> ApplyUpdates(
+        TradeEntity trade,
+        TradeGenerationSettings settings,
+        List<TradeFieldDefinition> updatableFields)
+    {
         var fieldsToUpdate = updatableFields.Count == 0
             ? 0
             : Random.Shared.Next(1, Math.Min(settings.UpdateFieldCount, updatableFields.Count) + 1);
-        var selected = updatableFields.OrderBy(_ => Random.Shared.Next()).Take(fieldsToUpdate).ToList();
-        var changedFields = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
-        foreach (var field in selected)
+        var changedFields = new Dictionary<string, string?>(fieldsToUpdate + 1, StringComparer.OrdinalIgnoreCase);
+        for (var index = 0; index < fieldsToUpdate; index++)
         {
+            var selectedIndex = Random.Shared.Next(index, updatableFields.Count);
+            (updatableFields[index], updatableFields[selectedIndex]) = (updatableFields[selectedIndex], updatableFields[index]);
+            var field = updatableFields[index];
             var value = field.UpdateValueFactory(trade);
             trade.Fields[field.Name] = value;
             changedFields[field.Name] = value;

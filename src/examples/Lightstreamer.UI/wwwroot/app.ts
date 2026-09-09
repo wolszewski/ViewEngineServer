@@ -497,7 +497,7 @@ function App(): React.ReactElement {
                     type: 'text',
                     value: lsUrl,
                     disabled: isConnected,
-                    onChange: (e: Event) => setLsUrl((e.target as HTMLInputElement).value)
+                    onChange: (e: Event) => setLsUrl(normalizeLsUrl((e.target as HTMLInputElement).value))
                 })
             ),
             !isConnected
