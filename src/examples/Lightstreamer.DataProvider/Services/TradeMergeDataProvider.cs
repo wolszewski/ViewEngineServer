@@ -121,12 +121,12 @@ public sealed class TradeMergeDataProvider(
         }
         else if (suppressedUpdateCount <= 5 || suppressedUpdateCount % 1_000 == 0)
         {
-            logger.LogInformation(
-                "Suppressed merge update {SuppressedUpdateCount} for {RowKey}: listenerAttached={ListenerAttached}, itemSubscribed={ItemSubscribed}.",
-                suppressedUpdateCount,
-                rowKey,
-                _listener is not null,
-                _subscribedItems.Contains(rowKey));
+        logger.LogInformation(
+            "Suppressed merge update {SuppressedUpdateCount} for {RowKey}: listenerAttached={ListenerAttached}, shouldForward={ShouldForward}.",
+            suppressedUpdateCount,
+            rowKey,
+            _listener is not null,
+            shouldForward);
         }
 
         return Task.FromResult(true);
