@@ -59,11 +59,17 @@ public static class DeltaLatencyScenario
         })
         .WithInit(async initContext =>
         {
-            await ingestClient.CreateCollectionAsync(
+            var created = await ingestClient.CreateCollectionAsync(
                 settings.DeltaCollectionName,
                 [settings.DeltaCreatedAtField, settings.DeltaUpdatedAtField],
                 ["string", "string"],
                 CancellationToken.None);
+            if (!created)
+            {
+                initContext.Logger.Warning(
+                    "delta_latency: could not create collection '{Collection}'. Continuing with the assumption it already exists.",
+                    settings.DeltaCollectionName);
+            }
 
             // Insert the single row before subscribers connect, so every observed message afterwards
             // is a rowUpdate (ChangedFields) rather than a rowInsert on first subscribe. Both fields
