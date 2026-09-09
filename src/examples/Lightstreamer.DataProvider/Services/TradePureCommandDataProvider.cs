@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Diagnostics;
 using Lightstreamer.Interfaces.Data;
 using LiveViewEngine.Poc.Shared;
 using Microsoft.Extensions.Logging;
@@ -207,6 +208,13 @@ public sealed class TradePureCommandDataProvider(ILogger<TradePureCommandDataPro
 
         logger.LogInformation("Sending pure-command snapshot with {RowCount} rows.", keys.Count);
 
+        // Wall-clock time for this loop isolates how long our own adapter process takes to hand
+        // every row to the Lightstreamer proxy vs. how long the client waits for the full
+        // snapshot to arrive - a big gap between the two points at Lightstreamer server-side
+        // (proxy adapter + kernel dispatch/WebSocket delivery) rather than this adapter as the
+        // bottleneck.
+        var stopwatch = Stopwatch.StartNew();
+
         // Reused across rows and filled under a short-held lock (instead of allocating a fresh,
         // case-insensitive dictionary copy per row) - at ~125 fields x 10k rows the per-row
         // allocation/rehash cost was significant, and copying under the lock also avoids racing
@@ -239,5 +247,10 @@ public sealed class TradePureCommandDataProvider(ILogger<TradePureCommandDataPro
         }
 
         _listener.EndOfSnapshot(ListItemName);
+        stopwatch.Stop();
+        logger.LogInformation(
+            "Pure-command snapshot of {RowCount} rows handed to the Lightstreamer proxy adapter in {ElapsedMs}ms.",
+            keys.Count,
+            stopwatch.ElapsedMilliseconds);
     }
 }
