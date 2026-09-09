@@ -43,7 +43,12 @@ if (settings.Scenario is LoadTestScenario.All or LoadTestScenario.Subscribe)
 {
     // subscribe_latency measures loading a snapshot, so the collection must be pre-seeded with
     // rows up-front (before the scenario runs) rather than left empty.
-    await ingestClient.CreateCollectionAsync(settings.CollectionName, ["symbol", "updatedAt"], ["string", "string"]);
+    var created = await ingestClient.CreateCollectionAsync(settings.CollectionName, ["symbol", "updatedAt"], ["string", "string"]);
+    if (!created)
+    {
+        throw new InvalidOperationException($"subscribe_latency: could not create collection '{settings.CollectionName}'.");
+    }
+
     await SnapshotSeeder.SeedAsync(settings, ingestClient, loggerFactory.CreateLogger("SnapshotSeeder"));
     scenarios.Add(SubscribeLatencyScenario.Create(settings));
 }
