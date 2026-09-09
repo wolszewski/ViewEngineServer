@@ -3,6 +3,7 @@
     <Project Path="src/LiveViewEngine.Core.Benchmarks/LiveViewEngine.Core.Benchmarks.csproj" />
   </Folder>
   <Folder Name="/docs/">
+    <File Path="docs\load-testing.md" />
     <File Path="docs\subscription-design.md" />
     <File Path="docs\system-design.md" />
     <File Path="README.md" />
@@ -14,6 +15,9 @@
     <Project Path="src/examples/LiveViewEngine.Poc.DataProvider/LiveViewEngine.Poc.DataProvider.csproj" />
     <Project Path="src/examples/LiveViewEngine.Poc.Shared/LiveViewEngine.Poc.Shared.csproj" />
     <Project Path="src/examples/LiveViewEngine.Poc.Ui/LiveViewEngine.Poc.Ui.csproj" />
+  </Folder>
+  <Folder Name="/loadtests/">
+    <Project Path="src/loadtests/LiveViewEngine.WebHost.LoadTests/LiveViewEngine.WebHost.LoadTests.csproj" />
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/LiveViewEngine.Collections/LiveViewEngine.Collections.csproj" />

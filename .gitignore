@@ -429,3 +429,6 @@ FodyWeavers.xsd
 *.msp
 
 .idea/.idea.LiveViewEngine/.idea/
+
+# NBomber load test reports
+src/loadtests/**/reports/

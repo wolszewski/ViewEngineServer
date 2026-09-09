@@ -14,6 +14,8 @@ var tcpIngestPort =
         : 6000;
 var includeLightstreamer = bool.TryParse(builder.Configuration["IncludeLightstreamer"], out var configuredIncludeLightstreamer)
     && configuredIncludeLightstreamer;
+var includeLoadTestStudio = bool.TryParse(builder.Configuration["IncludeLoadTestStudio"], out var configuredIncludeLoadTestStudio)
+    && configuredIncludeLoadTestStudio;
 
 if (useWebHostContainer)
 {
@@ -68,6 +70,29 @@ if (includeLightstreamer)
         .WithExternalHttpEndpoints()
         .WaitFor(lightstreamer)
         .WaitFor(lightstreamerDataProvider);
+}
+
+if (includeLoadTestStudio)
+{
+    // Mirrors nbomber/docker-compose.yaml (TimescaleDB + NBomber Studio) so `--use-webhost-container`
+    // load tests can be run entirely from the AppHost, without a separate `docker compose up`.
+    var timescaledb = builder.AddContainer("timescaledb", "timescale/timescaledb", "2.25.0-pg18-oss")
+        .WithArgs("postgres", "-c", "max_connections=500")
+        .WithEndpoint(port: 5432, targetPort: 5432, name: "postgres", isProxied: false)
+        .WithEnvironment("POSTGRES_DB", "nb_studio_db")
+        .WithEnvironment("POSTGRES_USER", "nb_studio_db")
+        .WithEnvironment("POSTGRES_PASSWORD", "nb_studio_db")
+        .WithLifetime(ContainerLifetime.Session);
+
+    builder.AddContainer("nbomber-studio", "nbomberdocker/nbomber-studio", "latest")
+        .WithHttpEndpoint(port: 5333, targetPort: 8080, name: "http", isProxied: false)
+        .WithEnvironment(
+            "POSTGRESQL__CONNECTIONSTRING",
+            "Host=timescaledb;Port=5432;Username=nb_studio_db;Password=nb_studio_db;Database=nb_studio_db;Pooling=true;")
+        .WithEnvironment("AUTH__ENABLED", "false")
+        .WithExternalHttpEndpoints()
+        .WithLifetime(ContainerLifetime.Session)
+        .WaitFor(timescaledb);
 }
 
 builder.Build().Run();
