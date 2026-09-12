@@ -2,6 +2,9 @@
 
 `subscriptionId` is a stable identity scoped to one WebSocket connection and one collection.
 
+This document defines lifecycle and semantics. For message shapes in both wire formats, see
+[websocket-protocol.md](websocket-protocol.md).
+
 ## Rules
 
 1. `subscribe` creates a new subscription id on the server for that connection.
@@ -21,26 +24,33 @@
     - omitted (`null`) => all fields
     - empty array (`[]`) => primary-key-only projection
     - non-empty array => projection to listed fields; primary key is always included in snapshots
-  - `sortColumn`, `sortAscending`, `filters`, `fieldPresetId`, `startIndex`, `pageSize`, `sendSnapshot`, and `messageFormat` are optional.
+  - `sortColumn`, `sortAscending`, `filters`, `fieldPresetId`, `startIndex`, `pageSize`, `sendSnapshot`, and
+    `messageFormat` are optional.
+  - omitting `pageSize` subscribes to the rest of the view from `startIndex` (unbounded viewport).
 
 - `updateview`
   - requires an existing `subscriptionId`.
   - may update `startIndex`, `pageSize`, `sortColumn`, `sortAscending`, `filters`, and `fields`.
   - `fields: []` clears projection back to all fields.
-- `snapshotMode` is supported with values:
-  - `no`: do not force a snapshot
-  - `delta`: send only the minimal snapshot rows needed to reconcile the requested viewport
-  - `full`: send a full snapshot for the requested view
-- `snapshotMode` defaults to `delta`.
-- legacy `sendSnapshot: true|false` still maps to `full|no`.
-- if `snapshotMode` is `delta` and the effective view definition is unchanged, viewport expansion sends only the uncovered range.
-  - example: existing `0-200` updated to `0-400` sends rows `200-399` only.
-- if `snapshotMode` is `full`, the server sends a fresh snapshot for the requested view.
+  - `snapshotMode` is supported with values:
+    - `no`: do not force a snapshot
+    - `delta`: send only the minimal snapshot rows needed to reconcile the requested viewport
+    - `full`: send a full snapshot for the requested view
+  - `snapshotMode` defaults to `delta`.
+  - legacy `sendSnapshot: true|false` still maps to `full|no`.
+  - if `snapshotMode` is `delta` and the effective view definition is unchanged, viewport expansion sends only
+    the uncovered range.
+    - example: existing `0-200` updated to `0-400` sends rows `200-399` only.
+    - if the new window doesn't overlap the old one, a full snapshot of the new window is sent.
+  - if sort, filters or projection change, the subscription moves to the new view and receives a full
+    snapshot (unless `snapshotMode` is `no`).
+  - if `snapshotMode` is `full`, the server sends a fresh snapshot for the requested view.
 
 - `setviewport`
-- requires an existing `subscriptionId`.
-- updates `startIndex`/`pageSize` only.
-- `snapshotMode` defaults to `delta`.
+  - requires an existing `subscriptionId`.
+  - updates `startIndex`/`pageSize` only.
+  - `snapshotMode` defaults to `delta`.
+
 - `unsubscribe`
   - requires an existing `subscriptionId`.
   - removes route/viewport state for that subscription.
@@ -55,7 +65,12 @@ On reconnect, clients subscribe again and receive a new server-assigned `subscri
   1. `snapshotStart`
   2. zero or more `snapshotRow` events
   3. `eos`
-- both full and partial snapshots use the same shape.
+- for the initial snapshot of a `subscribe`, `subscriptionAccepted` takes the place of `snapshotStart`: it
+  carries `startIndex`, `totalCount` and the field list, and `snapshotFollows: true` announces the rows.
+- both full and partial snapshots use the same shape. A two-sided viewport expansion produces two partial
+  `snapshotStart … eos` sequences.
+- live deltas produced while a snapshot is being delivered are held back and sent after its `eos`, so they
+  always apply on top of the snapshot.
 - every `snapshotRow` includes an explicit row number so clients can place rows correctly during partial viewport expansion.
 - compact snapshot rows are `S|subscriptionId|rowNumber|key|...`
 - JSON snapshot rows include `rowNumber` next to `row`

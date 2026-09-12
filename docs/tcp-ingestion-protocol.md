@@ -14,9 +14,15 @@ The current design is intentionally small:
 - asynchronous `ACK` / `ERR` support for `UPSERT`/`DELETE` (client does not block on replies)
 - `SCHEMA` responses for bootstrap and cache refresh
 
-By default the server listens on TCP port `6000`. In Aspire, the app host should
-be treated as the source of truth for the TCP port and should pass that value to
+By default the server listens on `127.0.0.1:6000` (`TcpIngest:ListenAddress`,
+`TcpIngest:Port`). The endpoint has no authentication, so only bind it to a
+non-loopback address on a trusted network. In Aspire, the app host should be
+treated as the source of truth for the TCP port and should pass that value to
 both the web host and the data provider via configuration.
+
+.NET producers can use `LiveViewEngine.TcpClient`
+(`services.AddLiveViewEngineTcpIngestionClient(...)`), which implements this
+protocol with reconnect, schema caching and a bounded send queue.
 
 ## Transport
 
@@ -60,6 +66,14 @@ background send/receive loops. Reconnect is client-driven.
   - `PONG|requestId` for ping
 - `EnableAsyncAcks` controls whether the server emits async `ACK`/`ERR` for
   `UPSERT`/`DELETE`. It is enabled by default.
+- `ACK` means the command passed validation (the collection exists, the field indexes are valid) and was
+  **queued**. It does not mean the row has been applied. Failures that happen later, while the engine applies
+  the queued command, are logged on the server and are not reported back on the connection.
+- When a collection's queue is full, the server stops reading from that connection until space frees up.
+  This is ordinary TCP backpressure on the producer.
+- A frame longer than `MaxFrameLengthBytes` (default 1 MiB) is answered with `ERR|0|...` and the connection
+  is closed.
+- Commands that can't be parsed are answered with `ERR|0|message`, because no request id could be read.
 
 ## Commands
 
