@@ -14,9 +14,11 @@
 
 ## Current application in this repository
 
-- `IViewEngine` and `ViewEngine` are colocated in `Core/ViewEngine.cs`.
-- `ICollectionStore` and `CollectionStore` are colocated in `Core/CollectionStore.cs`.
-- `IOutboundPublisher` stays in `Core/IOutboundPublisher.cs` because it has multiple implementations (`WebSocketOutboundPublisher`, `CapturingPublisher`).
+- `IViewEngine` and `ViewEngine` are colocated in `src/LiveViewEngine.Core/ViewEngine.cs`.
+- `ICollectionStore` and `CollectionStore` are colocated in `src/LiveViewEngine.Core/Data/CollectionStore.cs`.
+- `IOutboundPublisher` stays in `src/LiveViewEngine.Core/IOutboundPublisher.cs` because it has multiple implementations (`WebSocketOutboundPublisher`, `CapturingPublisher`).
+- Architecture and protocol docs live in `docs/` (start with `docs/system-design.md`); keep them in sync with behavior changes.
+- Review findings live in `docs/reviews/` (dated, immutable except the status column). Non-trivial work starts with an `intent.md` under `docs/changes/` (see `docs/changes/README.md`); reference finding IDs such as `2026-09-12 AR-05` in commits and PRs.
 
 ## Pull request review guidance
 
