@@ -1,346 +1,321 @@
-# ViewEngineServer – System Design
+# System design
 
-## Overview
+This document describes how ViewEngineServer is built today: the engine's data structures, its threading
+model, how mutations become per-subscriber deltas, and how snapshots and slow clients are handled on the way
+out. Wire formats are in [websocket-protocol.md](websocket-protocol.md) and
+[tcp-ingestion-protocol.md](tcp-ingestion-protocol.md). Subscription lifecycle rules are in
+[subscription-design.md](subscription-design.md).
 
-ViewEngineServer is an in-memory ASP.NET Core service that keeps named collections of rows and exposes HTTP ingest, TCP ingest, and WebSocket subscription flows. In the current implementation, `IViewEngine` owns the ingest pipeline and the per-view subscription state. `ICollectionStore` keeps each collection alive in memory, and `IOutboundPublisher` pushes JSON/compact delta events to client connections.
+## Contents
 
-This is a deliberately small, server-side data engine: create schemas, ingest row updates, maintain sorted and filtered indexes, and push only the rows currently in a subscriber's viewport.
+- [Goals](#goals)
+- [Project structure](#project-structure)
+- [Core engine](#core-engine)
+- [Threading model](#threading-model)
+- [Data flow](#data-flow)
+- [Snapshots and slow clients](#snapshots-and-slow-clients)
+- [Observability](#observability)
+- [Known issues](#known-issues)
 
----
+## Goals
 
-## Current runtime shape
+- Clients render large, fast-changing, sorted and filtered datasets while holding only their viewport.
+- One mutation costs roughly `O(log n)` per distinct active ordering, plus `O(1)` per distinct viewport.
+  The cost doesn't grow with the number of subscribers sharing a view.
+- A slow or dead client never delays ingest or other clients.
+- The engine is transport-agnostic. It can be hosted and tested without HTTP, WebSocket or sockets.
 
-The repo currently implements the following runtime flow:
+## Project structure
 
-- `POST /collections` creates a `CollectionSchema`.
-- `POST /collections/{collectionName}/ingest` upserts or deletes a row.
-- TCP ingest (`127.0.0.1:6000` by default) accepts newline-framed commands (`CREATE`, `GET_SCHEMA`, `UPSERT`, `DELETE`, `PING`).
-- `GET /ws` opens a WebSocket session.
-- The client sends JSON messages with a `type` of `subscribe`, `updateview`, `setviewport`, or `unsubscribe`.
-- `WebSocketSessionManager` maps inbound JSON into `SubscriptionCommand` objects.
-- `ViewEngine.SubscribeAsync` returns `ViewDelta` instances for the requesting connection.
-- `WebSocketOutboundPublisher` serializes them to JSON and sends them on the socket.
-- Subscription lifecycle rules are defined in [subscription-design.md](./subscription-design.md).
-
-For TCP ingest, `UPSERT`/`DELETE` are enqueued into bounded per-collection channels and processed by single consumers to preserve per-collection ordering. Async `ACK`/`ERR` replies for these operations are configurable (`TcpIngest:EnableAsyncAcks`, default `true`).
-
----
-
-## Components
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│                     ViewEngineServer                         │
-│                                                            │
-│  HTTP /collections         HTTP /collections/{name}/ingest │
-│  WebSocket /ws                                             │
-│         │                              │                   │
-│         ▼                              ▼                   │
-│  WebSocketSessionManager ──► IViewEngine ──► ICollectionStore │
-│         │                                          │            │
-│         │                                          ▼            │
-│         │                                CollectionStore      │
-│         │                                          │            │
-│         └──────────────────────────────────────┼────────────┘
-│                                                │
-│                                                ▼
-│                                      RowCollection
-│                                        (Dictionary<string,int>
-│                                        + SlotList<string?[]>)
-│                                                │
-│                                                ▼
-│                                         SortIndexRegistry
-│                                                │
-│                                                ▼
-│                                          SortIndex
-│                                                │
-│                                                ▼
-│                                         SharedView
-│                                             + ViewKey
-│                                             + FilterSet
-│                                             + ViewportState
-│                                                │
-│                                                ▼
-│                                  MutationPropagator ──► IOutboundPublisher
-│                                              │
-│                                              ▼
-│                               WebSocketOutboundPublisher / Compact+Json encoders
-└──────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    WebHost[LiveViewEngine.WebHost<br/>HTTP · TCP · WebSocket] --> Core
+    WebHost --> TcpProtocol[LiveViewEngine.TcpProtocol]
+    TcpClient[LiveViewEngine.TcpClient] --> TcpProtocol
+    HttpClient[LiveViewEngine.HttpClient]
+    Core[LiveViewEngine.Core] --> Collections[LiveViewEngine.Collections<br/>order-statistics trees]
 ```
 
-### `CollectionStore`
+- **`LiveViewEngine.Core`** holds all state and logic. Its public surface is `IViewEngine` (commands in,
+  deltas out) plus `IOutboundPublisher` (the host-provided sink for live deltas). It references only
+  `Microsoft.Extensions.*` abstractions.
+- **`LiveViewEngine.WebHost`** is the reference host. `Http/` maps REST ingest onto `IngestCommand`s. `Tcp/`
+  runs the line-protocol listener and per-collection ingest queues. `WebSocket/` runs the session loop, the
+  outbound publisher and the compact/JSON encoders.
+- **`LiveViewEngine.Collections`** provides `NodeArrayTree`, a cache-friendly B-tree-like order-statistics
+  tree (rank ↔ element in `O(log n)`) behind every sort and filtered index.
 
-`CollectionStore` holds one `RowCollection` per collection name.
+## Core engine
 
-- `TryCreate(CollectionSchema schema)` adds a new schema and row store.
-- `TryGet(string collectionId, out RowCollection? collection)` returns the live collection.
-- `CollectionIds` exposes the current collection names.
+```text
+ViewEngine
+ └─ CollectionRuntime (one per collection)
+     ├─ CollectionWorker        single consumer that executes every command for the collection
+     ├─ RowCollection           key → slot dictionary, SlotList<string?[]> rows, arrival sequence
+     │   └─ TypedColumnsCollection   lazily materialized typed copies of columns
+     ├─ SortIndexRegistry       NaturalOrderIndex + one SortIndex per sorted field (shared by asc/desc)
+     ├─ SharedView (per ViewKey = collection + sort + direction + filters + preset)
+     │   └─ FilteredDataIndex   only when the view has filters
+     ├─ ViewportState (per subscription): startIndex, pageSize, projection
+     └─ MutationPropagator      turns a mutation into delta groups
+```
 
-### `CollectionSchema`
+### Storage
 
-`CollectionSchema` owns the field layout for a collection.
+`RowCollection` stores each row as a `string?[]` indexed by field position (field `0` is always the primary
+key `key`), in a `SlotList` that reuses freed slots. A `Dictionary<string, int>` maps keys to slots. A
+per-slot arrival sequence records true insertion order, which the natural-order index uses.
 
-- The first field is always the primary key (`key` at index 0).
-- Additional field names are appended in order from the create-collection request.
-- `MapToColumnChanges(...)` converts JSON field dictionaries into `(fieldIndex, value)` pairs used by `RowCollection`.
+Values are stored as strings. When a sort index or filter needs a typed field (`int`, `decimal`,
+`datetimeoffset`, …), `TypedColumnsCollection` materializes a parsed column for it and keeps it updated on
+every write. Unparseable values become `null`. Typed columns are reference-counted by the indexes and
+filters that use them. When the last reference goes away they are flagged, then removed after
+`StaleIndexGracePeriod` (see `TypedColumnKeepAlive`).
 
-### `RowCollection`
+### Indexes
 
-`RowCollection` is the actual storage backend for one collection.
+| Index | Used for | Update cost |
+|---|---|---|
+| `NaturalOrderIndex` | Views without `sortColumn` (arrival order). Always present and never reaped. | `O(log n)` on insert/delete. Untouched by updates. |
+| `SortIndex` | Views sorted by a field. One per field serves both directions, because descending views read the tree in reverse. | `O(log n)` when the sort field changes. Untouched otherwise. |
+| `FilteredDataIndex` | Views with filters. Holds only matching rows, in the parent index's order. | `O(log n)` when membership or order changes. |
 
-- It keeps `_rowKeyToIndex: Dictionary<string, int>` for lookup by row key.
-- It keeps `_rows: SlotList<string?[]>` as the underlying row storage.
-- Each row is an array of `string?`, indexed by the schema field index.
-- `AddOrUpdate` writes field values back into the existing row; `Delete` removes a row and returns a `MutationInfo`.
+All three are `NodeArrayTree`s, so "row at position p" and "position of row r" are both `O(log n)`. On
+update, the old sort value is captured before the write (`CaptureOldValue`), so the row can be located at
+its old position after its field has changed.
 
-This is more compact than the historical typed-per-column design; the current implementation stores rows as string arrays and reuses a schema for field positions.
+`SortIndexRegistry` reference-counts sort indexes by subscriber. An index with no subscribers is flagged,
+and `StaleIndexReaperService` (every 5 s) removes it through the collection worker once the grace period
+has passed. `EagerIndexing` builds every index up front and disables reaping.
 
-### `SortIndex`
+### Views and viewports
 
-`SortIndex` is a per-collection, per-sort-field index built atop `NodeArrayTree<RowComparer>`.
+- A **`SharedView`** is one (sort, direction, filters) combination. Every subscription with the same
+  `ViewKey` shares it, so ordering and filtering work is done once per view, not once per subscriber.
+- A **`ViewportState`** is one subscription's window (`startIndex`, `pageSize`) and projection
+  (`SelectedFieldIndexes`, `VisibleColumns` bitmask).
 
-- It tracks the sorted order of row indices by a given field.
-- It supports `Take(startIndex, destination)` for page reads.
-- `CaptureOldValue` / `OnUpsert` / `OnDelete` coordinate updates during mutation propagation.
-- `FilteredDataIndex` and `FilterSet` are layered on top when a view has filters.
+### Mutation propagation
 
-### `SharedView`
+For each upsert or delete, `MutationPropagator`:
 
-`SharedView` groups the collection-level sort data with a set of subscriber connection IDs for a specific view definition.
+1. Groups active views by the position index they sit on.
+2. Classifies the mutation per view. On the **fast path**, no sort or filter field changed, so the row's
+   position is stable. Otherwise it is a **full recompute**: insert, delete, sort-field change or
+   filter-field change.
+3. Captures each view's old position, applies the mutation to the position index once, and reads the new
+   position.
+4. Groups the view's subscribers by identical (viewport, projection), and computes the delta list once per
+   group: `RowUpdate`, `RowInsert`, `RowRemove`, or `RowReplace` when one row leaves while another enters
+   a full viewport.
+5. Updates position indexes that no view is currently using (so they stay correct for future subscribers).
 
-- `ViewKey` encodes `collectionId + sortColumn + sortAscending + filters`.
-- `SharedView` reuses a single `SortIndex` for identical view keys.
-- `GetPageIndexes` returns the visible indexes for a requested start position and page size.
-- `GetTotalCount` returns the filtered count for the current view.
+The result is a list of `(deltas, targets)` groups handed to `IOutboundPublisher.PublishAsync`.
 
-### `ViewportState`
+### Capabilities
 
-`ViewportState` tracks the currently requested page for a single WebSocket connection.
+`LiveViewEngineOptions.RequireExplicitCapabilities` makes sorting and filtering opt-in, through
+`AddSorting()` / `AddFiltering()`. A disabled capability yields a `subscriptionRejected` (on subscribe) or an
+`updateRejected` (on view update), never an exception.
 
-- `ConnectionId`
-- `ViewKey`
-- `StartIndex`
-- `PageSize`
+## Threading model
 
-The viewport is not persisted across reconnects; it is rebuilt on the next subscribe or setviewport message.
+```mermaid
+sequenceDiagram
+    participant P as Producer (HTTP / TCP queue)
+    participant E as ViewEngine
+    participant W as CollectionWorker (per collection)
+    participant O as WebSocketOutboundPublisher
+    participant D as Drain loop (per connection)
+    P->>E: IngestAsync(upsert)
+    E->>W: enqueue work item
+    W->>W: mutate storage, indexes, views, compute delta groups
+    W->>O: PublishAsync + FlushAsync (non-blocking TryWrite per frame)
+    W-->>E: complete TaskCompletionSource
+    E-->>P: IngestResult
+    D->>D: await channel → SendAsync (per-send stall timeout)
+```
 
-### `ViewEngine`
+- **One worker per collection.** `CollectionWorker` is an unbounded channel with a single reader. Every
+  command that touches a collection's state (upsert, delete, subscribe, view update, unsubscribe, preset
+  registration, index reaping) runs on it. Engine data structures are therefore single-threaded and
+  lock-free, ordering within a collection is total, and a snapshot is always consistent with the delta
+  stream that follows it. Different collections run in parallel.
+- **Publishing happens on the worker, before the ingest call completes.** Delta groups are published and
+  flushed from the worker, so outbound frames are enqueued in mutation order. `WebSocketOutboundPublisher`
+  never awaits the network. It only encodes frames and calls `TryWrite` on bounded channels, so a slow
+  client can't stall a worker.
+- **Per-subscription command serialization.** `ViewEngine` holds a `SemaphoreSlim` per `(connection,
+  subscription)` so two commands for the same subscription can't interleave. Commands from one WebSocket
+  are also processed sequentially by its receive loop.
+- **Host threads.** Each WebSocket has a receive loop (commands) and a drain loop (sends). Each TCP ingest
+  connection has a read loop. Each collection has one TCP ingest consumer (see below).
 
-`ViewEngine` orchestrates the ingest pipeline and subscription lifecycle.
+### Ingest paths
 
-- `IngestAsync` handles `CreateCollectionCommand`, `UpsertRowCommand`, and `DeleteRowCommand`.
-- `SubscribeAsync` handles `SubscribeCommand`, `UpdateViewCommand`, and `UnsubscribeCommand`.
-- `SubscribeCommand` creates or reuses a `SharedView`, creates a `ViewportState`, and sends snapshot deltas.
-- `UpdateViewCommand` updates viewport/view settings for an existing subscription and keeps collection binding stable.
-- `UnsubscribeCommand` removes viewport state and clears route mapping.
+| Path | Queueing | Backpressure | Reply means |
+|---|---|---|---|
+| HTTP `POST /collections/{name}/ingest` | Request awaits the collection worker directly | None beyond request concurrency (the worker queue is unbounded) | `202`: applied |
+| TCP `UPSERT` / `DELETE` | Bounded per-collection channel (`CollectionQueueCapacity`) → single consumer → collection worker | A full channel stops the connection's read loop, which pushes back on the producer's socket | `ACK`: validated and queued, not yet applied |
 
-### TCP ingest components
-
-- `TcpIngestListenerService` hosts the TCP socket accept loop.
-- `TcpIngestConnectionHandler` reads newline-framed messages, parses protocol requests, and writes response frames.
-- `TcpIngestRequestDispatcher` validates requests, handles `CREATE`/`GET_SCHEMA` synchronously, and enqueues `UPSERT`/`DELETE` into per-collection bounded channels.
-- Each collection queue has a single reader, so updates for that collection are processed in-order.
-
-### `MutationPropagator`
-
-`MutationPropagator` is the code path that applies row mutations to each active view and emits `ViewDelta` objects.
-
-- It compares the row's prior and new position in each active view.
-- It can emit row insert, row remove, row update, or snapshot events.
-- It finalizes the outgoing list and hands off to the outbound publisher.
-
----
+TCP ordering is preserved per collection because each collection has a single consumer, and that consumer
+awaits every `IngestAsync`. Errors raised after queuing (for example on the worker) are logged but not sent
+back to the producer.
 
 ## Data flow
 
 ### Collection creation
 
-```
-POST /collections
- → HttpEndpoints.MapPost("/collections")
- → HttpIngestAdapter.HandleCreateCollectionAsync
+```text
+POST /collections  |  TCP CREATE
  → IViewEngine.IngestAsync(CreateCollectionCommand)
- → ICollectionStore.TryCreate
+ → ICollectionStore.TryCreateCollection     creates RowCollection + CollectionRuntime (starts its worker)
+ → ViewEngine registers the runtime for routing
 ```
 
-The request body is a JSON object such as:
-
-```json
-{
- "collectionName": "orders",
- "fields": ["customer", "amount", "status"]
-}
-```
-
-### Ingest (upsert / delete)
-
-```
-POST /collections/{collectionName}/ingest
- → HttpEndpoints.MapPost("/collections/{collectionName}/ingest")
- → HttpIngestAdapter.HandleIngestAsync
- → IViewEngine.IngestAsync
-     → RowCollection.AddOrUpdate / Delete
-     → MutationPropagator.PropagateAsync
-         for each SharedView in the collection:
-             → SortIndex captures old value / updates ordering
-             → ViewDelta objects are generated for affected subscribers
-             → IOutboundPublisher.PublishAsync
-```
-
-The current request body is:
-
-```json
-{
- "operation": "upsert",
- "primaryKeyValue": "o42",
- "fields": {
-   "customer": "Alice",
-   "amount": "99.5",
-   "status": "open"
- }
-}
-```
-
-For delete requests, the server expects:
-
-```json
-{
- "operation": "delete",
- "primaryKeyValue": "o42"
-}
-```
-
-### WebSocket subscribe lifecycle
-
-```
-GET /ws
- → WebSocketEndpoints.MapWebSocketEndpoints
- → WebSocketSessionManager.HandleConnectionAsync
- → JSON message decoded to SubscribeCommand / UpdateViewCommand / UnsubscribeCommand
- → IViewEngine.SubscribeAsync
- → SnapshotDelta or viewport delta sent back over the socket
-```
-
-The current inbound message types are:
-
-```json
-{ "type": "subscribe", "collectionId": "orders", "sortColumn": "amount", "sortAscending": true, "startIndex": 0, "pageSize": 25 }
-{ "type": "updateview", "subscriptionId": 1, "startIndex": 50, "pageSize": 25, "sortAscending": false }
-{ "type": "setviewport", "subscriptionId": 1, "startIndex": 100, "pageSize": 25 }
-{ "type": "unsubscribe", "subscriptionId": 1 }
-```
-
-For existing subscriptions, `updateview` and `setviewport` support `snapshotMode: "no" | "delta" | "full"` and default to `"delta"`.
-Legacy `sendSnapshot` is still accepted and maps to `"full"` or `"no"`.
-When the effective view stays the same and only the viewport grows, `"delta"` emits only the uncovered rows as a partial snapshot.
-
-### TCP ingest lifecycle
-
-```
-TCP connect
- → CONNECTED|1
- → request line parsed (CREATE / GET_SCHEMA / UPSERT / DELETE / PING)
- → TcpIngestRequestDispatcher
-   - CREATE / GET_SCHEMA / PING: immediate response (`SCHEMA` / `ERR` / `PONG`)
-   - UPSERT / DELETE: enqueue to per-collection bounded queue
-       → queue worker calls IViewEngine.IngestAsync
-       → optional async `ACK`/`ERR` frame emitted later on the same connection
-```
-
----
-
-## Current wire format
-
-WebSocket output supports both compact and JSON encodings. Compact is the default; clients can request JSON with `messageFormat: "json"` in the subscribe message. Snapshot delivery is streamed as `snapshotStart`, `snapshotRow...`, `eos` rather than a single aggregate snapshot payload.
-
-### JSON snapshot stream
-
-```json
-{
- "type": "snapshotStart",
- "subscriptionId": 1,
- "startIndex": 200,
- "totalCount": 1000,
- "isPartial": true,
- "fields": ["customer", "amount", "status"]
-}
-{
- "type": "snapshotRow",
- "subscriptionId": 1,
- "rowNumber": 200,
- "row": { "key": "o201", "customer": "Alice", "amount": "99.5", "status": "open" }
-}
-{
- "type": "eos",
- "subscriptionId": 1
-}
-```
-
-### Compact snapshot stream
+### Upsert / delete
 
 ```text
-P|1|200|1000|1|customer|amount|status
-S|1|200|o201|Alice|99.5|open
-EOS|1
+IngestAsync(Upsert|Delete)
+ → CollectionWorker
+     CaptureOldValue on every sort index (existing rows)
+     RowCollection.AddOrUpdate / Delete            → MutationInfo (slot, isNew, changed-field mask)
+     MutationPropagator.Propagate                  → [(deltas, targets)]
+     IOutboundPublisher.PublishAsync per group, then FlushAsync
+ → IngestResult
 ```
 
-### Row insert event
+### Subscribe / view update
 
-```json
-{
- "type": "rowInsert",
- "viewId": "orders|amount|asc|",
- "position": 3,
- "row": { "key": "o42", "customer": "Ivy", "amount": "150", "status": "open" }
-}
+```text
+WebSocket message
+ → WebSocketSessionManager      maps JSON to SubscribeCommand / UpdateViewCommand / UnsubscribeCommand,
+                                assigns subscriptionId, configures outbound state for the subscription
+ → ViewEngine                   route lock; resolve the collection runtime (or reject)
+ → CollectionWorker             validate capabilities, get-or-create SharedView + index,
+                                register ViewportState, build snapshot deltas
+ → WebSocketSessionManager      subscriptionAccepted / rejected, then publish snapshot deltas
 ```
 
-### Row update event
+## Snapshots and slow clients
 
-```json
-{
- "type": "rowUpdate",
- "viewId": "orders|amount|asc|",
- "rowId": "o42",
- "position": 3,
- "changedFields": { "amount": "135" }
-}
-```
+### Building a snapshot
 
-### Row remove event
+A snapshot is built on the collection worker, in the same work item that registers or changes the
+viewport:
 
-```json
-{
- "type": "rowRemove",
- "viewId": "orders|amount|asc|",
- "position": 3
-}
-```
+1. Walk the view from `startIndex` for `pageSize` rows (or to the end of the view when `pageSize` is
+   omitted).
+2. Copy each row's projected values (`SelectRowValues`) into batches of `SnapshotBatchSize`, as
+   `SnapshotRowsDelta`s framed by `SnapshotStartDelta` and `EndOfSnapshotDelta`.
+3. Return the whole list to the caller.
 
-Important: the server currently treats field values as `string?` at the storage boundary. It does not perform typed conversion on ingest, and it does not emit a Lightstreamer-style pipe-delimited payload today.
+Because the copy is taken on the worker, the snapshot is a consistent point-in-time image. Every live delta
+the worker produces afterwards applies on top of it.
 
----
+For viewport changes on an unchanged view with `snapshotMode: "delta"`, only the part of the new window not
+covered by the old one is built (`BuildStreamingViewportDeltas`): zero, one or two partial snapshots.
+Partial snapshot rows carry absolute `rowNumber`s so clients can splice them in.
 
-## Planned direction (not yet implemented)
+### Ordering live deltas around a snapshot
 
-The original design considered a Lightstreamer-like pipe-delimited transport and typed field conversion. That is still a direction for the project, but it is not the current runtime behavior.
+The worker finishes a subscribe before the WebSocket session writes its snapshot to the socket. In that gap,
+new mutations can already produce live deltas for the subscription. `WebSocketOutboundPublisher` keeps
+per-subscription state (`SubscriptionState`) so those deltas can't overtake the snapshot:
 
-The current codebase is intentionally simpler:
+- **Subscribe:** before dispatching, the session marks the subscription *snapshot-active*
+  (`ConfigureSubscription`).
+- **View update:** the flag is set from the worker itself, immediately before the update executes
+  (`onBeforeProcess` → `BeginViewportSnapshot`), so the switch point is exact.
+- While snapshot-active, live deltas are encoded and parked in `BufferedFrames` instead of the connection
+  queue.
+- The session then writes `subscriptionAccepted` (for an initial subscribe, this carries the
+  `snapshotStart` data), followed by the snapshot rows and `eos`. Enqueuing `eos` clears the flag and moves
+  the parked frames into the connection queue.
+- If the command fails or is rejected after the flag was set, `CancelSnapshot` clears it and releases the
+  parked frames, so the subscription never stays muted.
 
-- `CollectionSchema` keeps string-based row arrays.
-- `SortIndex` and `FilterSet` compare values as strings.
-- `WebSocketOutboundPublisher` can emit compact or JSON frames without changing core `ViewDelta` generation.
+`SubscriptionState` also tracks the expected next `rowNumber` and logs a warning if a snapshot stream ever
+has a gap or overlap.
 
-If the server later adopts a compact wire format, the `ViewDelta` generated by `ViewEngine` can still be transformed independently from the in-memory view logic.
+### Outbound queue and drain loop
 
----
+Each connection (`WebSocketConnection`) owns a bounded `Channel<byte[]>` (`OutboundQueueCapacity`, default
+2,000,000 frames) and a drain task:
 
-## Threading model
+- Producers (collection workers and the session loop) call `TryWrite`, which never blocks. Every protocol
+  message is one frame and one WebSocket message.
+- The drain loop sends frames one at a time. Each `SendAsync` has its own `SendStallTimeout` (default 30
+  s). This timeout is the primary slow-client detector: it measures whether the client is making progress,
+  not how much data it asked for, so a large snapshot to a healthy client succeeds whatever its size.
+- The connection is **faulted** (queue completed, socket aborted, receive loop unblocked, subscriptions
+  cleaned up) when a send stalls past the timeout, a send fails, the socket is no longer open, or
+  `TryWrite` finds the queue full. `Fault` is idempotent and logs once, with frames written and sent.
 
-Current state is mixed:
+### Live-delta coalescing
 
-- Core state is still shared across HTTP/WebSocket callers using concurrent dictionaries and in-memory mutable structures.
-- TCP ingest now introduces per-collection bounded channels with single-consumer workers in `TcpIngestRequestDispatcher`, providing deterministic write ordering for TCP-submitted mutations within each collection.
-- HTTP ingest still executes `IViewEngine.IngestAsync` inline on request threads.
+`LiveDeltaCoalescer` can merge pending deltas for a subscription: consecutive updates to one row, and
+insert/remove pairs that cancel out. It is bounded at 64 pending deltas per subscription
+(`OutboundFlushPolicy`). In practice the engine calls `FlushAsync` after every mutation, so coalescing only
+ever sees the deltas of a single mutation and doesn't reduce traffic to slow clients.
 
-So, deterministic per-collection sequencing is guaranteed for TCP queued writes, but the full system is not yet a single serialized actor pipeline across all ingest sources.
+### Current limits
+
+These follow from the design above and matter when sizing a deployment:
+
+- **A slow-but-progressing client grows without bound.** A client that accepts data slower than its update
+  rate, but never stalls a single send for `SendStallTimeout`, keeps accumulating frames until
+  `OutboundQueueCapacity` is reached. Nothing conflates or drops intermediate updates, and no byte-based
+  budget applies. The worst case is roughly `OutboundQueueCapacity × frame size` per connection.
+- **Snapshots are bounded only by `pageSize`,** and clients may omit it. The whole snapshot is copied on the
+  collection worker (ingest for that collection waits meanwhile), then encoded into the connection queue in
+  one go. A snapshot with more rows than `OutboundQueueCapacity` always faults the connection.
+- **Snapshot rows are sent one WebSocket message each.** Large snapshots cost one `SendAsync` and one
+  allocation per row.
+- **Frames are encoded per subscriber.** Subscribers are grouped so each delta is computed once, but frames
+  embed the subscription id, so each target's frames are encoded separately, on the collection worker.
+- **`FlushAsync` walks every connection** (taking each connection's lock) after every mutation in any
+  collection.
+
+## Observability
+
+Metrics are published on the `ViewEngineServer` meter and exported via OTLP from the WebHost, together with
+ASP.NET Core, runtime and process instrumentation:
+
+| Instrument | Type | Tags |
+|---|---|---|
+| `viewengine.insert.duration`, `viewengine.update.duration` | histogram (ms) | `collectionId` |
+| `viewengine.insert.count`, `viewengine.update.count` | counter | `collectionId` |
+| `viewengine.subscription.duration` | histogram (ms) | command type, `collectionId` |
+| `viewengine.active_subscriptions`, `viewengine.active_shared_views` | up-down counter | `collectionId` |
+| `viewengine.active_sort_indexes` | gauge | |
+| `viewengine.typed_columns.ref_count` | gauge | `collectionId`, `fieldName` |
+| `viewengine.collection.channel_depth` | gauge | `collectionId` |
+
+Outbound queue depth, parked snapshot frames and slow-client disconnects are currently reported only in
+logs (`WebSocketConnection` warnings).
+
+## Known issues
+
+Verified defects, to be fixed. Details, proposed fixes and status tracking are in
+[reviews/2026-09-12-architecture-review.md](reviews/2026-09-12-architecture-review.md) (AR-01 to AR-08).
+Remove each entry here when its fix ships.
+
+- **Compact `A` frame without a snapshot.** It has an extra empty token, which shifts `startIndex`,
+  `totalCount` and the field list (`CompactOutboundProtocolEncoder.EncodeSubscriptionAccepted`).
+- **Compact encoding breaks non-BMP characters.** It encodes one UTF-16 code unit at a time, so emoji
+  arrive as `U+FFFD` pairs (`CompactOutboundProtocolEncoder.WriteEscaped`).
+- **Compact key-only projections.** For `fields: []`, row encoding throws. The error is logged and the rows
+  are dropped (`OutboundProtocolEncodingHelpers.GetPayloadFieldIndexes` falls back to all fields).
+- **Duplicate collection creates leak a runtime.** `CollectionStore.TryCreateCollection` constructs a
+  `CollectionRuntime`, which starts its worker, before `TryAdd`, and never disposes it when the name
+  already exists. Producers that "create if missing" on every start leak one runtime per start.
+- **Some invalid requests close the WebSocket.** Exceptions from the engine (an unknown name in `fields`,
+  `updateview` on a subscription the engine no longer knows) and `"type": null` escape the receive loop.
+  The socket closes with no error frame.
+- **Unknown `fieldPresetId`.** The subscribe is acknowledged as accepted, with no snapshot, but no
+  subscription is created. A later `updateview` for it closes the connection.
+- **Live deltas can precede `subscriptionAccepted`.** With `sendSnapshot: false` the subscription is never
+  snapshot-active, so live deltas can reach the client first.
+- **Schemas over 128 fields.** Schemas with more than 128 fields (including the key) are accepted, but
+  `FieldMask` supports only 128. Writes to later fields, and subscriptions that project them, throw.

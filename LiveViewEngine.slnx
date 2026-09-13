@@ -6,6 +6,11 @@
     <File Path="docs\load-testing.md" />
     <File Path="docs\subscription-design.md" />
     <File Path="docs\system-design.md" />
+    <File Path="docs\tcp-ingestion-protocol.md" />
+    <File Path="docs\websocket-protocol.md" />
+    <File Path="docs\changes\README.md" />
+    <File Path="docs\reviews\README.md" />
+    <File Path="docs\reviews\2026-09-12-architecture-review.md" />
     <File Path="README.md" />
   </Folder>
   <Folder Name="/examples/">

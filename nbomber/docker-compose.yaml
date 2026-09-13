@@ -1,0 +1,29 @@
+# TimescaleDB + NBomber Studio for real-time load-test reporting (`dotnet run -- --studio`).
+# Mirrors the IncludeLoadTestStudio resources in src/examples/LiveViewEngine.Poc.AppHost/AppHost.cs.
+# Auth is disabled, so no NBomber license/API key is required. Local use only.
+services:
+  timescaledb:
+    image: timescale/timescaledb:2.25.0-pg18-oss
+    command: ["postgres", "-c", "max_connections=500"]
+    environment:
+      POSTGRES_DB: nb_studio_db
+      POSTGRES_USER: nb_studio_db
+      POSTGRES_PASSWORD: nb_studio_db
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nb_studio_db -d nb_studio_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  nbomber-studio:
+    image: nbomberdocker/nbomber-studio:latest
+    environment:
+      POSTGRESQL__CONNECTIONSTRING: "Host=timescaledb;Port=5432;Username=nb_studio_db;Password=nb_studio_db;Database=nb_studio_db;Pooling=true;"
+      AUTH__ENABLED: "false"
+    ports:
+      - "5333:8080"
+    depends_on:
+      timescaledb:
+        condition: service_healthy

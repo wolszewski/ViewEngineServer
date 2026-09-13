@@ -22,6 +22,7 @@ for optional real-time reporting to NBomber Studio.
 - **`delta_latency`** — the row in `DeltaCollectionName` carries both `DeltaCreatedAtField` (set
   once on insert, never touched again) and `DeltaUpdatedAtField` (a UTC timestamp rewritten on
   every update tick), matching normal created-vs-updated row semantics. A single background updater
+  rewrites that row `DeltaUpdatesPerSecond` times per second (default 20) through the
   configured ingest transport. `DeltaSubscriberCount` (default 50) virtual users each open one
   persistent WS subscription (lazily, on that VU's first iteration, reused across iterations) and
   every iteration waits for the next broadcast `rowUpdate`, reporting
@@ -34,7 +35,14 @@ Ingestion is switchable between **HTTP** and **TCP** without touching scenario c
 
 ## Running
 
-1. Start the WebHost (bare `dotnet run`, or via `LiveViewEngine.Poc.AppHost`, see below).
+1. Start the WebHost, either via `LiveViewEngine.Poc.AppHost` (see below) or standalone. The load
+   test defaults (`appsettings.json`) target the AppHost port `5100`. A standalone WebHost listens on
+   `5038`, so start it on `5100` instead:
+
+   ```bash
+   dotnet run --project src/LiveViewEngine.WebHost --urls http://localhost:5100
+   ```
+
 2. From `src/loadtests/LiveViewEngine.WebHost.LoadTests`, run:
 
    ```bash
@@ -82,7 +90,7 @@ dotnet run --launch-profile loadtest-webhost
 ```
 
 **Option B: standalone `docker compose`** — if you're running WebHost separately (bare `dotnet run`
-or another AppHost profile):
+or another AppHost profile). From the repository root:
 
 ```bash
 docker compose -f nbomber/docker-compose.yaml up -d
