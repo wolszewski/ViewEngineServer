@@ -172,8 +172,6 @@ U|1|t-1|0|^1|500.00|^1
 
 These are current behaviors to be aware of when writing a compact client. They are tracked as bugs:
 
-- Characters outside the Basic Multilingual Plane (for example emoji) are encoded one UTF-16 code unit at a
-  time and arrive as two `U+FFFD` replacement characters. The JSON format is unaffected.
 - A key-only projection (`fields: []`) fails to encode rows in compact format. Rows are dropped, and the
   error is only logged on the server. The JSON format is unaffected.
 - In `P`, the partial marker `1` can't be told apart from a field literally named `1`.
