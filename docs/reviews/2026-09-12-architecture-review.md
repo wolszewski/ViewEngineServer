@@ -37,7 +37,7 @@ WebSocket edge:
 
 | ID | Title | Area | Severity | Verified | Status |
 |---|---|---|---|---|---|
-| [AR-01](#ar-01) | Compact `A` frame has an extra token when no snapshot follows | Protocol | High | Reproduced | Open |
+| [AR-01](#ar-01) | Compact `A` frame has an extra token when no snapshot follows | Protocol | High | Reproduced | Done (#34) |
 | [AR-02](#ar-02) | Compact encoder corrupts non-BMP characters (emoji) | Protocol | Medium | Reproduced | Open |
 | [AR-03](#ar-03) | Compact key-only projection (`fields: []`) drops rows | Protocol | Medium | Reproduced | Open |
 | [AR-04](#ar-04) | Duplicate collection create leaks a started runtime | Core | Medium | Code-read | Open |
