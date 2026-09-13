@@ -25,6 +25,32 @@ public class CompactOutboundProtocolEncoderTests
     }
 
     [Fact]
+    public void EncodeSubscriptionAccepted_WithoutSnapshot_OmitsFlagTokenWithoutShiftingLaterFields()
+    {
+        // AR-01 regression: SnapshotFollows=false must produce an empty flag token (one separator
+        // pair), not an extra separator that shifts startIndex/totalCount/fields out of position.
+        var payload = _encoder.EncodeSubscriptionAccepted(new SubscriptionAcceptedPayload
+        {
+            SubscriptionId = 7,
+            Fields = ["customer", "amount"],
+            SnapshotFollows = false,
+            StartIndex = 50,
+            TotalCount = 200
+        });
+
+        string text = ToText(payload);
+        Assert.Equal("A|7||50|200|customer|amount", text);
+
+        var tokens = text.Split('|');
+        Assert.Equal(7, tokens.Length);
+        Assert.Equal(string.Empty, tokens[2]);
+        Assert.Equal("50", tokens[3]);
+        Assert.Equal("200", tokens[4]);
+        Assert.Equal("customer", tokens[5]);
+        Assert.Equal("amount", tokens[6]);
+    }
+
+    [Fact]
     public void EncodeSubscriptionRejected_UsesCompactMetadataFrame()
     {
         var payload = _encoder.EncodeSubscriptionRejected(new SubscriptionRejectedPayload
