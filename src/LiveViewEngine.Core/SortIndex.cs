@@ -70,7 +70,15 @@ public sealed class SortIndex : IPositionIndex
 
     void IPositionIndex.DecrementSubscribers() => Interlocked.Decrement(ref _subscriberCount);
 
-    bool IPositionIndex.AffectsOrder(in FieldMask changedMask) => changedMask[_fieldIndex];
+    bool IPositionIndex.AffectsOrder(ReadOnlySpan<KeyValuePair<int, string?>> changedColumns)
+    {
+        foreach (var (fieldIndex, _) in changedColumns)
+        {
+            if (fieldIndex == _fieldIndex) { return true; }
+        }
+
+        return false;
+    }
 
     IMutableRowIndex IPositionIndex.CreateFilteredIndex(FilterSet filters) => CreateFilteredIndex(filters);
 

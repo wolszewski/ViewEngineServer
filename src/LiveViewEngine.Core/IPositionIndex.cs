@@ -12,8 +12,8 @@ internal interface IPositionIndex : IRowIndex
     void IncrementSubscribers();
     void DecrementSubscribers();
 
-    // True if a mutation touching these fields can change this row's position.
-    bool AffectsOrder(in FieldMask changedMask);
+    // True if a mutation touching these columns can change this row's position.
+    bool AffectsOrder(ReadOnlySpan<KeyValuePair<int, string?>> changedColumns);
 
     void CaptureOldValue(int rowIndex);
     void ResetPending();

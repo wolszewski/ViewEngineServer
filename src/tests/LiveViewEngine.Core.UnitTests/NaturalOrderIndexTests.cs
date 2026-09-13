@@ -21,7 +21,9 @@ public class NaturalOrderIndexTests
     // AffectsOrder is an internal IPositionIndex lifecycle operation, not part of NaturalOrderIndex's
     // own public API (see NaturalOrderIndex.cs) - this test-only helper reaches it via the internal
     // interface, which the test assembly can see through InternalsVisibleTo.
-    private static bool AffectsOrder(NaturalOrderIndex idx, FieldMask mask) => ((IPositionIndex)idx).AffectsOrder(mask);
+    private static bool AffectsOrder(NaturalOrderIndex idx, params int[] changedFieldIndexes) =>
+        ((IPositionIndex)idx).AffectsOrder(
+            [.. changedFieldIndexes.Select(i => new KeyValuePair<int, string?>(i, "v"))]);
 
     [Fact]
     public void FieldIndex_IsNegativeOne()
@@ -34,8 +36,7 @@ public class NaturalOrderIndexTests
     public void AffectsOrder_IsAlwaysFalse()
     {
         var (_, idx) = CreateEmpty();
-        var mask = FieldMask.From([0, 1, 2]);
-        Assert.False(AffectsOrder(idx, mask));
+        Assert.False(AffectsOrder(idx, 0, 1, 2));
     }
 
     [Fact]

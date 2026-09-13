@@ -19,6 +19,11 @@ public sealed class ViewportState
     public int? PageSize { get; set; }
     public FieldMask VisibleColumns { get; set; }
     public int[] SelectedFieldIndexes { get; set; } = [];
+
+    // Identifies SelectedFieldIndexes by value, assigned by CollectionRuntime. Lets
+    // MutationPropagator group subscribers on an int instead of carrying the mask (and its heap
+    // reference) in a key it builds on every mutation.
+    public int ProjectionId { get; set; }
 }
 
 

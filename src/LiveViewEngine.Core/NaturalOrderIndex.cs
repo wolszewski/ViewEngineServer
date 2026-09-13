@@ -48,7 +48,7 @@ public sealed class NaturalOrderIndex : IPositionIndex
 
     void IPositionIndex.DecrementSubscribers() => Interlocked.Decrement(ref _subscriberCount);
 
-    bool IPositionIndex.AffectsOrder(in FieldMask changedMask) => false;
+    bool IPositionIndex.AffectsOrder(ReadOnlySpan<KeyValuePair<int, string?>> changedColumns) => false;
 
     void IPositionIndex.CaptureOldValue(int rowIndex)
     {

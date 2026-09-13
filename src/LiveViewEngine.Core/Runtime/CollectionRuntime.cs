@@ -14,6 +14,10 @@ public sealed class CollectionRuntime : IDisposable
     private readonly Lock _subscriptionsByConnectionLock = new();
     private readonly Dictionary<int, HashSet<int>> _subscriptionsByConnection = [];
     private readonly SortIndexRegistry _sortIndexRegistry = new();
+    // Distinct field projections are few and long-lived, so interning them to an int lets the
+    // per-mutation grouping key stay free of heap references. Assigned on the worker thread only.
+    private readonly Dictionary<int[], int> _projectionIds = new(ProjectionComparer.Instance);
+    private int _nextProjectionId;
     // Both capabilities are only ever touched from this runtime's single-threaded worker
     // (HandleSubscribe, RegisterFilterPreset) - never from ViewEngine's calling thread directly -
     // so their internal state (e.g. FilteringCapability's preset registry) needs no extra locking.
@@ -206,8 +210,9 @@ public sealed class CollectionRuntime : IDisposable
             ViewKey = viewKey,
             StartIndex = normalizedStart,
             PageSize = command.PageSize,
-            VisibleColumns = FieldMask.From(selectedFieldIndexes.AsSpan()),
-            SelectedFieldIndexes = selectedFieldIndexes
+            VisibleColumns = FieldMask.From(selectedFieldIndexes.AsSpan(), Collection.Schema.Fields.Count),
+            SelectedFieldIndexes = selectedFieldIndexes,
+            ProjectionId = InternProjection(selectedFieldIndexes)
         };
         _viewports[subscriptionKey] = viewport;
         IncrementActiveSubscriptionCount();
@@ -685,6 +690,34 @@ public sealed class CollectionRuntime : IDisposable
     {
         Interlocked.Decrement(ref _activeSharedViewCount);
         _metrics?.RecordActiveSharedViewDelta(-1, Collection.Schema.CollectionName);
+    }
+
+    // Subscribers grouped for a shared delta payload must agree on the projection's order, not just
+    // its set, because the emitted delta carries one group member's SelectedFieldIndexes.
+    private int InternProjection(int[] selectedFieldIndexes)
+    {
+        if (!_projectionIds.TryGetValue(selectedFieldIndexes, out int id))
+        {
+            id = _nextProjectionId++;
+            _projectionIds[selectedFieldIndexes] = id;
+        }
+
+        return id;
+    }
+
+    private sealed class ProjectionComparer : IEqualityComparer<int[]>
+    {
+        public static ProjectionComparer Instance { get; } = new();
+
+        public bool Equals(int[]? x, int[]? y) =>
+            ReferenceEquals(x, y) || (x is not null && y is not null && x.AsSpan().SequenceEqual(y));
+
+        public int GetHashCode(int[] obj)
+        {
+            var hash = new HashCode();
+            hash.AddBytes(System.Runtime.InteropServices.MemoryMarshal.AsBytes(obj.AsSpan()));
+            return hash.ToHashCode();
+        }
     }
 
     private int[] ResolveVisibleFieldIndexes(ViewDefinition view)
