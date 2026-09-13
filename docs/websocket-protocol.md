@@ -172,9 +172,6 @@ U|1|t-1|0|^1|500.00|^1
 
 These are current behaviors to be aware of when writing a compact client. They are tracked as bugs:
 
-- When no snapshot follows (`sendSnapshot: false`), the `A` frame contains an extra empty token
-  (`A|1|||0|42|…`), which shifts `startIndex`, `totalCount` and the field list by one position. Use JSON,
-  or subscribe with a snapshot, until this is fixed.
 - Characters outside the Basic Multilingual Plane (for example emoji) are encoded one UTF-16 code unit at a
   time and arrive as two `U+FFFD` replacement characters. The JSON format is unaffected.
 - A key-only projection (`fields: []`) fails to encode rows in compact format. Rows are dropped, and the
