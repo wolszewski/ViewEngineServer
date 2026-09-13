@@ -376,16 +376,16 @@ public sealed class CompactOutboundProtocolEncoder : IOutboundProtocolEncoder
         var buffer = writer.GetSpan(value.Length * 4);
         int bytesWritten = 0;
 
-        for (int i = 0; i < value.Length; i++)
+        foreach (Rune rune in value.EnumerateRunes())
         {
-            char ch = value[i];
-            if (ch is '|' or '\\' or '^' or '~')
+            if (rune.Value is '|' or '\\' or '^' or '~')
             {
                 buffer[bytesWritten++] = EscapeByte;
             }
 
-            int charBytes = Encoding.UTF8.GetBytes(value.AsSpan(i, 1), buffer[bytesWritten..]);
-            bytesWritten += charBytes;
+            bool encoded = rune.TryEncodeToUtf8(buffer[bytesWritten..], out int runeBytes);
+            System.Diagnostics.Debug.Assert(encoded);
+            bytesWritten += runeBytes;
         }
 
         writer.Advance(bytesWritten);

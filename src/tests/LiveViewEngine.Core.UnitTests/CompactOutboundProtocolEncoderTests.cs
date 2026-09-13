@@ -260,6 +260,44 @@ public class CompactOutboundProtocolEncoderTests
     }
 
     [Fact]
+    public void EncodeSnapshotRow_RoundTripsNonBmpAndCjkCharacters()
+    {
+        // AR-02 regression: WriteEscaped used to UTF-8-encode each UTF-16 code unit on its own, so
+        // a lone surrogate half became U+FFFD. A surrogate pair (e.g. an emoji) must round-trip as
+        // a single UTF-8 sequence for its codepoint, alongside multi-byte BMP characters (CJK).
+        var row = ToText(_encoder.EncodeFrames(
+            new SnapshotRowsDelta
+            {
+                ViewId = "1:1",
+                Schema = Schema,
+                StartRowNumber = 0,
+                VisibleFieldIndexes = [0, 1, 2, 3],
+                Rows = [["o1", "rocket \U0001F680", "日本語", "plain"]]
+            },
+            subscriptionId: 1).Single());
+
+        Assert.Equal("S|1|0|o1|rocket \U0001F680|日本語|plain", row);
+        Assert.DoesNotContain('�', row);
+    }
+
+    [Fact]
+    public void EncodeSnapshotRow_EscapesAllReservedCharactersInOneValue()
+    {
+        var row = ToText(_encoder.EncodeFrames(
+            new SnapshotRowsDelta
+            {
+                ViewId = "1:1",
+                Schema = Schema,
+                StartRowNumber = 0,
+                VisibleFieldIndexes = [0, 1, 2, 3],
+                Rows = [["o1", "a|b\\c^d~e", "100", "open"]]
+            },
+            subscriptionId: 1).Single());
+
+        Assert.Equal("S|1|0|o1|a\\|b\\\\c\\^d\\~e|100|open", row);
+    }
+
+    [Fact]
     public void EncodeUpdate_WithAllFieldsSkipped()
     {
         var update = ToText(_encoder.EncodeFrames(
