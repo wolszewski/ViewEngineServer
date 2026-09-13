@@ -55,7 +55,7 @@ internal sealed class FilterSet : IDisposable
 
         return new FilterSet(
             matcherCount == matchers.Length ? matchers : [.. matchers.AsSpan(0, matcherCount)],
-            FieldMask.From(fieldIndexes.AsSpan()),
+            FieldMask.From(fieldIndexes.AsSpan(), schema.Fields.Count),
             keepAlive == TypedColumnKeepAlive.WhenReferencedByIndexesAndFilters ? collection : null,
             referencedFieldCount == 0 ? [] : [.. referencedFields!.AsSpan(0, referencedFieldCount)]);
     }

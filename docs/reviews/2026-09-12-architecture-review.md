@@ -44,7 +44,7 @@ WebSocket edge:
 | [AR-05](#ar-05) | Invalid client input closes the WebSocket with no error | WebSocket | High | Reproduced | Open |
 | [AR-06](#ar-06) | Unknown `fieldPresetId` is reported as accepted but no subscription exists | Core | Medium | Code-read | Open |
 | [AR-07](#ar-07) | Live deltas can precede `subscriptionAccepted` when `sendSnapshot:false` | WebSocket | Low | Code-read | Open |
-| [AR-08](#ar-08) | Schemas over 128 fields are accepted but unsupported | Core | Low | Code-read | Open |
+| [AR-08](#ar-08) | Schemas over 128 fields are accepted but unsupported | Core | Low | Code-read | Done (#36) |
 | [AR-09](#ar-09) | No memory bound for slow-but-progressing clients | Slow clients | High | Code-read | Open |
 | [AR-10](#ar-10) | Live-delta coalescer is effectively dead and would reorder positions if enabled | Slow clients | Medium | Code-read | Open |
 | [AR-11](#ar-11) | `FlushAsync` visits every connection after every mutation | Performance | Medium | Code-read | Open |

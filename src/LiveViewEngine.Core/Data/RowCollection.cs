@@ -30,7 +30,7 @@ public sealed class RowCollection(CollectionSchema schema)
             UpdateTypedValueForField(rowIndex, updatedField.Key, updatedField.Value);
         }
 
-        return new MutationInfo(key, rowIndex, isNew, columnChanges, FieldMask.From(columnChanges));
+        return new MutationInfo(key, rowIndex, isNew, columnChanges);
     }
 
     private string?[] GetOrAddRow(string rowKey, out int rowIndex, out bool isNew)
@@ -83,7 +83,7 @@ public sealed class RowCollection(CollectionSchema schema)
         _rowKeyToIndex.Remove(rowId);
         _rows.RemoveAt(index);
 
-        return new MutationInfo(rowId, index, false, null, default);
+        return new MutationInfo(rowId, index, false, null);
     }
 
     public string? GetValue(int index, int fieldIndex)

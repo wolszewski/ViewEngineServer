@@ -153,10 +153,11 @@ public sealed class SharedView : IDisposable
         return ToViewPosition(basePosition, originalCount);
     }
 
-    public (bool SortFieldChanged, bool FilterFieldChanged) TouchedFields(in FieldMask changedMask)
+    public (bool SortFieldChanged, bool FilterFieldChanged) TouchedFields(
+        ReadOnlySpan<KeyValuePair<int, string?>> changedColumns)
     {
-        bool sortTouched = _positionIndex.AffectsOrder(changedMask);
-        bool filterTouched = _filters.Mask.Intersects(changedMask);
+        bool sortTouched = _positionIndex.AffectsOrder(changedColumns);
+        bool filterTouched = _filters.Mask.ContainsAny(changedColumns);
         return (sortTouched, filterTouched);
     }
 
