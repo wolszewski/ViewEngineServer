@@ -167,6 +167,9 @@ public class WideSchemaTests
             Fields = new Dictionary<string, string?> { ["f150"] = "z" }
         })).Success);
 
-        Assert.Contains(publisher.EventsFor(3), e => e is not SnapshotEvent);
+var replace = Assert.IsType<RowReplaceEvent>(Assert.Single(publisher.EventsFor(3)));
+        Assert.Equal("r1", replace.RemovedRowId);
+        Assert.Equal(0, replace.RemovePosition);
+        Assert.Equal(1, replace.InsertPosition);
     }
 }
