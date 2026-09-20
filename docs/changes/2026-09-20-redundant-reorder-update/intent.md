@@ -3,7 +3,7 @@
 - **Status:** In progress
 - **Date:** 2026-09-20
 - **Findings:** 2026-09-20 AR-01, AR-02
-- **PRs:** #
+- **PRs:** #37
 
 ## Problem
 
