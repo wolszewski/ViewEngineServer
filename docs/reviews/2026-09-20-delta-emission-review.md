@@ -40,8 +40,8 @@ is the same today and after the fix.
 
 | ID | Title | Area | Severity | Verified | Status |
 |---|---|---|---|---|---|
-| [AR-01](#ar-01) | Reorder emits a redundant `RowUpdateDelta` after the positional delta | Core | Medium | Reproduced | In progress ([intent](../changes/2026-09-20-redundant-reorder-update/intent.md)) |
-| [AR-02](#ar-02) | PoC UI samples latency only from `rowUpdate`, so reorder-only deltas go unmeasured | PoC UI | Low | Code-read | In progress ([intent](../changes/2026-09-20-redundant-reorder-update/intent.md)) |
+| [AR-01](#ar-01) | Reorder emits a redundant `RowUpdateDelta` after the positional delta | Core | Medium | Reproduced | Done (#37) |
+| [AR-02](#ar-02) | PoC UI samples latency only from `rowUpdate`, so reorder-only deltas go unmeasured | PoC UI | Low | Code-read | Done (#37) |
 
 ## Findings
 

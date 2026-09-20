@@ -1,6 +1,6 @@
 # FieldMask: remove the 128-field limit by deleting the per-mutation mask
 
-- **Status:** In progress
+- **Status:** Done
 - **Date:** 2026-09-13
 - **Findings:** 2026-09-12 AR-08
 - **PRs:** #36

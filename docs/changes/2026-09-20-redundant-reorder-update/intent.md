@@ -1,6 +1,6 @@
 # Stop emitting a redundant update after a reorder
 
-- **Status:** In progress
+- **Status:** Done
 - **Date:** 2026-09-20
 - **Findings:** 2026-09-20 AR-01, AR-02
 - **PRs:** #37
