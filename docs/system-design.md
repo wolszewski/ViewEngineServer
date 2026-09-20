@@ -107,7 +107,8 @@ For each upsert or delete, `MutationPropagator`:
    position.
 4. Groups the view's subscribers by identical (viewport, projection), and computes the delta list once per
    group: `RowUpdate`, `RowInsert`, `RowRemove`, or `RowReplace` when one row leaves while another enters
-   a full viewport.
+   a full viewport. A row whose position changed is carried entirely by its positional delta, whose row
+   payload holds the post-mutation values; `RowUpdate` is emitted only when the position is unchanged.
 5. Updates position indexes that no view is currently using (so they stay correct for future subscribers).
 
 The result is a list of `(deltas, targets)` groups handed to `IOutboundPublisher.PublishAsync`.

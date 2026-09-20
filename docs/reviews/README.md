@@ -21,5 +21,6 @@ findings that future work draws from.
 | Date | Review | Open findings |
 |---|---|---|
 | 2026-09-12 | [Architecture review](2026-09-12-architecture-review.md) | 25 |
+| 2026-09-20 | [Delta emission review](2026-09-20-delta-emission-review.md) | 0 |
 
 Turning a finding into work is described in [../changes/README.md](../changes/README.md).
