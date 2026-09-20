@@ -248,12 +248,8 @@ public sealed class MutationPropagator
                 continue;
             }
 
-            groups ??= new(ViewportGroupKey.Comparer);
-            var key = new ViewportGroupKey(
-                viewport.StartIndex,
-                viewport.PageSize,
-                viewport.VisibleColumns,
-                viewport.SelectedFieldIndexes);
+            groups ??= new();
+            var key = new ViewportGroupKey(viewport.StartIndex, viewport.PageSize, viewport.ProjectionId);
             if (!groups.TryGetValue(key, out var list)) { list = []; groups[key] = list; }
             list.Add(viewport);
         }
@@ -684,44 +680,12 @@ public sealed class MutationPropagator
     // subscriber per mutation, and keeping it free of heap references measurably cuts the cost.
     private readonly record struct FastPathGroupKey(int Start, int? PageSize, int ProjectionId);
 
-    private readonly record struct ViewportGroupKey(
-        int Start,
-        int? PageSize,
-        FieldMask VisibleColumns,
-        int[] SelectedFieldIndexes)
-    {
-        public static IEqualityComparer<ViewportGroupKey> Comparer { get; } = new ViewportGroupKeyComparer();
-    }
-
-    private sealed class ViewportGroupKeyComparer : IEqualityComparer<ViewportGroupKey>
-    {
-        public bool Equals(ViewportGroupKey x, ViewportGroupKey y)
-        {
-            if (x.Start != y.Start || x.PageSize != y.PageSize)
-            {
-                return false;
-            }
-
-            if (x.VisibleColumns != y.VisibleColumns)
-            {
-                return false;
-            }
-
-            return x.SelectedFieldIndexes.AsSpan().SequenceEqual(y.SelectedFieldIndexes);
-        }
-
-        public int GetHashCode(ViewportGroupKey obj)
-        {
-            var hash = HashCode.Combine(
-                obj.Start, obj.PageSize, obj.VisibleColumns, obj.SelectedFieldIndexes.Length);
-            foreach (var index in obj.SelectedFieldIndexes)
-            {
-                hash = HashCode.Combine(hash, index);
-            }
-
-            return hash;
-        }
-    }
+    // Same reasoning as FastPathGroupKey: ProjectionId is derived from SelectedFieldIndexes, and
+    // VisibleColumns is FieldMask.From of that same array, so the id determines both. Keying on it
+    // replaces a comparer that walked every mask word and SequenceEqual'd the indexes - each viewport
+    // gets its own mask array from HandleSubscribe, so the reference shortcut never hit and the cost
+    // grew with schema width, worst on exactly the sparse wide projections this change enables.
+    private readonly record struct ViewportGroupKey(int Start, int? PageSize, int ProjectionId);
 
     private readonly record struct MutationImpact(bool NeedsFullRecompute, bool SortFieldTouched);
 }

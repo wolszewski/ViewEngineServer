@@ -102,18 +102,36 @@ than what it replaces.
 A hybrid inline+overflow mask would **not** have avoided this: GC tracing follows the type layout, so
 a `ulong[]? _overflow` field makes the key reference-containing even when null for narrow schemas.
 
+`ViewportGroupKey` now uses the id too. It kept the mask and the indexes behind a custom comparer,
+which had nothing to lose on the *reference* count but did cost an O(width) walk per comparison:
+`HandleSubscribe` builds a distinct mask array per viewport, so the reference shortcut never hit and
+identical projections compared word by word — worst on the sparse wide projections this change
+enables, and invisible to a 21-field benchmark. Since `ProjectionId` is derived from
+`SelectedFieldIndexes` and `VisibleColumns` is `FieldMask.From` of that same array, the id determines
+both; the group reads them from `groupViewports[0]`, as it already did.
+
 ## Contract changes
 
 - `IPositionIndex.AffectsOrder(in FieldMask)` → `AffectsOrder(ReadOnlySpan<KeyValuePair<int, string?>>)`.
   Internal interface; both implementations are explicit, so the public surface is unchanged and
   `PositionIndexPublicSurfaceTests` (name-based reflection) still passes.
-- `MutationInfo` loses `ChangedMask` and retypes `ChangedColumns`. Public record, but engine-internal
-  in practice.
-- `FieldMask` loses `Intersects`, `Key`, `From(IReadOnlyCollection<...>)` and `ToIndexes()`
-  (`ToIndexes` had no caller anywhere in `src/` — dead code not catalogued by AR-23). Gains
-  `ContainsAny(ReadOnlySpan<...>)`.
-  `From` now takes the schema's field count.
-- No wire-protocol change.
+- **`MutationInfo` and `FieldMask`: source- and binary-breaking, accepted.** Both are `public` and the
+  README points custom hosts at Core, so calling them "engine-internal in practice" was not a
+  compatibility classification. Stating it plainly instead:
+  - `MutationInfo` loses `ChangedMask` and retypes `ChangedColumns` from
+    `IReadOnlyCollection<KeyValuePair<int, string?>>` to `KeyValuePair<int, string?>[]?` — a change to
+    a positional record parameter, so both the constructor and the property signature break.
+  - `FieldMask` loses `Intersects`, `Key`, `From(IReadOnlyCollection<...>)` and `ToIndexes()`
+    (`ToIndexes` had no caller anywhere in `src/` — dead code not catalogued by AR-23). Gains
+    `ContainsAny(ReadOnlySpan<...>)`. `From` now takes the schema's field count, and throws
+    `ArgumentOutOfRangeException` for an index at or above it where it previously wrote into a
+    padding bit and silently accepted.
+
+  **Decision: no shims, no migration.** The project is pre-release with no external consumers, so the
+  break is taken rather than carried. Revisit if Core is ever published.
+- No wire-protocol change, so no client or UI app needs updating. `LiveViewEngine.Poc.Ui` is the only
+  app that consumes deltas (the `Lightstreamer.*` examples speak their own protocol, and the C# HTTP
+  and TCP clients are ingest-only); this change touches no file under `src/examples/` or `WebHost`.
 
 ## Acceptance criteria
 
@@ -121,9 +139,13 @@ a `ulong[]? _overflow` field makes the key reference-containing even when null f
       index 127 (`WideSchemaTests`; all four throw `IndexOutOfRangeException` before this change)
 - [x] `FieldMaskTests` cover word boundaries (63/64/127/128/255), `default`, `ContainsAny` hit/miss,
       and equality/hashing across differing widths
-- [x] Full suite green (371 tests, up from 348)
-- [x] Benchmarks before/after with `[MemoryDiagnoser]` — see `notes.md`. Update path lands at parity
-      with `main`; allocation drops ~3%. No speedup is claimed.
+- [x] Full suite green (381 tests, up from 348)
+- [x] Benchmarks before/after with `[MemoryDiagnoser]` — see `notes.md`. Re-measured 2026-09-20
+      against a `main` worktree running byte-identical benchmark code at 15 iterations: the update
+      path is **parity-to-slightly-slower**, +3.3% at 1-5 changed fields and +4.8% at 17, with
+      allocation ~1% lower. The earlier "parity, ~3% less allocated" claim came from a 3-iteration
+      run and one benchmark that measured nothing; both are corrected in `notes.md`. No speedup is
+      claimed — the value of this change is the removed field limit.
 - [x] Docs updated: AR-08 status, `system-design.md` *Known issues*
 
 ## Risks and rollout
