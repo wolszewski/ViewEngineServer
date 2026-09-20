@@ -179,7 +179,7 @@ POST /collections  |  TCP CREATE
 IngestAsync(Upsert|Delete)
  → CollectionWorker
      CaptureOldValue on every sort index (existing rows)
-     RowCollection.AddOrUpdate / Delete            → MutationInfo (slot, isNew, changed-field mask)
+     RowCollection.AddOrUpdate / Delete            → MutationInfo (slot, isNew, changed columns)
      MutationPropagator.Propagate                  → [(deltas, targets)]
      IOutboundPublisher.PublishAsync per group, then FlushAsync
  → IngestResult
