@@ -179,7 +179,7 @@ POST /collections  |  TCP CREATE
 IngestAsync(Upsert|Delete)
  → CollectionWorker
      CaptureOldValue on every sort index (existing rows)
-     RowCollection.AddOrUpdate / Delete            → MutationInfo (slot, isNew, changed-field mask)
+     RowCollection.AddOrUpdate / Delete            → MutationInfo (slot, isNew, changed columns)
      MutationPropagator.Propagate                  → [(deltas, targets)]
      IOutboundPublisher.PublishAsync per group, then FlushAsync
  → IngestResult
@@ -301,10 +301,6 @@ Verified defects, to be fixed. Details, proposed fixes and status tracking are i
 [reviews/2026-09-12-architecture-review.md](reviews/2026-09-12-architecture-review.md) (AR-01 to AR-08).
 Remove each entry here when its fix ships.
 
-- **Compact `A` frame without a snapshot.** It has an extra empty token, which shifts `startIndex`,
-  `totalCount` and the field list (`CompactOutboundProtocolEncoder.EncodeSubscriptionAccepted`).
-- **Compact encoding breaks non-BMP characters.** It encodes one UTF-16 code unit at a time, so emoji
-  arrive as `U+FFFD` pairs (`CompactOutboundProtocolEncoder.WriteEscaped`).
 - **Compact key-only projections.** For `fields: []`, row encoding throws. The error is logged and the rows
   are dropped (`OutboundProtocolEncodingHelpers.GetPayloadFieldIndexes` falls back to all fields).
 - **Duplicate collection creates leak a runtime.** `CollectionStore.TryCreateCollection` constructs a
@@ -317,5 +313,3 @@ Remove each entry here when its fix ships.
   subscription is created. A later `updateview` for it closes the connection.
 - **Live deltas can precede `subscriptionAccepted`.** With `sendSnapshot: false` the subscription is never
   snapshot-active, so live deltas can reach the client first.
-- **Schemas over 128 fields.** Schemas with more than 128 fields (including the key) are accepted, but
-  `FieldMask` supports only 128. Writes to later fields, and subscriptions that project them, throw.

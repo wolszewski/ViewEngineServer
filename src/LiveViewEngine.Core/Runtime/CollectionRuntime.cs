@@ -14,6 +14,17 @@ public sealed class CollectionRuntime : IDisposable
     private readonly Lock _subscriptionsByConnectionLock = new();
     private readonly Dictionary<int, HashSet<int>> _subscriptionsByConnection = [];
     private readonly SortIndexRegistry _sortIndexRegistry = new();
+    // Interning field projections to an int lets the per-mutation grouping key stay free of heap
+    // references. Clients pick arbitrary field subsets over a schema of unbounded width, so entries
+    // are ref-counted by live viewport and dropped on detach rather than kept for the collection's
+    // lifetime. Assigned on the worker thread only.
+    private readonly Dictionary<int[], ProjectionEntry> _projectionIds = new(ProjectionComparer.Instance);
+    // Starts at 1 so 0 stays reserved for ViewportState.ProjectionId's default. Since the id is now
+    // the only thing separating field sets in FastPathGroupKey, a viewport that reached propagation
+    // without being interned would otherwise group with whichever projection was interned first and
+    // be handed a delta projected for different fields. Unreachable today - there is one construction
+    // site - but free to make impossible.
+    private int _nextProjectionId = 1;
     // Both capabilities are only ever touched from this runtime's single-threaded worker
     // (HandleSubscribe, RegisterFilterPreset) - never from ViewEngine's calling thread directly -
     // so their internal state (e.g. FilteringCapability's preset registry) needs no extra locking.
@@ -45,6 +56,7 @@ public sealed class CollectionRuntime : IDisposable
     public int ActiveSubscriptionCount => Volatile.Read(ref _activeSubscriptionCount);
     public int ActiveSharedViewCount => Volatile.Read(ref _activeSharedViewCount);
     public int SortIndexCount => _sortIndexRegistry.Count;
+    internal int InternedProjectionCount => _projectionIds.Count;
     public int WorkerQueueLength => _worker.QueuedCount;
 
     public IEnumerable<(string CollectionId, string FieldName, int RefCount)> GetActiveTypedColumns()
@@ -206,8 +218,9 @@ public sealed class CollectionRuntime : IDisposable
             ViewKey = viewKey,
             StartIndex = normalizedStart,
             PageSize = command.PageSize,
-            VisibleColumns = FieldMask.From(selectedFieldIndexes.AsSpan()),
-            SelectedFieldIndexes = selectedFieldIndexes
+            VisibleColumns = FieldMask.From(selectedFieldIndexes.AsSpan(), Collection.Schema.Fields.Count),
+            SelectedFieldIndexes = selectedFieldIndexes,
+            ProjectionId = InternProjection(selectedFieldIndexes)
         };
         _viewports[subscriptionKey] = viewport;
         IncrementActiveSubscriptionCount();
@@ -637,6 +650,10 @@ public sealed class CollectionRuntime : IDisposable
 
     private void DetachSubscription(ViewportState viewport)
     {
+        // Ahead of the missing-view bail-out below: the projection is owned by the viewport, not by
+        // the shared view, so it has to be released even when the view is already gone.
+        ReleaseProjection(viewport.SelectedFieldIndexes);
+
         if (!TryGetSharedView(viewport.ViewKey, out var view))
         {
             return;
@@ -685,6 +702,56 @@ public sealed class CollectionRuntime : IDisposable
     {
         Interlocked.Decrement(ref _activeSharedViewCount);
         _metrics?.RecordActiveSharedViewDelta(-1, Collection.Schema.CollectionName);
+    }
+
+    // Subscribers grouped for a shared delta payload must agree on the projection's order, not just
+    // its set, because the emitted delta carries one group member's SelectedFieldIndexes.
+    private int InternProjection(int[] selectedFieldIndexes)
+    {
+        if (!_projectionIds.TryGetValue(selectedFieldIndexes, out var entry))
+        {
+            entry = new ProjectionEntry(_nextProjectionId++);
+            _projectionIds[selectedFieldIndexes] = entry;
+        }
+
+        entry.RefCount++;
+        return entry.Id;
+    }
+
+    // Called for every detach, including the replace half of a re-subscribe, so an id outlives only
+    // the viewports actually projecting it.
+    private void ReleaseProjection(int[] selectedFieldIndexes)
+    {
+        if (!_projectionIds.TryGetValue(selectedFieldIndexes, out var entry))
+        {
+            return;
+        }
+
+        if (--entry.RefCount <= 0)
+        {
+            _projectionIds.Remove(selectedFieldIndexes);
+        }
+    }
+
+    private sealed class ProjectionEntry(int id)
+    {
+        public int Id { get; } = id;
+        public int RefCount { get; set; }
+    }
+
+    private sealed class ProjectionComparer : IEqualityComparer<int[]>
+    {
+        public static ProjectionComparer Instance { get; } = new();
+
+        public bool Equals(int[]? x, int[]? y) =>
+            ReferenceEquals(x, y) || (x is not null && y is not null && x.AsSpan().SequenceEqual(y));
+
+        public int GetHashCode(int[] obj)
+        {
+            var hash = new HashCode();
+            hash.AddBytes(System.Runtime.InteropServices.MemoryMarshal.AsBytes(obj.AsSpan()));
+            return hash.ToHashCode();
+        }
     }
 
     private int[] ResolveVisibleFieldIndexes(ViewDefinition view)

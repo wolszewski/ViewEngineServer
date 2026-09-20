@@ -250,6 +250,12 @@ public class ViewEngineModifyBenchmarks
         ["f01", "f02", "f03", "f04", "f05", "f06", "f07", "f08", "f09", "f10", "f11", "f12", "f13", "f14", "f15", "f16", "f17"];
 
     private UpsertRowCommand[] _modifyCommands = [];
+    // Two contrasts the 1-5 field commands above can't draw: a change to the sort column, which forces
+    // the full-recompute path, and a full-record rewrite, which is what makes the per-subscriber
+    // ContainsAny scan expensive (it runs before the viewport check, so every subscriber pays it on
+    // every mutation regardless of where the row sits).
+    private UpsertRowCommand[] _sortFieldCommands = [];
+    private UpsertRowCommand[] _wideCommands = [];
 
     // Pre-populated engines per variant — recreated each iteration so mutations don't accumulate.
     private ViewEngine _engineNoSub = null!;
@@ -285,6 +291,26 @@ public class ViewEngineModifyBenchmarks
             for (int k = 0; k < fieldCount; k++) { fields[arr[k]] = $"mod-{i}-{arr[k]}"; }
             _modifyCommands[i] = new UpsertRowCommand { CollectionId = CollectionId, Key = $"O{i + 1:D5}", Fields = fields };
         }
+
+        // Stays in the seed's date domain so the values remain comparable, but at different ranks so
+        // rows actually move. Writing a non-date string here would sort lexicographically above every
+        // seeded value and pin the touched rows to one end.
+        _sortFieldCommands = [.. Enumerable.Range(0, N).Select(i => new UpsertRowCommand
+        {
+            CollectionId = CollectionId,
+            Key = $"O{i + 1:D5}",
+            Fields = new Dictionary<string, string?>
+            {
+                ["date"] = $"2024-{(i * 7 % 12) + 1:D2}-{(i * 13 % 28) + 1:D2}"
+            }
+        })];
+
+        _wideCommands = [.. Enumerable.Range(0, N).Select(i => new UpsertRowCommand
+        {
+            CollectionId = CollectionId,
+            Key = $"O{i + 1:D5}",
+            Fields = ModifiableFields.ToDictionary(f => f, f => (string?)$"wide-{i}-{f}")
+        })];
     }
 
     [IterationSetup]
@@ -386,6 +412,23 @@ public class ViewEngineModifyBenchmarks
     [Benchmark] public async Task Modify10k_DifferentViews_10Subscribers()
     {
         foreach (var cmd in _modifyCommands) { await _engineDiff10.IngestAsync(cmd); }
+    }
+
+    // Reuses _engineSorted10: [IterationSetup] rebuilds every engine before each iteration, so these
+    // three never observe another benchmark's mutations.
+    [Benchmark] public async Task Modify10k_SortField_SortedOnly_10Subscribers()
+    {
+        foreach (var cmd in _sortFieldCommands) { await _engineSorted10.IngestAsync(cmd); }
+    }
+
+    [Benchmark] public async Task Modify10k_AllFields_Unfiltered_10Subscribers()
+    {
+        foreach (var cmd in _wideCommands) { await _engineUnfiltered10.IngestAsync(cmd); }
+    }
+
+    [Benchmark] public async Task Modify10k_AllFields_SortedOnly_10Subscribers()
+    {
+        foreach (var cmd in _wideCommands) { await _engineSorted10.IngestAsync(cmd); }
     }
 }
 

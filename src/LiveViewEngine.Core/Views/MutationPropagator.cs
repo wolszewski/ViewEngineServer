@@ -89,7 +89,7 @@ public sealed class MutationPropagator
             return;
         }
 
-        if (mutation.IsNew || positionIndex.AffectsOrder(mutation.ChangedMask))
+        if (mutation.IsNew || positionIndex.AffectsOrder(mutation.ChangedColumns))
         {
             positionIndex.OnUpsert(mutation.RowIndex);
             return;
@@ -148,7 +148,7 @@ public sealed class MutationPropagator
             return new MutationImpact(NeedsFullRecompute: true, SortFieldTouched: true);
         }
 
-        var (sortFieldTouched, filterFieldChanged) = view.TouchedFields(mutation.ChangedMask);
+        var (sortFieldTouched, filterFieldChanged) = view.TouchedFields(mutation.ChangedColumns);
         return new MutationImpact(
             NeedsFullRecompute: sortFieldTouched || filterFieldChanged,
             SortFieldTouched: sortFieldTouched);
@@ -163,7 +163,7 @@ public sealed class MutationPropagator
         MutationInfo mutation,
         ref List<(IReadOnlyList<ViewDelta>, List<SubscriberTarget>)>? pending)
     {
-        if (mutation.ChangedColumns is not { Count: > 0 })
+        if (mutation.ChangedColumns is not { Length: > 0 })
         {
             return;
         }
@@ -182,7 +182,7 @@ public sealed class MutationPropagator
                 continue;
             }
 
-            if (!viewport.VisibleColumns.Intersects(mutation.ChangedMask))
+            if (!viewport.VisibleColumns.ContainsAny(mutation.ChangedColumns))
             {
                 continue;
             }
@@ -193,7 +193,7 @@ public sealed class MutationPropagator
             }
 
             groups ??= new();
-            var key = new FastPathGroupKey(viewport.StartIndex, viewport.PageSize, viewport.VisibleColumns);
+            var key = new FastPathGroupKey(viewport.StartIndex, viewport.PageSize, viewport.ProjectionId);
             if (!groups.TryGetValue(key, out var list)) { list = []; groups[key] = list; }
             list.Add(viewport);
         }
@@ -248,12 +248,8 @@ public sealed class MutationPropagator
                 continue;
             }
 
-            groups ??= new(ViewportGroupKey.Comparer);
-            var key = new ViewportGroupKey(
-                viewport.StartIndex,
-                viewport.PageSize,
-                viewport.VisibleColumns,
-                viewport.SelectedFieldIndexes);
+            groups ??= new();
+            var key = new ViewportGroupKey(viewport.StartIndex, viewport.PageSize, viewport.ProjectionId);
             if (!groups.TryGetValue(key, out var list)) { list = []; groups[key] = list; }
             list.Add(viewport);
         }
@@ -298,7 +294,7 @@ public sealed class MutationPropagator
             return [];
         }
 
-        if (!isDelete && !mutation.IsNew && !visibleMask.Intersects(mutation.ChangedMask))
+        if (!isDelete && !mutation.IsNew && !visibleMask.ContainsAny(mutation.ChangedColumns))
         {
             return [];
         }
@@ -598,7 +594,7 @@ public sealed class MutationPropagator
         int[] selectedFieldIndexes,
         FieldMask visibleMask)
     {
-        if (mutation.IsNew || mutation.ChangedColumns is not { Count: > 0 })
+        if (mutation.IsNew || mutation.ChangedColumns is not { Length: > 0 })
         {
             return;
         }
@@ -629,12 +625,12 @@ public sealed class MutationPropagator
         FieldMask visibleMask,
         bool isDelete)
     {
-        if (position < 0 || mutation.IsNew || mutation.ChangedColumns is not { Count: > 0 })
+        if (position < 0 || mutation.IsNew || mutation.ChangedColumns is not { Length: > 0 })
         {
             return [];
         }
 
-        if (isDelete || !visibleMask.Intersects(mutation.ChangedMask))
+        if (isDelete || !visibleMask.ContainsAny(mutation.ChangedColumns))
         {
             return [];
         }
@@ -656,8 +652,11 @@ public sealed class MutationPropagator
         }];
     }
 
+    // Takes the array, not IReadOnlyCollection: this runs once per subscriber group per mutation, and
+    // enumerating an array through the interface allocates a boxed SZGenericArrayEnumerator on every
+    // one of those calls - the allocation MutationInfo.ChangedColumns was made an array to avoid.
     private static IReadOnlyCollection<KeyValuePair<int, string?>> FilterChangedColumns(
-        IReadOnlyCollection<KeyValuePair<int, string?>> changedColumns,
+        KeyValuePair<int, string?>[] changedColumns,
         FieldMask visibleMask)
     {
         if (visibleMask.IsEmpty)
@@ -665,7 +664,7 @@ public sealed class MutationPropagator
             return [];
         }
 
-        var filtered = new List<KeyValuePair<int, string?>>(changedColumns.Count);
+        var filtered = new List<KeyValuePair<int, string?>>(changedColumns.Length);
         foreach (var (fieldIndex, value) in changedColumns)
         {
             if (visibleMask[fieldIndex])
@@ -674,51 +673,19 @@ public sealed class MutationPropagator
             }
         }
 
-        return filtered.Count == changedColumns.Count ? changedColumns : filtered;
+        return filtered.Count == changedColumns.Length ? changedColumns : filtered;
     }
 
-    private readonly record struct FastPathGroupKey(int Start, int? PageSize, FieldMask VisibleColumns);
+    // Keyed on the interned projection id rather than the FieldMask: this key is built per
+    // subscriber per mutation, and keeping it free of heap references measurably cuts the cost.
+    private readonly record struct FastPathGroupKey(int Start, int? PageSize, int ProjectionId);
 
-    private readonly record struct ViewportGroupKey(
-        int Start,
-        int? PageSize,
-        FieldMask VisibleColumns,
-        int[] SelectedFieldIndexes)
-    {
-        public static IEqualityComparer<ViewportGroupKey> Comparer { get; } = new ViewportGroupKeyComparer();
-    }
-
-    private sealed class ViewportGroupKeyComparer : IEqualityComparer<ViewportGroupKey>
-    {
-        public bool Equals(ViewportGroupKey x, ViewportGroupKey y)
-        {
-            if (x.Start != y.Start || x.PageSize != y.PageSize)
-            {
-                return false;
-            }
-
-            var xMask = x.VisibleColumns.Key;
-            var yMask = y.VisibleColumns.Key;
-            if (xMask.Low != yMask.Low || xMask.High != yMask.High)
-            {
-                return false;
-            }
-
-            return x.SelectedFieldIndexes.AsSpan().SequenceEqual(y.SelectedFieldIndexes);
-        }
-
-        public int GetHashCode(ViewportGroupKey obj)
-        {
-            var mask = obj.VisibleColumns.Key;
-            var hash = HashCode.Combine(obj.Start, obj.PageSize, mask.Low, mask.High, obj.SelectedFieldIndexes.Length);
-            foreach (var index in obj.SelectedFieldIndexes)
-            {
-                hash = HashCode.Combine(hash, index);
-            }
-
-            return hash;
-        }
-    }
+    // Same reasoning as FastPathGroupKey: ProjectionId is derived from SelectedFieldIndexes, and
+    // VisibleColumns is FieldMask.From of that same array, so the id determines both. Keying on it
+    // replaces a comparer that walked every mask word and SequenceEqual'd the indexes - each viewport
+    // gets its own mask array from HandleSubscribe, so the reference shortcut never hit and the cost
+    // grew with schema width, worst on exactly the sparse wide projections this change enables.
+    private readonly record struct ViewportGroupKey(int Start, int? PageSize, int ProjectionId);
 
     private readonly record struct MutationImpact(bool NeedsFullRecompute, bool SortFieldTouched);
 }
