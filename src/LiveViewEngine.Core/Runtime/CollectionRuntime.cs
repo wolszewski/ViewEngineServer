@@ -19,7 +19,12 @@ public sealed class CollectionRuntime : IDisposable
     // are ref-counted by live viewport and dropped on detach rather than kept for the collection's
     // lifetime. Assigned on the worker thread only.
     private readonly Dictionary<int[], ProjectionEntry> _projectionIds = new(ProjectionComparer.Instance);
-    private int _nextProjectionId;
+    // Starts at 1 so 0 stays reserved for ViewportState.ProjectionId's default. Since the id is now
+    // the only thing separating field sets in FastPathGroupKey, a viewport that reached propagation
+    // without being interned would otherwise group with whichever projection was interned first and
+    // be handed a delta projected for different fields. Unreachable today - there is one construction
+    // site - but free to make impossible.
+    private int _nextProjectionId = 1;
     // Both capabilities are only ever touched from this runtime's single-threaded worker
     // (HandleSubscribe, RegisterFilterPreset) - never from ViewEngine's calling thread directly -
     // so their internal state (e.g. FilteringCapability's preset registry) needs no extra locking.

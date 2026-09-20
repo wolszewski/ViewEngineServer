@@ -34,7 +34,13 @@ public readonly struct FieldMask : IEquatable<FieldMask>
         var words = new ulong[wordCount];
         foreach (var col in indexes)
         {
+            // Negative indexes are the "unknown field" sentinel FilterSet uses, so they are skipped.
+            // An index at or above fieldCount is a caller bug: without this it would either land in a
+            // padding bit (silently, for anything under wordCount * 64) or throw a bare
+            // IndexOutOfRangeException naming nothing. Removing a silent ceiling is the point of this
+            // type, so don't introduce a second one.
             if (col < 0) { continue; }
+            ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(col, fieldCount, nameof(indexes));
             words[col >> 6] |= 1UL << (col & 63);
         }
 

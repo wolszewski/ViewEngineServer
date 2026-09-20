@@ -351,7 +351,6 @@ CI runs the full build and test suite on every pull request.
 - **No authentication or TLS.** Put the HTTP/WebSocket endpoint behind a reverse proxy that handles auth.
   TCP ingest binds to loopback by default.
 - **Values are strings on the wire and in storage.** Declared types affect ordering and filtering only.
-- **At most 128 fields per collection**, including the key.
 - **Collections can't be deleted or altered** once created.
 - **Large snapshots and slow clients:** snapshots are built in one pass and queued in full, and a client
   that drains slower than its update rate keeps accumulating queued frames until it stalls for

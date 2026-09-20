@@ -656,8 +656,11 @@ public sealed class MutationPropagator
         }];
     }
 
+    // Takes the array, not IReadOnlyCollection: this runs once per subscriber group per mutation, and
+    // enumerating an array through the interface allocates a boxed SZGenericArrayEnumerator on every
+    // one of those calls - the allocation MutationInfo.ChangedColumns was made an array to avoid.
     private static IReadOnlyCollection<KeyValuePair<int, string?>> FilterChangedColumns(
-        IReadOnlyCollection<KeyValuePair<int, string?>> changedColumns,
+        KeyValuePair<int, string?>[] changedColumns,
         FieldMask visibleMask)
     {
         if (visibleMask.IsEmpty)
@@ -665,7 +668,7 @@ public sealed class MutationPropagator
             return [];
         }
 
-        var filtered = new List<KeyValuePair<int, string?>>(changedColumns.Count);
+        var filtered = new List<KeyValuePair<int, string?>>(changedColumns.Length);
         foreach (var (fieldIndex, value) in changedColumns)
         {
             if (visibleMask[fieldIndex])
@@ -674,7 +677,7 @@ public sealed class MutationPropagator
             }
         }
 
-        return filtered.Count == changedColumns.Count ? changedColumns : filtered;
+        return filtered.Count == changedColumns.Length ? changedColumns : filtered;
     }
 
     // Keyed on the interned projection id rather than the FieldMask: this key is built per

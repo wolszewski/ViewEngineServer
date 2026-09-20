@@ -130,4 +130,33 @@ public class FieldMaskTests
         Assert.NotEqual(a, b);
         Assert.True(a != b);
     }
+
+    // Negative indexes are FilterSet's "unknown field" sentinel and must stay silently skipped.
+    [Fact]
+    public void From_SkipsNegativeIndexes()
+    {
+        var mask = FieldMask.From([-1, 3], fieldCount: 100);
+
+        Assert.True(mask[3]);
+        Assert.False(mask[0]);
+    }
+
+    // 120 lands inside the 2-word buffer a 100-field schema allocates, so without the bound it would
+    // be written to a padding bit and silently accepted.
+    [Theory]
+    [InlineData(100)]
+    [InlineData(120)]
+    [InlineData(5000)]
+    public void From_RejectsIndexAtOrAboveFieldCount(int index)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => FieldMask.From([index], fieldCount: 100));
+    }
+
+    [Fact]
+    public void From_AcceptsTheLastValidIndex()
+    {
+        var mask = FieldMask.From([99], fieldCount: 100);
+
+        Assert.True(mask[99]);
+    }
 }
