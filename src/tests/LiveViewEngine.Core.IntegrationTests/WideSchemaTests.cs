@@ -167,9 +167,22 @@ public class WideSchemaTests
             Fields = new Dictionary<string, string?> { ["f150"] = "z" }
         })).Success);
 
-var replace = Assert.IsType<RowReplaceEvent>(Assert.Single(publisher.EventsFor(3)));
+        // A position change emits the reorder plus a trailing RowUpdateDelta for the same row
+        // (MutationPropagator.cs:508). The update is redundant - the replace already carries the
+        // row at its new values - but it is the long-standing wire behaviour, so assert the pair
+        // rather than a single event.
+        var events = publisher.EventsFor(3).ToList();
+        Assert.Equal(2, events.Count);
+
+        var replace = Assert.IsType<RowReplaceEvent>(events[0]);
         Assert.Equal("r1", replace.RemovedRowId);
         Assert.Equal(0, replace.RemovePosition);
         Assert.Equal(1, replace.InsertPosition);
+        // The reorder carries the new sort value, which is what makes the trailing update redundant.
+        Assert.Equal("z", replace.Row["f150"]);
+
+        var update = Assert.IsType<RowUpdateEvent>(events[1]);
+        Assert.Equal("r1", update.RowId);
+        Assert.Equal(1, update.Position);
     }
 }
