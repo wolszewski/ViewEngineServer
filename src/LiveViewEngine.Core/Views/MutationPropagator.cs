@@ -501,18 +501,10 @@ public sealed class MutationPropagator
             }
         }
 
-        if (newIn)
-        {
-            AddUpdateDelta(
-                deltas,
-                viewId,
-                collection,
-                mutation,
-                newFilteredPos - start,
-                selectedFieldIndexes,
-                visibleMask);
-        }
-
+        // No trailing update here. Reaching this point means the position changed (the unchanged case
+        // returned at the oldFilteredPos == newFilteredPos check above), and every branch that can set
+        // newIn already emitted the row via SelectRowValues at its post-mutation values - so an update
+        // could only repeat a subset of what was just sent. See 2026-09-20 AR-01.
         return deltas;
     }
 
@@ -585,36 +577,6 @@ public sealed class MutationPropagator
         });
     }
 
-    private static void AddUpdateDelta(
-        List<ViewDelta> deltas,
-        string viewId,
-        RowCollection collection,
-        MutationInfo mutation,
-        int position,
-        int[] selectedFieldIndexes,
-        FieldMask visibleMask)
-    {
-        if (mutation.IsNew || mutation.ChangedColumns is not { Length: > 0 })
-        {
-            return;
-        }
-
-        var projected = FilterChangedColumns(mutation.ChangedColumns, visibleMask);
-        if (projected.Count == 0)
-        {
-            return;
-        }
-
-        deltas.Add(new RowUpdateDelta
-        {
-            ViewId = viewId,
-            Schema = collection.Schema,
-            RowId = mutation.RowId,
-            Position = position,
-            ChangedColumns = projected,
-            VisibleFieldIndexes = selectedFieldIndexes
-        });
-    }
 
     private static IReadOnlyList<ViewDelta> BuildUpdateDeltaIfVisible(
         string viewId,

@@ -1279,6 +1279,10 @@ export function useCollectionData(
             }
         }
         const insertedRow: RowData = { ...insert.row };
+        // Sample here as well as in applyUpdate: positional deltas carry the row, and since
+        // 2026-09-20 AR-01 a reorder is the only delta the server sends, so latency must not
+        // depend on which delta shape arrived.
+        recordLatency(insertedRow.updatedDate);
         rowsByPositionRef.current.set(insert.position, insertedRow);
         const insertedRowId = insert.row.key ?? insert.row.id;
         if (insertedRowId) {
@@ -1296,7 +1300,7 @@ export function useCollectionData(
         if (gridVisibleRef.current) {
             publishRowsFromWindow();
         }
-    }, [adjustTotalCount, columnDefs.length, publishRowsFromWindow, setColumnsFromRow, unboundedViewport]);
+    }, [adjustTotalCount, columnDefs.length, publishRowsFromWindow, recordLatency, setColumnsFromRow, unboundedViewport]);
 
     const applyRemove = useCallback((remove: RowRemoveEvent) => {
         const removedRow = rowsByPositionRef.current.get(remove.position);
@@ -1364,6 +1368,9 @@ export function useCollectionData(
             }
         }
         const insertedRow: RowData = { ...replace.row };
+        // See applyInsert: a reorder now arrives as this delta alone (2026-09-20 AR-01), so this is
+        // the only place its latency can be sampled.
+        recordLatency(insertedRow.updatedDate);
         rowsByPositionRef.current.set(replace.insertPosition, insertedRow);
         const insertedRowId = replace.row.key ?? replace.row.id;
         if (insertedRowId) {
@@ -1385,7 +1392,7 @@ export function useCollectionData(
         if (gridVisibleRef.current) {
             publishRowsFromWindow();
         }
-    }, [columnDefs.length, publishRowsFromWindow, setColumnsFromRow, unboundedViewport]);
+    }, [columnDefs.length, publishRowsFromWindow, recordLatency, setColumnsFromRow, unboundedViewport]);
 
     const handleDeltaEvent = useCallback((event: DeltaEvent) => {
         if (event.type === 'snapshot') {
