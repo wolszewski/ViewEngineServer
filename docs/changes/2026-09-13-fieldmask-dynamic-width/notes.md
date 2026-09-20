@@ -69,6 +69,43 @@ benchmarks.
 Caveats that still apply: `--job short` is noisy (see `main`'s 58.11 vs 71.86 on the same benchmark).
 Reliable enough to have caught a 2x regression; not for distinguishing a few percent.
 
+## Update path, re-measured against main (2026-09-20)
+
+Run against a `main` worktree with the replacement benchmarks patched in, so both sides execute
+byte-identical benchmark code. `--iterationCount 15 --warmupCount 5`, unfiltered/10 subscribers only
+(no sort index, to isolate the predicate from reordering work), sequential runs on one machine.
+
+| | main | branch | Δ |
+|---|---|---|---|
+| `Modify10k_Unfiltered_10Subscribers` (1-5 changed fields) | 26.92 ms | 27.81 ms | +3.3% |
+| `Modify10k_AllFields_Unfiltered_10Subscribers` (17 changed fields) | 30.56 ms | 32.03 ms | +4.8% |
+| Cost attributable to width (AllFields − control) | +3.64 ms | +4.22 ms | **+0.58 ms** |
+| Allocated, control | 11.88 MB | 11.72 MB | −1.3% |
+| Allocated, AllFields | 14.02 MB | 13.87 MB | −1.1% |
+
+An earlier `--job short` (3 iterations) attempt was discarded: BenchmarkDotNet reported medians
+diverging from means, and the width-attributable cost came out *negative* on the sorted rows, which
+is meaningless. Three iterations cannot resolve a difference this size.
+
+**Reading.** The `ContainsAny` retype is measurable but small here. Isolating it: the extra 0.58 ms
+spans 10 000 updates × 10 subscribers = 100 000 predicate calls over 14 extra changed columns, i.e.
+**~0.4 ns per column per subscriber** — about one cycle, as a linear scan should be.
+
+Because it is linear in `changed columns × subscribers`, it scales with exactly the workload this
+change unlocks. Extrapolating that per-column figure to a 200-field record rewrite with 100
+subscribers gives ~8 µs per mutation of predicate work, against roughly nothing on `main`'s two
+word-ANDs. That case **cannot be measured against `main`** — `main` caps at 128 fields, which is the
+defect this change removes — so the extrapolation stands unverified. If "publish the whole record"
+producers on wide schemas are expected, this deserves a guard (rebuild the mask once when the changed
+count is high) and a wide-schema benchmark to justify it.
+
+**On the parity claim.** At benchmark width the honest statement is parity-to-slightly-slower, not
+parity: +3.3% / +4.8%, with allocation ~1% better. Note the +3.3% appears on the *control*, where
+`ContainsAny` sees only 1-5 columns and should be roughly a wash against two word-ANDs — so a broad
+few-percent cost is more likely the `FieldMask` representation change (`main`'s `[InlineArray]` value
+struct became a heap `ulong[]`, adding an indirection to every bit test and a copy to every mask
+hand-off) than the predicate. That is a separate question this run does not settle.
+
 ## Insert path (control)
 
 `Insert10k_Unfiltered_1Subscriber`: main 35.53 ms, branch 34.90 ms — unaffected, as expected.
