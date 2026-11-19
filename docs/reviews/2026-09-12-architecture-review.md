@@ -51,7 +51,7 @@ WebSocket edge:
 | [AR-12](#ar-12) | Snapshot size is unbounded, built on the worker, and faults above queue capacity | Snapshots | High | Code-read | Open |
 | [AR-13](#ar-13) | Deltas are encoded once per subscriber, on the collection worker | Performance | Medium | Code-read | Open |
 | [AR-14](#ar-14) | One WebSocket message per row/delta | Performance | Low | Code-read | Open |
-| [AR-15](#ar-15) | Redundant `rowUpdate` after `rowInsert`/`rowReplace` of the same row | Protocol | Low | Reproduced | Open |
+| [AR-15](#ar-15) | Redundant `rowUpdate` after `rowInsert`/`rowReplace` of the same row | Protocol | Low | Reproduced | Done (#37) |
 | [AR-16](#ar-16) | No metrics for outbound queues or slow-client disconnects | Observability | Medium | Code-read | Open |
 | [AR-17](#ar-17) | Two collection registries, and host code can reach non-thread-safe storage | Architecture | Low | Code-read | Open |
 | [AR-18](#ar-18) | TCP ingest: double queueing, `ACK` = queued, comparer mismatch | Ingest | Low | Code-read | Open |
@@ -62,6 +62,23 @@ WebSocket edge:
 | [AR-23](#ar-23) | Dead code | Maintainability | Low | Code-read | Open |
 | [AR-24](#ar-24) | Naming inconsistencies | Maintainability | Low | Code-read | Open |
 | [AR-25](#ar-25) | Compact `P` partial flag is ambiguous | Protocol | Low | Code-read | Open |
+
+## Dependencies
+
+Edges between findings, drawn from the finding bodies and *Suggested order* below. Maintained after
+publication, and read by `scripts/backlog.py` to work out what is ready. `needs` means blocked until the
+target is resolved; a bare ID refers to this review, a dated one to another.
+
+| From | Edge | To | Note |
+|---|---|---|---|
+| AR-09 | needs | AR-16 | metrics first, so the bound's effect can be measured |
+| AR-10 | needs | AR-16 | same group; measure before simplifying the flush path |
+| AR-11 | needs | AR-16 | same group |
+| AR-12 | needs | AR-16 | same group |
+| AR-25 | needs | AR-14 | the unambiguous flag token only lands with protocol v2 |
+| AR-10 | resolves | AR-11 | option (a), deleting the coalescer, removes the per-mutation flush walk |
+| AR-10 | related | AR-09 | option (b) keeps the coalescer as part of the memory bound |
+| AR-15 | duplicates | 2026-09-20 AR-01 | same trailing `AddUpdateDelta` at `MutationPropagator.cs:508` |
 
 ## Suggested order
 
