@@ -43,6 +43,14 @@ is the same today and after the fix.
 | [AR-01](#ar-01) | Reorder emits a redundant `RowUpdateDelta` after the positional delta | Core | Medium | Reproduced | Done (#37) |
 | [AR-02](#ar-02) | PoC UI samples latency only from `rowUpdate`, so reorder-only deltas go unmeasured | PoC UI | Low | Code-read | Done (#37) |
 
+## Dependencies
+
+Maintained after publication, and read by `scripts/backlog.py`. A bare ID refers to this review.
+
+| From | Edge | To | Note |
+|---|---|---|---|
+| AR-01 | needs | AR-02 | removing the update would leave reorder latency entirely unmeasured |
+
 ## Findings
 
 ### AR-01

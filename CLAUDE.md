@@ -6,11 +6,17 @@ Guidance for Claude Code in this repository. Coding style and PR review rules li
 
 ## Documentation Conventions
 
+- `docs/backlog.md` is the entry point for picking up work: every open finding across all reviews, split
+  into ready and blocked. It is **generated** — run `python3 scripts/backlog.py` after changing any Status
+  cell or dependency edge, and never edit it by hand. `--check` verifies it is current.
 - Architecture findings go in `docs/reviews/YYYY-MM-DD-<topic>.md` (see `docs/reviews/README.md`) with a dated
   header, a Summary section, and an index table of findings with stable IDs (`AR-NN`) and a Severity / Status
-  column. After publishing, only the Status column changes.
+  column. After publishing, only the Status column and the `## Dependencies` table change; finding bodies are
+  immutable. IDs are scoped per review, so cross-review references must be dated (`2026-09-20 AR-01`).
 - Non-trivial follow-up work starts with an `intent.md` under `docs/changes/YYYY-MM-DD-<slug>/` (template in
   `docs/changes/README.md`).
+- Observations that aren't yet findings go under *Unfiled observations* in `docs/reviews/README.md`, not into
+  an existing finding's body.
 - README and docs rewrites must keep existing section anchors intact so external links don't break.
 
 ## Shell Environment
