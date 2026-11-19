@@ -1,9 +1,9 @@
 # A generated backlog index over the review findings
 
-- **Status:** In progress
+- **Status:** Done
 - **Date:** 2026-11-19
 - **Findings:** none (process change). Corrects the status of 2026-09-12 AR-15.
-- **PRs:** #
+- **PRs:** #38
 
 ## Problem
 
